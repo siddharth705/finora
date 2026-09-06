@@ -1,7 +1,10 @@
 package com.finora;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.parallel.Isolated;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -39,6 +42,21 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * what the comment always claimed. The container outlives every test class in the JVM, and
  * Testcontainers' Ryuk sidecar removes it when the JVM exits, so nothing leaks.
  *
+ * <p><b>Profile guard.</b> pom.xml's surefire/failsafe {@code systemPropertyVariables} set
+ * {@code spring.profiles.active=test} on the forked JVM -- that is the only reason
+ * {@code application-test.yml} (which disables six background schedulers under test, among other
+ * things) ever loads instead of {@code application.yml}'s {@code dev} default. Nothing enforces
+ * that this class is only ever reached through that fork: an IDE's own "Run Test" launches its own
+ * JVM directly against the compiled classpath, entirely outside Maven's plugin execution, and does
+ * not carry that system property unless the run configuration sets it explicitly. That is exactly
+ * the bug fixed once already (see the {@code spring.profiles.active} note on the surefire plugin in
+ * pom.xml, and {@code MerchantLearningQueueIT}'s history) for the one path that was actually
+ * exercised at the time -- a live scheduler thread, caught mid-suite, only reachable because the
+ * profile silently was not "test". An IDE run is the same failure shape from a different entry
+ * point, so it gets the same guard: checked before the container starts, so a bypassed run fails in
+ * milliseconds with a clear cause instead of after paying for a Postgres container, or worse,
+ * passing while quietly exercising live schedulers against shared state.
+ *
  * <p><b>{@code @Isolated}.</b> {@code junit-platform.properties} turns on class-level parallel
  * execution for the suite, safe for the ~217 pure-unit {@code *Test.java} classes (fresh mocks
  * per class, no shared state). Every subclass of this one shares the single cached
@@ -51,6 +69,10 @@ import org.testcontainers.containers.PostgreSQLContainer;
  * other as it always has been, interleaved with (not blocked from) the unit tests running
  * concurrently around it, without requiring every other stateful singleton bean in the app to be
  * individually audited for concurrent-test-time safety first.
+ *
+ * <p><b>{@link #emptyTheSharedWorkQueues()}.</b> The flip side of sharing one database: the work
+ * queues in it are shared too, and they are the one kind of table where another class's leftovers
+ * change what a test observes. See that method for the failure it prevents.
  */
 @Isolated
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -65,8 +87,74 @@ public abstract class AbstractIntegrationTest {
             .withPassword("finora");
 
     static {
+        // See this class's own "Profile guard" doc comment above. Checked first, before the
+        // container starts, so a bypassed run fails in milliseconds rather than after paying for
+        // Postgres -- and reads System.getProperty, not the Environment/Spring context (which
+        // does not exist yet at static-init time): this is exactly the JVM system property
+        // pom.xml's surefire/failsafe systemPropertyVariables set, so it is what actually proves
+        // that fork -- not just a value -- was reached.
+        String activeProfile = System.getProperty("spring.profiles.active");
+        if (!"test".equals(activeProfile)) {
+            throw new IllegalStateException(
+                    "spring.profiles.active is "
+                            + (activeProfile == null ? "unset" : "'" + activeProfile + "'")
+                            + ", not \"test\". This integration test was not launched through Maven's"
+                            + " surefire/failsafe plugin execution (pom.xml's systemPropertyVariables"
+                            + " is what normally sets this) -- an IDE's own \"Run Test\" button starts"
+                            + " its own JVM directly against the compiled classpath and skips it unless"
+                            + " the run configuration says otherwise. Without \"test\" active,"
+                            + " application-test.yml never loads and every background scheduler it"
+                            + " disables (merchant-learning queue, import-session cleanup,"
+                            + " statement-storage sweep, account-purge sweep, audit-log redaction,"
+                            + " Gmail state-cleanup/discovery) runs live against this class's shared"
+                            + " Testcontainers Postgres instead -- the exact defect fixed once already,"
+                            + " see the spring.profiles.active note on the surefire plugin in pom.xml."
+                            + " Fix: run via `./mvnw test` / `./mvnw verify`, or add"
+                            + " -Dspring.profiles.active=test to your IDE run configuration's VM"
+                            + " options.");
+        }
         // Started here, not by the JUnit extension, so that no per-class lifecycle can stop it.
         POSTGRES.start();
+    }
+
+    @Autowired private JdbcTemplate queueCleanupJdbc;
+
+    /**
+     * Empties the work queues before every integration test — BH-058, fixed at the source rather
+     * than in each test that trips over it.
+     *
+     * <p>Both queues are claimed by a table-wide, {@code LIMIT}ed query ordered oldest-first:
+     * {@code claimDueEvents} takes {@code MerchantLearningEventWorker.BATCH_SIZE} (50) and
+     * {@code claimDueJobs} takes {@code ImportJobStore.BATCH_SIZE} (10). Neither is scoped by user
+     * — a worker claims work, not one user's work, which is correct in production and hostile
+     * here. Both queues are also disabled under test ({@code app.learning.queue.enabled} and
+     * {@code app.import.queue.enabled} both default off), so rows a test enqueues stay PENDING or
+     * QUEUED for the rest of the run unless that test drains them. Most do not.
+     *
+     * <p>So a test that enqueues its own row and then drains once is really asserting "fewer than
+     * BATCH_SIZE older rows exist" — an assumption about the whole suite that it cannot see and
+     * does not state. Past that threshold the drain claims a batch of other tests' leftovers and
+     * the row under test is never claimed at all. It does not run late; it never runs. That
+     * presents as an ordering-dependent flake and invites raising a timeout, which cannot help.
+     *
+     * <p>Measured before this existed: {@code ImportJobEndpointIT} climbed from one leftover job to
+     * eight across its own methods, and {@code QueueOverheadMeasurementIT} began a method with
+     * eleven — past its batch size of ten already, surviving only because its own warm-up happened
+     * to drain ten first. {@code MerchantLearningNudgeIT} did fail, for exactly this reason.
+     *
+     * <p>Deleting rather than draining: draining runs real work (an import parse is not cheap) and
+     * would make every test pay for whatever the previous one abandoned. Safe to delete outright —
+     * these are queue tables, every dependent FK on {@code import_jobs} is {@code ON DELETE
+     * CASCADE} (V72), and nothing references {@code merchant_learning_events} at all.
+     *
+     * <p>A superclass {@code @BeforeEach} runs before the subclass's, so a test class that enqueues
+     * in its own setup is unaffected. {@code @Isolated} above means no other class is running to
+     * refill the queues underneath this.
+     */
+    @BeforeEach
+    void emptyTheSharedWorkQueues() {
+        queueCleanupJdbc.update("DELETE FROM import_jobs");
+        queueCleanupJdbc.update("DELETE FROM merchant_learning_events");
     }
 
     @DynamicPropertySource

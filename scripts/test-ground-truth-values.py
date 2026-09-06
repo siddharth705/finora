@@ -25,11 +25,12 @@ spec.loader.exec_module(gtm)
 
 
 def rows(*specs):
-    return [{"date": d, "amount": a, "direction": x, "currency": "INR"} for d, a, x in specs]
+    return [{"date": d, "amount": a, "direction": x, "currency": "INR", "description": desc}
+            for d, a, x, desc in specs]
 
 
-AS_DECLARED = rows(("2026-06-05", "55000.00", "CREDIT"),
-                   ("2026-06-10", "2000.00", "DEBIT"))
+AS_DECLARED = rows(("2026-06-05", "55000.00", "CREDIT", "SALARY CREDIT"),
+                   ("2026-06-10", "2000.00", "DEBIT", "GROCERY STORE"))
 
 
 def truth(expected_values=None, count=2):
@@ -62,7 +63,8 @@ class ValueAxis(unittest.TestCase):
 
     def test_correct_row_count_with_a_wrong_amount_fails(self):
         """THE canonical regression for this milestone -- the gap OCR-2A's mutation exposed."""
-        wrong = rows(("2026-06-05", "35000.00", "CREDIT"), ("2026-06-10", "2000.00", "DEBIT"))
+        wrong = rows(("2026-06-05", "35000.00", "CREDIT", "SALARY CREDIT"),
+                    ("2026-06-10", "2000.00", "DEBIT", "GROCERY STORE"))
         r = gtm.match(truth(), observed(wrong))
         self.assertEqual(r["verdict"], gtm.FAIL)
         self.assertEqual(dim(r, "amount"), gtm.UNEXPECTED)
@@ -70,16 +72,26 @@ class ValueAxis(unittest.TestCase):
         self.assertNotIn("under-extracted", r["entities"][0]["detail"])
 
     def test_a_changed_date_fails(self):
-        wrong = rows(("2026-07-05", "55000.00", "CREDIT"), ("2026-06-10", "2000.00", "DEBIT"))
+        wrong = rows(("2026-07-05", "55000.00", "CREDIT", "SALARY CREDIT"),
+                    ("2026-06-10", "2000.00", "DEBIT", "GROCERY STORE"))
         r = gtm.match(truth(), observed(wrong))
         self.assertEqual(r["verdict"], gtm.FAIL)
         self.assertEqual(dim(r, "date"), gtm.UNEXPECTED)
 
     def test_a_debit_read_as_a_credit_fails(self):
-        wrong = rows(("2026-06-05", "55000.00", "CREDIT"), ("2026-06-10", "2000.00", "CREDIT"))
+        wrong = rows(("2026-06-05", "55000.00", "CREDIT", "SALARY CREDIT"),
+                    ("2026-06-10", "2000.00", "CREDIT", "GROCERY STORE"))
         r = gtm.match(truth(), observed(wrong))
         self.assertEqual(r["verdict"], gtm.FAIL)
         self.assertEqual(dim(r, "direction"), gtm.UNEXPECTED)
+
+    def test_a_changed_description_fails(self):
+        """The dimension this whole task exists for -- right count, right amount, wrong text."""
+        wrong = rows(("2026-06-05", "55000.00", "CREDIT", "SALARY CREDIT"),
+                    ("2026-06-10", "2000.00", "DEBIT", "CORRUPTED TEXT"))
+        r = gtm.match(truth(), observed(wrong))
+        self.assertEqual(r["verdict"], gtm.FAIL)
+        self.assertEqual(dim(r, "description"), gtm.UNEXPECTED)
 
     def test_an_unobserved_value_is_UNKNOWN_and_never_a_pass_of_that_dimension(self):
         r = gtm.match(truth(), observed(None))
@@ -115,13 +127,14 @@ class ValueAxis(unittest.TestCase):
         self.assertIn("REAL_CORPUS", r["entities"][0]["detail"])
 
     def test_a_value_the_ground_truth_does_not_assert_is_UNKNOWN_not_agreement(self):
-        unasserted = [{"date": None, "amount": None, "direction": None, "currency": None}] * 2
+        unasserted = [{"date": None, "amount": None, "direction": None, "currency": None,
+                       "description": None}] * 2
         r = gtm.match(truth(expected_values=unasserted), observed(AS_DECLARED))
         for d in gtm.VALUE_DIMENSIONS:
             self.assertEqual(dim(r, d), gtm.UNKNOWN, d)
 
     def test_a_row_expected_but_not_observed_is_MISSING(self):
-        r = gtm.match(truth(), observed(rows(("2026-06-05", "55000.00", "CREDIT"))))
+        r = gtm.match(truth(), observed(rows(("2026-06-05", "55000.00", "CREDIT", "SALARY CREDIT"))))
         self.assertEqual(dim(r, "date"), gtm.MISSING)
         self.assertEqual(r["verdict"], gtm.FAIL)
 

@@ -184,7 +184,24 @@ public class ImportJobService {
         }
         DigestInputStream digested = new DigestInputStream(file.getInputStream(), originalDigest);
         EncryptingStream encrypting = encryptionService.encryptStream(digested, file.getSize());
-        ContentAddress stored = active.store(encrypting.stream(), encrypting.length());
+        ContentAddress stored;
+        try {
+            stored = active.store(encrypting.stream(), encrypting.length());
+        } finally {
+            // CodeQL (java/input-resource-leak), 2026-09-04, round 2: closing encrypting.stream()
+            // (the SequenceInputStream/CipherInputStream wrapping digested wrapping
+            // file.getInputStream()) does cascade all the way down via
+            // FilterInputStream/SequenceInputStream's own close() semantics -- verified true, and
+            // it's what actually released the real OS-level resource -- but CodeQL's
+            // input-resource-leak query specifically tracks the named `digested` variable's own
+            // close() call, not a transitive one reached through a different variable, so the
+            // first version of this fix (closing encrypting.stream()) kept getting re-flagged.
+            // Closing `digested` directly instead: DigestInputStream.close() (inherited from
+            // FilterInputStream) closes file.getInputStream() underneath it, which is the actual
+            // resource -- the CipherInputStream/SequenceInputStream layers above never open a
+            // second one of their own, so nothing is lost by not closing them by name too.
+            digested.close();
+        }
         // Safe only once active.store() has returned: that method reads its input stream to EOF
         // (ContentAddress.copyAndAddress's transferTo), which is what guarantees every original
         // byte has already passed through digested by this point.
@@ -348,18 +365,52 @@ public class ImportJobService {
             return ImportJobDto.Progress.of(job);
         }
         if (!job.isCancellable()) {
-            throw new ApiException(HttpStatus.CONFLICT, switch (job.getStatus()) {
-                case COMPLETED -> "This import already finished. Discard the staged import instead "
-                        + "if you don't want it.";
-                case FAILED -> "This import already failed, so there is nothing left to cancel.";
-                // IMPORTING and later: transactions exist, and removing them is the ledger's job,
-                // not the queue's.
-                default -> "This import is already writing to your accounts and can no longer be "
-                        + "cancelled. Delete the statement import if you want it reversed.";
-            });
+            throw new ApiException(HttpStatus.CONFLICT, uncancellableReason(job.getStatus()));
         }
 
         job.cancel(Instant.now());
         return ImportJobDto.Progress.of(repository.save(job));
+    }
+
+    /**
+     * Why Cancel came too late, in words the user can act on.
+     *
+     * <p>Exhaustive with no {@code default} on purpose. This was a default arm, and it has already
+     * been wrong once: {@code HELD_FOR_REVIEW} fell into it and told people their import "is
+     * already writing to your accounts" when the job had never reached IMPORTING and had written
+     * nothing at all. Giving that one status its own case fixed the symptom and left the trap armed
+     * for the next status added -- which {@code HELD_FOR_TRUST_REVIEW} then walked into. Without a
+     * default, the compiler raises it instead of a user discovering it.
+     *
+     * <p>Only IMPORTING and LEARNING may claim the ledger was touched. Everything else either
+     * finished, failed, is waiting on us, or never started.
+     *
+     * <p>Extracted from {@link #cancel} so the wording is testable without standing up the service
+     * and its seven collaborators to assert one string --
+     * {@code ImportJobCancelReasonTest} is what holds the rules above.
+     */
+    static String uncancellableReason(ImportJob.Status status) {
+        return switch (status) {
+            case COMPLETED -> "This import already finished. Discard the staged import instead "
+                    + "if you don't want it.";
+            case FAILED -> "This import already failed, so there is nothing left to cancel.";
+            // Both holds, one answer -- matching UserFacingImportStatus's own collapse. No ETA, and
+            // no suggestion the statement itself is in question: the doubt behind a trust hold is
+            // about our extraction, not their document, and this is the message most at risk of
+            // saying otherwise.
+            case HELD_FOR_REVIEW, HELD_FOR_TRUST_REVIEW ->
+                    "We're still running some additional checks on this statement. There's nothing "
+                            + "to cancel yet; we'll let you know once it's ready.";
+            // Transactions exist by now, and removing them is the ledger's job, not the queue's.
+            case IMPORTING, LEARNING ->
+                    "This import is already writing to your accounts and can no longer be "
+                            + "cancelled. Delete the statement import if you want it reversed.";
+            // Unreachable from cancel(): CANCELLED returns idempotently above, and the four stages
+            // below IMPORTING are exactly what isCancellable() admits. Answered truthfully anyway
+            // rather than thrown -- a 500 on an unexpected state would be a worse outcome than a
+            // plain sentence, and these are the states where nothing has been written.
+            case CANCELLED -> "This import was already cancelled.";
+            case QUEUED, PARSING, ANALYZING, DEDUPING -> "This import is still being processed.";
+        };
     }
 }

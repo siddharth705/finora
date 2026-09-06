@@ -3,7 +3,8 @@ import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, ShieldCheck, ScrollText, HeartPulse, LogOut, Landmark, Settings,
   ListFilter, Store, FileCode, Sparkles, GitMerge, BarChart3, Stethoscope, FileSearch, ListRestart , BadgeCheck, Fingerprint, Route,
-  CreditCard, Gift, Plug, Waypoints, Lightbulb, ListOrdered, ChevronDown, ChevronRight } from 'lucide-react';
+  CreditCard, Plug, Waypoints, Lightbulb, ListOrdered, ChevronDown, ChevronRight, Bell, Clock, ShieldAlert,
+  LifeBuoy, MessageSquare } from 'lucide-react';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { BrandMark } from './BrandMark';
 import { initials } from '../lib/initials';
@@ -51,17 +52,22 @@ const GROUPS = [
     label: 'Operations',
     links: [
       { to: '/subscriptions', label: 'Subscriptions', icon: CreditCard, end: false, permission: 'SUBSCRIPTION_MANAGEMENT_VIEW' },
-      { to: '/referrals', label: 'Referrals', icon: Gift, end: false, permission: 'REFERRAL_MANAGEMENT_VIEW' },
+      { to: '/support-tickets', label: 'Support Tickets', icon: LifeBuoy, end: false, permission: 'SUPPORT_MANAGE' },
+      { to: '/feedback', label: 'Feedback', icon: MessageSquare, end: false, permission: 'SUPPORT_MANAGE' },
     ],
   },
   {
     label: 'System',
     links: [
+      { to: '/notifications', label: 'Notifications', icon: Bell, end: false, permission: 'NOTIFICATION_MANAGE' },
       { to: '/health', label: 'System Health', icon: HeartPulse, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/integrations', label: 'Integrations', icon: Plug, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/diagnostics', label: 'Platform Diagnostics', icon: Stethoscope, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/layout-intelligence', label: 'Layout Intelligence', icon: Fingerprint, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/layout-studio', label: 'Layout Studio', icon: FileSearch, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
+      { to: '/held-imports', label: 'Held Imports', icon: Clock, end: false, permission: 'IMPORT_TRIAGE_MANAGE' },
+      { to: '/held-statements', label: 'Held Statements', icon: ShieldAlert, end: false, permission: 'TRUST_REVIEW_MANAGE' },
+      { to: '/trust-review-metrics', label: 'Trust Review Metrics', icon: BarChart3, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/import-trace', label: 'Import Trace', icon: Route, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/import-row-trace', label: 'Import Row Trace', icon: ListOrdered, end: false, permission: 'PLATFORM_DIAGNOSTICS_VIEW' },
       { to: '/settings', label: 'Settings', icon: Settings, end: false, permission: 'SYSTEM_SETTINGS' },

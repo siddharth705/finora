@@ -126,6 +126,24 @@ def compare_verification(b, a, out, prefix=""):
             out.append(_c(dim, REGRESSION if worse else IMPROVEMENT, f"{before} -> {after}"))
 
 
+def compare_description_drift(b, a, out, prefix=""):
+    """Row-content CHANGE, never row-content VALUE -- see CorpusProbe's descriptionHashes comment.
+    A hash differing is not a verdict on which side is right; only a human with the real document
+    open locally can say that, which is why this is always REVIEW and never REGRESSION.
+
+    Silently skipped (not just at a differing row count, but whenever either side has no hashes at
+    all) rather than treated as zero changed: an older probe record or a synthetic-mode record with
+    no hashes must never read as "nothing drifted".
+    """
+    bh, ah = b.get("descriptionHashes"), a.get("descriptionHashes")
+    if bh is None or ah is None or len(bh) != len(ah) or not bh:
+        return
+    changed = sum(1 for x, y in zip(bh, ah) if x != y)
+    if changed:
+        rate = round(100 * changed / len(bh))
+        out.append(_c(f"{prefix}descriptionDrift", REVIEW, f"{changed}/{len(bh)} rows ({rate}%) hash-differ"))
+
+
 def compare_sections(b, a, out):
     bd, ad = b.get("sectionDetail") or [], a.get("sectionDetail") or []
     if len(bd) != len(ad):
@@ -160,6 +178,7 @@ def compare_sections(b, a, out):
             out.append(_c(f"{p}productConfidence", REVIEW, f"{bc} -> {ac}"))
 
         compare_verification(x.get("verification") or {}, y.get("verification") or {}, out, p)
+        compare_description_drift(x, y, out, p)
 
 
 def compare_record(before, after):

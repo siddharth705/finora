@@ -107,31 +107,10 @@ class ImageOnlyDocumentTest {
 
         // Zero runs but rows present is not a state the pipeline can reach; asserted anyway, because
         // the guard's first line is what makes that true and a reorder would silently break it.
-        ExtractionCheck.rejectIfNothingWasExtracted(TestStaging.withRows(), ctx);
-    }
-
-    /** The two staging shapes these assertions need, and nothing else. */
-    private static final class TestStaging {
-        static com.finora.dto.ImportDto.StagingResponse empty() {
-            return new com.finora.dto.ImportDto.StagingResponse(
-                    List.of(), 0, 0, null, List.of(), null);
-        }
-
-        static com.finora.dto.ImportDto.StagingResponse withRows() {
-            return new com.finora.dto.ImportDto.StagingResponse(
-                    List.of(new com.finora.dto.ImportDto.StagedRow(
-                            LocalDate.of(2026, 6, 5), "SALARY CREDIT", new BigDecimal("55000.00"),
-                            "INCOME", "Other", "default", null, false, null, null)),
-                    1, 0, null, List.of(), null);
-        }
+        ExtractionCheck.rejectIfNothingWasExtracted(ExtractionCheckFixtures.withRows(), ctx);
     }
 
     private static ApiException catchApi(DocumentContext ctx) {
-        try {
-            ExtractionCheck.rejectIfNothingWasExtracted(TestStaging.empty(), ctx);
-        } catch (ApiException e) {
-            return e;
-        }
-        throw new AssertionError("expected a rejection, and nothing was thrown");
+        return ExtractionCheckFixtures.catchRejection(ctx);
     }
 }

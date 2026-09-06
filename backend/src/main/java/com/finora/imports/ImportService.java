@@ -27,6 +27,7 @@ import com.finora.service.CategorizationService;
 import com.finora.service.RecurringService;
 import com.finora.service.ReconciliationService;
 import com.finora.util.CategoryRules;
+import com.finora.util.LogSanitizer;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -263,7 +264,7 @@ public class ImportService {
                     System.currentTimeMillis() - startedAtMs, diagnostics);
         } catch (RuntimeException recordingFailed) {
             log.error("Could not record the failed analysis for {} -- the parse failure itself is "
-                    + "being rethrown and is the one that matters.", fileName, recordingFailed);
+                    + "being rethrown and is the one that matters.", LogSanitizer.sanitize(fileName), recordingFailed);
         }
     }
 
@@ -380,6 +381,72 @@ public class ImportService {
             throw e;
         }
     }
+
+    /**
+     * Re-runs the current parser build against a document's raw bytes and reports what it would
+     * find, without writing anything: no {@code ImportSession}, no evidence-table row, no
+     * duplicate-upload bookkeeping.
+     *
+     * <p>Built for Plan 3 of the Held Statement Review System. An engineer re-testing a held
+     * statement after a parser fix needs to know what the CURRENT build produces, and the live
+     * staging path ({@link #parseAndStageWithSession} / {@link #parseAndStagePdfWithSession})
+     * cannot safely answer that: both call {@link ImportSessionService#findLiveSessionByContentHash}
+     * first, which deletes a live {@code STAGED} session whenever its recorded parser version
+     * differs from the running build's -- exactly the condition a re-run exists to test. Running a
+     * held statement's own still-referenced session through that check would delete the very
+     * session {@code ImportJob.importSessionId} still points at.
+     *
+     * @throws ApiException the same rejection a live parse would throw (e.g. {@code
+     *         IMPORT_NO_ACTIVITY_IN_PERIOD}) if the current build extracts nothing at all from
+     *         these bytes -- a real, reportable re-run outcome, not a bug in this method. The
+     *         caller decides what that means for the hold.
+     */
+    public DryRunResult dryRunParse(UUID userId, String fileName, byte[] fileContent, String sourceFormat)
+            throws IOException {
+        if (StatementUpload.Format.PDF.name().equals(sourceFormat)) {
+            var result = pdfPreviewGenerator.generateSectionsWithContext(userId, fileName, fileContent, null);
+            List<StagedAccountSection> sections = onlySectionsThatAreActuallyAccounts(result.sections());
+            ExtractionCheck.rejectIfNothingWasExtracted(sections, result.documentContext());
+            if (sections.size() <= 1) {
+                StagingResponse staged = sections.isEmpty()
+                        ? new StagingResponse(List.of(), 0, 0, null, List.of())
+                        : toStagingResponse(sections.get(0));
+                return new DryRunResult(reportsOf(staged.verification()),
+                        List.<LocalDate[]>of(periodOf(staged.detectedAccount())));
+            }
+            return new DryRunResult(
+                    sections.stream().map(StagedAccountSection::verification)
+                            .filter(java.util.Objects::nonNull).toList(),
+                    sections.stream().map(s -> periodOf(s.detectedAccount())).toList());
+        }
+        var result = previewGenerator.generateWithContext(userId, fileName,
+                new java.io.ByteArrayInputStream(fileContent));
+        StagingResponse staged = result.response();
+        ExtractionCheck.rejectIfNothingWasExtracted(staged, result.documentContext());
+        return new DryRunResult(reportsOf(staged.verification()), List.<LocalDate[]>of(periodOf(staged.detectedAccount())));
+    }
+
+    /** One report per section for the caller ({@code TrustPredicate}), same convention {@code
+     *  StagedForJob} already uses -- absent verification and verification that found nothing are
+     *  different facts, so a null report yields an empty list, never a list holding null. */
+    private static List<VerificationReport> reportsOf(VerificationReport one) {
+        return one == null ? List.of() : List.of(one);
+    }
+
+    /** {@code {start, end}}, possibly holding nulls -- a missing period is never on its own a
+     *  reason to hold, so it is carried rather than dropped. Same helper {@code StagedForJob}
+     *  keeps privately for the live path; duplicated here rather than shared across packages for a
+     *  four-line method. */
+    private static LocalDate[] periodOf(DetectedAccountInfo detected) {
+        return detected == null
+                ? new LocalDate[]{null, null}
+                : new LocalDate[]{detected.statementPeriodStart(), detected.statementPeriodEnd()};
+    }
+
+    /** What one dry run found: enough for {@code TrustPredicate.evaluate} and nothing else -- no
+     *  session id, because nothing was staged. */
+    public record DryRunResult(List<VerificationReport> verificationReports,
+                                List<LocalDate[]> statementPeriods) {}
 
     /** Rebuilds the response an already-staged session would have produced, for the duplicate-
      *  upload short-circuit in both stage methods above -- same fields {@code ImportController
@@ -886,7 +953,7 @@ public class ImportService {
             // parser output.
             String rowCategory = (row.category() == null || row.category().isBlank()) ? "Other" : row.category();
             Category category = categorizationService.resolveOrCreateCategory(userId, rowCategory);
-            var decision = ruleLearningService.recordDecision(userId, row, category);
+            var decision = ruleLearningService.recordDecision(row);
             boolean isUnresolvedGuess = decision.unresolvedGuess();
 
             Transaction t = new Transaction();
@@ -895,6 +962,13 @@ public class ImportService {
             t.setCategoryId(category.getId());
             UUID merchantId = categorizationService.resolveMerchantId(userId, row.description());
             t.setMerchantId(merchantId);
+            // Same two calls as TransactionService.create, on the same field. Both paths type from
+            // The same single derivation TransactionService.create and the backfill sweep use --
+            // see CounterpartyTyping for why it is shared rather than spelled out three times. A row
+            // cannot be typed one way at import, another when created by hand, and a third when
+            // backfilled; the divergence #743's review found between suggest() and
+            // suggestReadOnly() is exactly what that structure is protecting against.
+            t.applyCounterpartyTyping(row.description());
             // Collected, not applied. Applying merchant learning here is what Bug 02 was: one
             // confirmation per row, inside this transaction, where a single lost race against
             // UNIQUE(user_id, merchant_id, category_id) rolled back every transaction in a
@@ -907,7 +981,7 @@ public class ImportService {
             }
             t.setTxnDate(row.date());
             t.setDescription(row.description());
-            t.setMerchant(CategoryRules.extractMerchant(row.description()));
+            t.setMerchant(CategoryRules.extractMerchantLabel(row.description()));
             t.setAmount(row.amount());
             t.setTxnType(com.finora.util.EnumParsing.parse(Transaction.Type.class, row.type(), "type"));
             // GMAIL_IMPORT only when the session actually said so (C5-B); everything else keeps
@@ -1518,8 +1592,8 @@ public class ImportService {
     }
 
     /**
-     * Whether this statement is the newest one on file for the account, so its stated closing
-     * balance may be treated as where the account actually ended.
+     * Whether this statement outranks everything else already on the books for the account, so
+     * its stated closing balance may be treated as where the account actually ended.
      *
      * <p>BH-024. This used to load EVERY statement import the user has and filter in memory, once
      * per confirm and once per section for a composite statement -- a full read of the largest
@@ -1536,12 +1610,39 @@ public class ImportService {
      * one and we simply cannot tell. Defaulting to {@code true} there risked silently overwriting the
      * account's balance with an older statement's, so it is disambiguated via a second, cheap
      * COUNT query: only the genuinely-no-siblings case still defaults to {@code true}.
+     *
+     * <p>A1 (two-pass mobile audit, 2026-09-01). "Outranks everything" used to mean "outranks
+     * every OTHER STATEMENT" only, so a late-arriving corroborated statement for an OLDER period
+     * could overwrite the balance outright and silently discard what a newer live transaction had
+     * already contributed to it. The clearest case is a MANUAL entry, which creates no {@code
+     * StatementImport} row at all and so was wholly invisible to the two queries below. A
+     * Gmail-synced receipt was only partly invisible -- it does get a {@code StatementImport} row
+     * (see {@code TransactionRepository.existsLiveTransactionAfterDate}'s own comment), with a null
+     * period end, which the {@code countOtherStatementsForAccount} fallback already caught whenever
+     * the account had no OTHER dated sibling; the genuinely new coverage for Gmail is the case where
+     * such a sibling does exist.
+     *
+     * <p><b>Boundary.</b> {@code thisStatementLastActivity} is the statement's own {@code maxDate}
+     * -- its last transaction date -- deliberately, not its printed period end. A live transaction
+     * dated strictly between the two is by construction NOT on this statement (its last row is
+     * {@code maxDate}), so it is real off-ledger activity the stated closing balance does not
+     * account for, and blocking is correct; keying off the period end would miss it. The residual,
+     * accepted gap is the same-day case: a manual entry dated exactly ON {@code maxDate} is not
+     * blocked. {@code >=} is not the fix -- a manual row duplicating a statement row shares its
+     * date, and would then block universally.
+     *
+     * <p>Ordered first because it short-circuits the common case cheaply. Note the whole method
+     * only runs when {@code ClosingBalanceGuard} has already returned CORROBORATED (see the {@code
+     * &&} at this method's call site), so this is a minority of confirms, not every one.
      */
-    private boolean isMostRecentStatementForAccount(UUID userId, UUID accountId, LocalDate thisStatementEnd, UUID thisStatementId) {
-        if (thisStatementEnd == null) return true; // nothing to compare against — apply rather than never updating
+    private boolean isMostRecentStatementForAccount(UUID userId, UUID accountId, LocalDate thisStatementLastActivity, UUID thisStatementId) {
+        if (thisStatementLastActivity == null) return true; // nothing to compare against — apply rather than never updating
+        if (transactionRepository.existsLiveTransactionAfterDate(userId, accountId, thisStatementLastActivity, thisStatementId)) {
+            return false;
+        }
         Optional<LocalDate> latestOther =
                 statementImportRepository.findLatestPeriodEndForAccount(userId, accountId, thisStatementId);
-        if (latestOther.isPresent()) return !latestOther.get().isAfter(thisStatementEnd);
+        if (latestOther.isPresent()) return !latestOther.get().isAfter(thisStatementLastActivity);
         // No dated sibling found -- distinguish "no siblings at all" (safe to apply) from "siblings
         // exist but none states a period" (unsafe to assume this one is newest).
         return statementImportRepository.countOtherStatementsForAccount(userId, accountId, thisStatementId) == 0;

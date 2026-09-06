@@ -1,6 +1,6 @@
 import {
-  fmtCurrency, fmtDate, fmtMonthYear, fmtRelativeTime, fromLocalDateString, initials, monthLabel,
-  toLocalDateString,
+  currentYearMonth, fmtCurrency, fmtDate, fmtMonthYear, fmtRelativeTime, fromLocalDateString,
+  initials, monthDateRange, monthLabel, monthLabelLong, toLocalDateString,
 } from './format';
 
 describe('fmtCurrency', () => {
@@ -129,5 +129,35 @@ describe('monthLabel', () => {
   it('shortens a YYYY-MM to month and 2-digit year', () => {
     expect(monthLabel('2026-08')).toBe('Aug 26');
     expect(monthLabel('2026-01')).toBe('Jan 26');
+  });
+});
+
+describe('monthLabelLong', () => {
+  it('spells a YYYY-MM out to full month and year', () => {
+    expect(monthLabelLong('2026-08')).toBe('August 2026');
+    expect(monthLabelLong('2026-01')).toBe('January 2026');
+  });
+});
+
+describe('monthDateRange', () => {
+  it('spans the whole calendar month, both ends inclusive', () => {
+    expect(monthDateRange('2026-08')).toEqual({ dateFrom: '2026-08-01', dateTo: '2026-08-31' });
+  });
+
+  it('gets February and leap years right without a lookup table', () => {
+    expect(monthDateRange('2026-02')).toEqual({ dateFrom: '2026-02-01', dateTo: '2026-02-28' });
+    expect(monthDateRange('2028-02')).toEqual({ dateFrom: '2028-02-01', dateTo: '2028-02-29' });
+  });
+
+  it('rolls December into the correct year rather than month 13', () => {
+    expect(monthDateRange('2026-12')).toEqual({ dateFrom: '2026-12-01', dateTo: '2026-12-31' });
+  });
+});
+
+describe('currentYearMonth', () => {
+  it('matches the device clock at call time', () => {
+    const now = new Date();
+    const expected = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    expect(currentYearMonth()).toBe(expected);
   });
 });

@@ -93,8 +93,23 @@ class HeaderReconstructionEvidencePdfTableLocatorTest {
         return row;
     }
 
+    /**
+     * SUPERSEDED by INTERIOR_TIER_COLUMNS. This fixture's "merge fails" premise (see {@link
+     * #upperHeaderLine}'s own doc comment) no longer holds: {@code
+     * PdfTableLocator.mergeHeaderLinesAdmittingInteriorTierColumns} now merges all three lines
+     * directly -- {@link #vocabularyBearingLowerLine}'s four cells are entirely recognized
+     * column-name vocabulary, so they are admitted as new columns instead of aborting the whole
+     * merge -- and the WHOLE-DOCUMENT capability this fires under is {@code WRAPPED_HEADER} /
+     * {@code WRAPPED_HEADER_INTERIOR_TIER_COLUMNS}, not a {@code HeaderReconstructionFinding}.
+     * Confirmed end to end against the REAL Indian Overseas Bank statement this fixture models
+     * (see this class's own top-level doc comment): with real coordinates -- where the
+     * interior tier sits far enough from the outer group's own anchors that nothing coincidentally
+     * joins -- every one of that statement's 15 real transactions now stages with the correct
+     * date, amount, and direction (previously: zero, with the import reporting success). No
+     * finding is recorded because the header genuinely is no longer uncertain.
+     */
     @Test
-    void aWrappedHeaderThatFailsToMerge_isRecordedAsHeaderReconstructionFinding() {
+    void aWrappedHeaderThatUsedToFailToMergeIsNowMergedDirectly() {
         List<PositionedText> positioned = new ArrayList<>();
         positioned.addAll(upperHeaderLine(100f));
         positioned.addAll(vocabularyBearingLowerLine(104f));
@@ -102,27 +117,28 @@ class HeaderReconstructionEvidencePdfTableLocatorTest {
         positioned.addAll(narrowFallbackDataRow("15.03.2026", "Payment", 112f));
         positioned.addAll(narrowFallbackDataRow("16.03.2026", "Transfer", 116f));
 
-        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, null);
+        DocumentContext ctx = new DocumentContext("PDF", "test");
+        PdfTableLocator.LocatedDocument doc = new PdfTableLocator().locateAll(positioned, ctx);
 
         assertThat(doc.sections()).hasSize(1);
-        var findings = doc.sections().get(0).evidence().headerReconstructionFindings();
-        assertThat(findings).hasSize(1);
-        var finding = findings.get(0);
-        assertThat(finding.reason()).isEqualTo("TRANSACTION_HEADER_RECONSTRUCTION_UNCERTAIN");
-        assertThat(finding.sectionIndex()).isEqualTo(0);
-        assertThat(finding.vocabularySignals()).contains("debit", "credit", "balance");
-        assertThat(finding.acceptedHeaderColumnCount()).isEqualTo(2);
+        assertThat(doc.sections().get(0).evidence().headerReconstructionFindings())
+                .as("the header is no longer uncertain, so nothing is flagged for review")
+                .isEmpty();
+        assertThat(ctx.capabilities()).extracting("capability")
+                .contains("WRAPPED_HEADER", "WRAPPED_HEADER_INTERIOR_TIER_COLUMNS");
     }
 
     /**
-     * The SBI shape: a document whose FIRST section reconstructs correctly (a normal ledger
-     * header, real rows) and whose SECOND section -- introduced by an account banner, standing in
-     * for the real document's own "TRANSACTIONS FOR <supplementary cardholder>" marker -- hits
-     * the exact same wrapped-header failure as the test above. Proves the finding is scoped to
-     * the RIGHT section: section 0 must carry none of it, only section 1.
+     * The SBI shape: a document whose FIRST section is a normal ledger header, and whose SECOND
+     * section -- introduced by an account banner, standing in for the real document's own
+     * "TRANSACTIONS FOR <supplementary cardholder>" marker -- used to hit the wrapped-header
+     * failure the test above is named for. SUPERSEDED the same way: {@code
+     * WRAPPED_HEADER_INTERIOR_TIER_COLUMNS} now merges section 1's header directly, so this
+     * proves the ABSENCE of a finding is scoped correctly too -- section 1 never had a real
+     * failure to report, same as section 0 never did.
      */
     @Test
-    void theFindingIsScopedToTheSectionThatActuallyFailed_notTheWholeDocument() {
+    void aSecondSectionsHeaderThatUsedToFailToMergeIsNowMergedDirectlyToo() {
         List<PositionedText> positioned = new ArrayList<>();
         positioned.addAll(ledgerHeader(110f));
         positioned.addAll(ledgerRow("01.01.2026", "Coffee Shop", "50.00", "9950.00", 130f));
@@ -138,11 +154,11 @@ class HeaderReconstructionEvidencePdfTableLocatorTest {
 
         assertThat(doc.sections()).hasSize(2);
         assertThat(doc.sections().get(0).evidence().headerReconstructionFindings()).isEmpty();
-        var findings = doc.sections().get(1).evidence().headerReconstructionFindings();
-        assertThat(findings).hasSize(1);
-        assertThat(findings.get(0).sectionIndex()).isEqualTo(1);
-        assertThat(findings.get(0).vocabularySignals()).contains("debit", "credit", "balance");
-        assertThat(findings.get(0).acceptedHeaderColumnCount()).isEqualTo(2);
+        assertThat(doc.sections().get(1).evidence().headerReconstructionFindings())
+                .as("section 1's own header merged directly too, so nothing is flagged for review")
+                .isEmpty();
+        assertThat(ctx.capabilities()).extracting("capability")
+                .contains("WRAPPED_HEADER", "WRAPPED_HEADER_INTERIOR_TIER_COLUMNS");
     }
 
     @Test

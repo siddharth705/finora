@@ -321,6 +321,9 @@ public class AdminDtos {
             long duplicateCount,
             long transferCount,
             long refundCount,
+            long reversalCount,
+            long investmentTransferCount,
+            long supersededCount,
             long recurringCount,
             long totalTransactions
     ) {}

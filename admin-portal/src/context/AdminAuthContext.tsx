@@ -43,16 +43,35 @@ export const ADMIN_PORTAL_PERMISSIONS = [
   // listed: nothing in the frontend gates on it directly (the page always renders the dropdown;
   // the backend alone rejects an unauthorized change), so it isn't a portal-entry permission.
   'SUBSCRIPTION_MANAGEMENT_VIEW',
-  // Referrals page (D-28 PR4-C) -- same reasoning as SUBSCRIPTION_MANAGEMENT_VIEW immediately
-  // above: REFERRAL_MANAGEMENT_MANAGE (crediting a reward) is deliberately NOT listed, since the
-  // frontend always renders the "Credit Reward" button and only the backend rejects an
-  // unauthorized attempt.
-  'REFERRAL_MANAGEMENT_VIEW',
   // Insight Explorer, Phase 2's Founder Operations Dashboard (docs/proposals/reconciliation-
   // evolution-roadmap-proposal.md, Part 9). Its own permission rather than a reuse of USER_VIEW or
   // RECONCILIATION_VIEW -- this is the first admin surface exposing a user's actual computed
   // spend/category/merchant amounts (AdminInsightsExplorerController).
   'INSIGHTS_EXPLORER_VIEW',
+  // The admin notification dashboard (Task 12, V130). Its own permission rather than a reuse of
+  // PLATFORM_DIAGNOSTICS_VIEW -- see AdminNotificationController's own doc comment. Read-only
+  // today, but still gates portal entry the same as every other permission in this list: a role
+  // holding only NOTIFICATION_MANAGE must still get past this check to reach the one section it
+  // can use, same as the RELATIONSHIP_MANAGE bug this file's own doc comment records.
+  'NOTIFICATION_MANAGE',
+  // The held-imports triage queue (V135). Its own permission rather than a reuse of
+  // PLATFORM_DIAGNOSTICS_VIEW -- see AdminHeldImportController's own doc comment. Listed here
+  // for the same reason NOTIFICATION_MANAGE is: a role holding only this must still get past
+  // the portal-entry check to reach the one section it can use.
+  'IMPORT_TRIAGE_MANAGE',
+  // The trust-review queue (V144, Held Statement Review Plan 2). Its own permission rather than
+  // a reuse -- see AdminHeldStatementController's own doc comment for why resolving a hold is a
+  // different kind of access from PLATFORM_DIAGNOSTICS_VIEW's read-only visibility. Listed here
+  // for the same reason IMPORT_TRIAGE_MANAGE is, immediately above: a role holding only this must
+  // still get past the portal-entry check to reach the one section it can use, or this list's own
+  // documented bug (RELATIONSHIP_MANAGE, above) repeats itself for a third permission.
+  'TRUST_REVIEW_MANAGE',
+  // Support, Help & Feedback v1, Phase 9 (V149) -- gates the Support Tickets and Feedback pages
+  // (AdminSupportTicketController, AdminFeedbackController). V149's migration comment names this
+  // exact allowlist by file path as one of the four places a new admin permission must appear,
+  // precisely because of the RELATIONSHIP_MANAGE bug documented at the top of this list -- so it
+  // is listed here from the start, not discovered missing after the fact a third time.
+  'SUPPORT_MANAGE',
 ];
 
 export interface AdminAuthState {

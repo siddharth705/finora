@@ -19,6 +19,12 @@ app:
     queue:
       enabled: false
 
+  # Off under test so the suite is deterministic. Tests drive NotificationDispatcher directly via
+  # drainOnce()/recoverAbandoned(), which deliberately do not consult this flag.
+  notification:
+    queue:
+      enabled: false
+
   # BH-047 moved the expired-import-session sweep from the upload path to a scheduled job. Off
   # under test for the same reason the learning queue's poller is: a background thread deleting
   # import_sessions rows mid-run is precisely the cross-test pollution BH-058 was about. Tests that
@@ -47,6 +53,28 @@ app:
   # is exactly the cross-test pollution BH-058 was about. Tests that exercise the sweep call
   # AccountPurgeSweepService.sweep() directly, which does not consult this flag.
   account-purge:
+    sweep:
+      enabled: false
+
+  # Same reasoning again, and it bites harder here than for most sweeps: this one rewrites columns
+  # on transactions, the table nearly every integration test asserts against. A pass firing mid-test
+  # would change counterparty_type under a running assertion. Tests that exercise it call
+  # CounterpartyBackfillSweepService.sweep() directly, which does not consult this flag.
+  counterparty-backfill:
+    sweep:
+      enabled: false
+
+  # Same reasoning again: a background thread writing net_worth_snapshots mid-test is the
+  # cross-test pollution BH-058 was about. Tests that exercise the sweep call
+  # NetWorthSnapshotSweepService.sweep() directly, which does not consult this flag.
+  net-worth-snapshot:
+    sweep:
+      enabled: false
+
+  # Subscription billing V1 -- same reasoning as the sweeps above: a background thread downgrading
+  # subscriptions mid-test is the cross-test pollution BH-058 was about. Tests call
+  # SubscriptionReconciliationSweepService.sweep() directly, which does not consult this flag.
+  subscription-reconciliation:
     sweep:
       enabled: false
 
@@ -80,3 +108,11 @@ app:
       # which ignores this flag.
       discovery:
         enabled: false
+
+    # Subscription billing V1 -- RazorpayProperties.isConfigured() requires all three of these
+    # non-blank, so every one must be set here or every webhook/checkout request 503s before ever
+    # reaching its own logic under test.
+    razorpay:
+      key-id: test-key-id
+      key-secret: test-key-secret
+      webhook-secret: test-webhook-secret

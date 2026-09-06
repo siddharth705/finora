@@ -16,6 +16,7 @@
     "@tanstack/react-query": "^5.51.23",
     "axios": "^1.19.0",
     "firebase": "^12.17.1",
+    "framer-motion": "^13.1.1",
     "lucide-react": "^0.436.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
@@ -26,7 +27,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@sentry/vite-plugin": "^5.4.0",
-    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.6.4",
     "@types/qrcode": "^1.5.6",
@@ -38,7 +39,7 @@
     "eslint": "^10.8.1",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.11.0",
-    "jsdom": "^25.0.1",
+    "jsdom": "^30.0.1",
     "postcss": "^8.5.26",
     "tailwindcss": "^3.4.9",
     "typescript": "^5.5.4",
@@ -47,7 +48,7 @@
     "vitest": "^3.0.5"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.22.2"
   },
   "allowScripts": {
     "@sentry/cli@2.58.6": true

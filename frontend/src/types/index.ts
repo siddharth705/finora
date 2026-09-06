@@ -71,14 +71,35 @@ export interface Transaction {
   type: 'INCOME' | 'EXPENSE';
   tags: string[];
   notes: string | null;
-  reconciliationStatus: 'OK' | 'DUPLICATE' | 'TRANSFER' | 'REFUND';
+  // Mirrors Transaction.ReconciliationStatus (backend) exactly -- was missing REVERSAL,
+  // INVESTMENT_TRANSFER and SUPERSEDED, which meant those three fell through TypeScript's
+  // exhaustiveness checking on every switch/lookup keyed off this field, same class of gap
+  // TransactionReconciliationExplanation.status (api/endpoints.ts) had independently.
+  reconciliationStatus: 'OK' | 'DUPLICATE' | 'TRANSFER' | 'REFUND' | 'REVERSAL' | 'INVESTMENT_TRANSFER' | 'SUPERSEDED';
   recurring: boolean;
   needsCategoryReview: boolean;
   // False whenever the category came from the suggestion engine (rule match, learned merchant
   // match, or a low-confidence "Other" default) or a CSV import; true the moment a user
   // explicitly sets/corrects it — see Ledger.tsx's "Auto"/"Manual" badge.
   categoryManuallySet: boolean;
+  // WHO was on the other side — a separate question from WHAT the money was for, which is
+  // `categoryName`. Deliberately carries NO direction: "sent to" vs "received from" is `type`, and
+  // the two are composed at render time by lib/counterpartyLabel.ts. Never null — the column is
+  // NOT NULL with an UNKNOWN default.
+  //
+  // UNKNOWN is a real answer for roughly a fifth of rows, and is also what a row reads before the
+  // server's backfill has reached it. Both mean "nothing known about the counterparty" and both
+  // render as nothing at all.
+  counterpartyType: CounterpartyType;
 }
+
+// Mirrors the backend's com.finora.util.CounterpartyType.
+export type CounterpartyType =
+  | 'PERSON'
+  | 'BUSINESS'
+  | 'FINANCIAL_INSTITUTION'
+  | 'GOVERNMENT'
+  | 'UNKNOWN';
 
 export interface DashboardSummary {
   currentBalance: number;
@@ -247,7 +268,7 @@ export interface StagedRow {
   // 'user_rule' / 'global_rule' are the new category_rules-table matches (RuleEngineService);
   // 'rule' stays the pre-existing static-keyword-table match (CategoryRules, util package) --
   // see CategorizationService.decisionSourceFor for the full mapping to the persisted enum.
-  categorySource: 'learned' | 'rule' | 'user_rule' | 'global_rule' | 'default' | 'file';
+  categorySource: 'learned' | 'rule' | 'user_rule' | 'global_rule' | 'structural_p2p' | 'default' | 'file';
   // Set only when categorySource is 'user_rule' or 'global_rule' -- the id of the category_rules
   // row that produced this suggestion. Echoed back unchanged in the confirm request so it lands
   // on Transaction.decisionRuleId (see Import.tsx's confirmImport).
@@ -290,10 +311,44 @@ export interface StagedRow {
   rowPosition: number | null;
 }
 
+// Just enough to preview one grouped transaction before committing to a bulk category --
+// mirrors TransactionGroupingService.TransactionSummary exactly (date/description/amount/type,
+// nothing else this preview needs).
+export interface MerchantGroupTransaction {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  type: 'INCOME' | 'EXPENSE';
+}
+
 export interface MerchantGroup {
   merchantId: string;
   merchantName: string;
   transactionIds: string[];
+  // Same rows as transactionIds, same order, carrying enough detail to render a preview list --
+  // see TransactionGroupingService.MerchantGroup's own doc comment for why both fields exist
+  // rather than deriving one from the other on this side.
+  transactions: MerchantGroupTransaction[];
+}
+
+// Mirrors TransactionGroupingService.CounterpartyGroup exactly -- see that record's own doc
+// comment for what each field means and why. Only ever PERSON or BUSINESS (the endpoint never
+// returns any other type), and always excludes rows groupsNeedsReview (the merchant grouping)
+// already covers -- the two partition the review backlog rather than double-surfacing a row.
+export interface CounterpartyGroup {
+  counterpartyKey: string;
+  counterpartyType: CounterpartyType;
+  // False for a name: key (a guessed fragment of the narration). MUST be read before implying
+  // this group is a confirmed identity rather than a probable one -- see CounterpartyIdentity's
+  // own doc on why a name: key must never be presented to a user as a resolved identity.
+  identityIsStrong: boolean;
+  // A representative narration, not an invented "resolved counterparty name" -- neither key shape
+  // (a UPI handle fragment, or a guessed name token) is fit to show as one.
+  label: string;
+  totalValue: number;
+  transactionIds: string[];
+  transactions: MerchantGroupTransaction[];
 }
 
 // Best-effort fields pulled from the statement itself. Every field is nullable and genuinely

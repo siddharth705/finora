@@ -2,11 +2,15 @@ package com.finora.imports;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.finora.config.BuildVersionResolver;
 import com.finora.dto.ImportDto.DetectedAccountInfo;
 import com.finora.dto.ImportDto.StagedRow;
+import com.finora.entity.HeldStatement;
 import com.finora.entity.ImportSession;
 import com.finora.exception.ApiException;
 import com.finora.exception.ErrorCode;
+import com.finora.repository.HeldStatementRepository;
+import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +25,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import org.mockito.ArgumentCaptor;
@@ -36,6 +41,9 @@ import org.springframework.data.domain.Pageable;
 class ImportSessionServiceTest {
 
     private ImportSessionRepository importSessionRepository;
+    private ImportJobRepository importJobRepository;
+    private HeldStatementRepository heldStatementRepository;
+    private BuildVersionResolver buildVersionResolver;
     private ImportSessionService service;
     private final UUID userId = UUID.randomUUID();
     private final UUID otherUserId = UUID.randomUUID();
@@ -43,9 +51,22 @@ class ImportSessionServiceTest {
     @BeforeEach
     void setUp() {
         importSessionRepository = mock(ImportSessionRepository.class);
+        importJobRepository = mock(ImportJobRepository.class);
+        heldStatementRepository = mock(HeldStatementRepository.class);
         ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
-        service = new ImportSessionService(importSessionRepository, objectMapper);
+        buildVersionResolver = mock(BuildVersionResolver.class);
+        // Every EXISTING test in this class (including all the Phase 1A dedup-window tests) was
+        // written against a world with no version concept at all -- defaulting to null here makes
+        // them exercise the fallback-window path Phase 1B preserves for that case, unchanged,
+        // rather than silently starting to exercise the new version-comparison path instead.
+        when(buildVersionResolver.currentCommit()).thenReturn(null);
+        service = new ImportSessionService(importSessionRepository, importJobRepository,
+                heldStatementRepository, objectMapper, buildVersionResolver);
         when(importSessionRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        // No test in this class is about a trust hold unless it says so -- default to "nothing is
+        // held" so every existing claimForConfirmation/listResumableSessions test keeps exercising
+        // exactly what it did before this repository existed.
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(any())).thenReturn(List.of());
     }
 
     private StagedRow sampleRow() {
@@ -213,7 +234,9 @@ class ImportSessionServiceTest {
     void sweepExpiredSessions_deletesExpiredSessions_regardlessOfWhoOwnsThem() {
         ImportSession someoneElsesExpired =
                 sessionOwnedBy(otherUserId, Instant.now().minusSeconds(60), ImportSession.STATUS_STAGED);
-        when(importSessionRepository.findByExpiresAtBeforeOrderByExpiresAtAsc(any(), any()))
+        // Names the sweep's own query, which now also excludes sessions an open trust review
+        // still depends on -- see HeldSessionSurvivesCleanupIT for why that exemption exists.
+        when(importSessionRepository.findSweepableExpiredSessions(any(), any(), any()))
                 .thenReturn(List.of(someoneElsesExpired));
 
         // BH-047 moved WHERE this happens, not WHETHER it does. The assertion below is the one
@@ -224,7 +247,7 @@ class ImportSessionServiceTest {
         verify(importSessionRepository).deleteAll(List.of(someoneElsesExpired));
 
         ArgumentCaptor<Pageable> page = ArgumentCaptor.forClass(Pageable.class);
-        verify(importSessionRepository).findByExpiresAtBeforeOrderByExpiresAtAsc(any(), page.capture());
+        verify(importSessionRepository).findSweepableExpiredSessions(any(), any(), page.capture());
         assertThat(page.getValue().getPageSize()).isLessThanOrEqualTo(100);
     }
 
@@ -332,6 +355,133 @@ class ImportSessionServiceTest {
     }
 
     /**
+     * The actual bug this method exists to fix (2026-08-31): a session created minutes-to-hours
+     * ago, still well within its 48h TTL, is NOT the double-click/retry case this dedup check was
+     * built for -- it's a genuinely later re-upload, and by then the parser that produced its
+     * staged rows may have been fixed. Confirmed against a real HDFC statement: a stale session
+     * kept replaying a 12-row result on every re-upload even after the parser was fixed to
+     * correctly extract all 243 rows. A session must be recent, not merely unexpired, to be
+     * replayed automatically.
+     */
+    @Test
+    void findLiveSessionByContentHash_deletesAStaleButUnexpiredMatch_andReportsNoneFound() {
+        ImportSession stale = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                stale, "createdAt", Instant.now().minus(java.time.Duration.ofMinutes(10)));
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-d", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(stale));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-d");
+
+        assertThat(found).isEmpty();
+        verify(importSessionRepository).delete(stale);
+    }
+
+    /**
+     * The dedup protection this method exists FOR must still work: a session created moments ago
+     * (a double-click, or a client retrying a request whose response was lost) is still returned
+     * as a match, not treated as stale.
+     */
+    @Test
+    void findLiveSessionByContentHash_stillReturnsAVeryRecentMatch_withinTheDedupWindow() {
+        ImportSession justCreated = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                justCreated, "createdAt", Instant.now().minusSeconds(5));
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-e", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(justCreated));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-e");
+
+        assertThat(found).contains(justCreated);
+        verify(importSessionRepository, never()).delete(any());
+    }
+
+    /**
+     * Phase 1B: the actual fix for the gap Phase 1A's window still left open -- a session created
+     * moments before a parser fix deploys was still replayed for the rest of that 5-minute window.
+     * Version comparison has no such gap: a mismatch is a mismatch regardless of age.
+     */
+    @Test
+    void findLiveSessionByContentHash_deletesAVersionMismatchedMatch_evenIfCreatedSecondsAgo() {
+        when(buildVersionResolver.currentCommit()).thenReturn("newcommit");
+        ImportSession session = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(session, "createdAt", Instant.now());
+        session.setParserVersion("oldcommit");
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-f", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(session));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-f");
+
+        assertThat(found).isEmpty();
+        verify(importSessionRepository).delete(session);
+    }
+
+    /**
+     * A session staged before this feature shipped has parserVersion == null, which must never
+     * equal a real resolved commit -- otherwise every pre-existing staged session would look like
+     * it matches the current build by coincidence of both being "unset".
+     */
+    @Test
+    void findLiveSessionByContentHash_treatsANullStoredVersion_asAMismatch() {
+        when(buildVersionResolver.currentCommit()).thenReturn("newcommit");
+        ImportSession session = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(session, "createdAt", Instant.now());
+        // parserVersion left null -- the default for a session built via sessionOwnedBy.
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-g", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(session));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-g");
+
+        assertThat(found).isEmpty();
+        verify(importSessionRepository).delete(session);
+    }
+
+    /**
+     * The other half: when the version DOES match, the session replays even if it's old (though
+     * still unexpired) -- proving version comparison, not age, is now the real freshness signal
+     * whenever a version can be resolved at all.
+     */
+    @Test
+    void findLiveSessionByContentHash_returnsAVersionMatchedMatch_evenIfCreatedDaysAgo() {
+        when(buildVersionResolver.currentCommit()).thenReturn("samecommit");
+        ImportSession session = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(
+                session, "createdAt", Instant.now().minus(java.time.Duration.ofHours(40)));
+        session.setParserVersion("samecommit");
+        when(importSessionRepository.findFirstByUserIdAndContentHashAndStatusOrderByCreatedAtDesc(
+                userId, "hash-h", ImportSession.STATUS_STAGED)).thenReturn(Optional.of(session));
+
+        Optional<ImportSession> found = service.findLiveSessionByContentHash(userId, "hash-h");
+
+        assertThat(found).contains(session);
+        verify(importSessionRepository, never()).delete(any());
+    }
+
+    /** createSession stamps the resolved build version onto every newly-staged session. */
+    @Test
+    void createSession_stampsTheCurrentParserVersion() {
+        when(buildVersionResolver.currentCommit()).thenReturn("stampedcommit");
+
+        ImportSession created = service.createSession(userId, "statement.csv", new byte[]{1, 2, 3},
+                List.of(sampleRow()), sampleDetected());
+
+        assertThat(created.getParserVersion()).isEqualTo("stampedcommit");
+    }
+
+    /** createMultiSection stamps it too -- a separate code path, not covered by the assertion above. */
+    @Test
+    void createMultiSection_stampsTheCurrentParserVersion() {
+        when(buildVersionResolver.currentCommit()).thenReturn("stampedcommit");
+        var section = new com.finora.dto.ImportDto.StagedAccountSection(
+                sampleDetected(), List.of(sampleRow()), 1, 0, List.of());
+
+        ImportSession created = service.createMultiSection(userId, "composite.pdf",
+                new byte[]{1, 2, 3}, List.of(section));
+
+        assertThat(created.getParserVersion()).isEqualTo("stampedcommit");
+    }
+
+    /**
      * The actual regression this method exists to prevent: a user with BOTH kinds staged used to
      * get an exception for their entire {@code GET /import/sessions} response, because
      * {@code listActiveSessions} included the MULTI_ACCOUNT session and the controller's
@@ -368,6 +518,146 @@ class ImportSessionServiceTest {
         assertThat(resumable).isEmpty();
     }
 
+    /**
+     * The bug this pins: a session backed by a HELD_FOR_TRUST_REVIEW job is technically STAGED
+     * and technically SINGLE_ACCOUNT, so nothing about the session row itself says it is any
+     * different from an ordinary unfinished import. Confirmed end-to-end before this test existed
+     * -- the real browser "Continue Import" -> "Confirm Import" flow reached claimForConfirmation
+     * and wrote the held rows to the ledger, exactly the outcome HoldDecision's own doc comment
+     * says a hold exists to prevent.
+     */
+    @Test
+    void listResumableSessions_excludesASessionUnderTrustReview() {
+        ImportSession held = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        ImportSession ordinary = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(held, ordinary));
+        stubOpenHold(List.of(held.getId(), ordinary.getId()), held.getId());
+
+        List<ImportSession> resumable = service.listResumableSessions(userId);
+
+        assertThat(resumable).containsExactly(ordinary);
+    }
+
+    /** {@link #listResumableSessions_excludesASessionUnderTrustReview}'s counterpart for the
+     *  bug {@code ImportJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull}'s own
+     *  doc comment describes: a REJECTED hold moves the job to plain FAILED (indistinguishable
+     *  from any other failed import at the job-status level) without touching the session at all,
+     *  so a status-only check stopped blocking it the moment an admin rejected the extraction --
+     *  exactly the outcome trust review exists to prevent, reopened through the reject path. */
+    @Test
+    void listResumableSessions_excludesASessionWhoseTrustReviewWasRejected() {
+        ImportSession rejected = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        ImportSession ordinary = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(rejected, ordinary));
+        stubRejectedHold(List.of(rejected.getId(), ordinary.getId()), rejected.getId());
+
+        List<ImportSession> resumable = service.listResumableSessions(userId);
+
+        assertThat(resumable).containsExactly(ordinary);
+    }
+
+    /** An APPROVED hold is the one case a session should become confirmable again -- unlike
+     *  reject, this is the intended release (matches {@code HeldStatementService.approve}'s own
+     *  doc comment: "the staged rows may reach the user's confirm step"). */
+    @Test
+    void listResumableSessions_stillOffersASessionWhoseTrustReviewWasApproved() {
+        ImportSession approved = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findByUserIdAndStatusOrderByCreatedAtDesc(userId, ImportSession.STATUS_STAGED))
+                .thenReturn(List.of(approved));
+        UUID heldStatementId = UUID.randomUUID();
+        com.finora.entity.ImportJob job = jobLinkedToHold(approved.getId(), heldStatementId);
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(any()))
+                .thenReturn(List.of(job));
+        when(heldStatementRepository.findByImportJobIdInAndStatusNot(any(), eq(HeldStatement.Status.IMPORTED)))
+                .thenReturn(List.of()); // an approved hold IS status IMPORTED, so it never matches "not IMPORTED"
+
+        List<ImportSession> resumable = service.listResumableSessions(userId);
+
+        assertThat(resumable).containsExactly(approved);
+    }
+
+    private com.finora.entity.ImportJob jobLinkedToHold(UUID sessionId, UUID heldStatementId) {
+        com.finora.entity.ImportJob job = new com.finora.entity.ImportJob(
+                userId, "statement.csv", "hash-" + sessionId, "objects/key-" + sessionId, "CSV");
+        job.markClaimed("worker", Instant.now());
+        job.holdForTrustReview(sessionId, heldStatementId, Instant.now());
+        return job;
+    }
+
+    private HeldStatement heldStatementWithId(UUID id) {
+        HeldStatement held = new HeldStatement("HELD-TEST-" + id, UUID.randomUUID(), userId,
+                "objects/key", "test trigger summary");
+        org.springframework.test.util.ReflectionTestUtils.setField(held, "id", id);
+        return held; // defaults to Status.HELD -- still open, still blocking
+    }
+
+    /** Stubs both repository hops for a session still under an OPEN hold (default {@code HELD}
+     *  status) on {@code blockedSessionId}, among the full {@code sessionIds} the caller asks
+     *  about. */
+    private void stubOpenHold(List<UUID> sessionIds, UUID blockedSessionId) {
+        UUID heldStatementId = UUID.randomUUID();
+        com.finora.entity.ImportJob job = jobLinkedToHold(blockedSessionId, heldStatementId);
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(
+                argThat(ids -> ids.containsAll(sessionIds))))
+                .thenReturn(List.of(job));
+        when(heldStatementRepository.findByImportJobIdInAndStatusNot(
+                eq(List.of(job.getId())), eq(HeldStatement.Status.IMPORTED)))
+                .thenReturn(List.of(heldStatementWithId(heldStatementId)));
+    }
+
+    /** Same shape as {@link #stubOpenHold}, but the hold was REJECTED rather than left open --
+     *  the case {@code findByImportSessionIdInAndHeldStatementIdIsNotNull} was introduced for. */
+    private void stubRejectedHold(List<UUID> sessionIds, UUID blockedSessionId) {
+        UUID heldStatementId = UUID.randomUUID();
+        com.finora.entity.ImportJob job = jobLinkedToHold(blockedSessionId, heldStatementId);
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(
+                argThat(ids -> ids.containsAll(sessionIds))))
+                .thenReturn(List.of(job));
+        HeldStatement rejected = heldStatementWithId(heldStatementId);
+        rejected.reject(UUID.randomUUID(), Instant.now());
+        when(heldStatementRepository.findByImportJobIdInAndStatusNot(
+                eq(List.of(job.getId())), eq(HeldStatement.Status.IMPORTED)))
+                .thenReturn(List.of(rejected));
+    }
+
+    @Test
+    void claimForConfirmation_rejectsASessionUnderTrustReview() {
+        UUID sessionId = UUID.randomUUID();
+        ImportSession staged = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(staged, "id", sessionId);
+        when(importSessionRepository.findById(sessionId)).thenReturn(Optional.of(staged));
+        stubOpenHold(List.of(sessionId), sessionId);
+
+        assertThatThrownBy(() -> service.claimForConfirmation(userId, sessionId))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
+
+        verify(importSessionRepository, never()).claimForConfirmation(any());
+    }
+
+    /** The bug this pins: before this fix, once {@code HeldStatementService.reject()} moved the
+     *  job to {@code FAILED}, this same request would have sailed through -- {@code
+     *  claimForConfirmation}'s old check only asked "is the job status HELD_FOR_TRUST_REVIEW right
+     *  now," and FAILED (for any reason, rejection included) always answered no. Confirmed as a
+     *  real, deterministic gap (not a race): {@code reject()} never touches the {@code
+     *  ImportSession} row, so it stays STAGED and unexpired for the rest of its ordinary 48h TTL. */
+    @Test
+    void claimForConfirmation_rejectsASessionWhoseTrustReviewWasRejected() {
+        UUID sessionId = UUID.randomUUID();
+        ImportSession staged = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        org.springframework.test.util.ReflectionTestUtils.setField(staged, "id", sessionId);
+        when(importSessionRepository.findById(sessionId)).thenReturn(Optional.of(staged));
+        stubRejectedHold(List.of(sessionId), sessionId);
+
+        assertThatThrownBy(() -> service.claimForConfirmation(userId, sessionId))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
+
+        verify(importSessionRepository, never()).claimForConfirmation(any());
+    }
+
     @Test
     void claimForConfirmation_flipsStatusAtomically_whenSessionIsStillStaged() {
         UUID sessionId = UUID.randomUUID();
@@ -397,6 +687,37 @@ class ImportSessionServiceTest {
         assertThatThrownBy(() -> service.claimForConfirmation(userId, sessionId))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("already been confirmed");
+    }
+
+    /**
+     * The TOCTOU window {@code ImportSessionRepository.claimForConfirmation}'s own atomic UPDATE
+     * now closes: a hold that commits in the gap between the pre-check read above and the UPDATE
+     * itself must still be reported as a hold, not misreported as "already confirmed" the way a
+     * naive 0-rows-means-someone-else-confirmed-it read would. The atomic UPDATE's own {@code NOT
+     * EXISTS} clause is what actually prevents the confirm from succeeding in this scenario (not
+     * exercised by a mock, since it lives in real SQL) -- this test pins the service-layer half:
+     * that a 0-row result gets re-diagnosed rather than assumed to mean one specific thing.
+     */
+    @Test
+    void claimForConfirmation_reportsAHold_whenTheRaceWindowLostToOneInstead() {
+        UUID sessionId = UUID.randomUUID();
+        ImportSession staged = sessionOwnedBy(userId, Instant.now().plusSeconds(600), ImportSession.STATUS_STAGED);
+        when(importSessionRepository.findById(sessionId)).thenReturn(Optional.of(staged));
+        when(importSessionRepository.claimForConfirmation(sessionId)).thenReturn(0);
+        UUID heldStatementId = UUID.randomUUID();
+        com.finora.entity.ImportJob job = jobLinkedToHold(sessionId, heldStatementId);
+        // Simulates a hold that committed after the pre-check but before the atomic UPDATE: the
+        // pre-check (first call) sees nothing yet, the post-failure re-check (second call) sees it.
+        when(importJobRepository.findByImportSessionIdInAndHeldStatementIdIsNotNull(List.of(sessionId)))
+                .thenReturn(List.of())
+                .thenReturn(List.of(job));
+        when(heldStatementRepository.findByImportJobIdInAndStatusNot(
+                List.of(job.getId()), HeldStatement.Status.IMPORTED))
+                .thenReturn(List.of(heldStatementWithId(heldStatementId)));
+
+        assertThatThrownBy(() -> service.claimForConfirmation(userId, sessionId))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", ErrorCode.IMPORT_SESSION_HELD_FOR_REVIEW);
     }
 
     @Test

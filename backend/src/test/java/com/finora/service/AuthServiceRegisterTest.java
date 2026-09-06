@@ -141,7 +141,7 @@ class AuthServiceRegisterTest {
         authService.register(request("newperson@example.com", "+919876500002"));
 
         verify(userRepository).save(any(User.class));
-        verify(auditService).record(any(), eq("EMAIL_SENT"), eq("User"), any(),
+        verify(auditService).recordEvenOnRollback(any(), eq("EMAIL_SENT"), eq("User"), any(),
                 argThat(metadata -> "welcome".equals(metadata.get("type")) && Boolean.TRUE.equals(metadata.get("success"))));
     }
 

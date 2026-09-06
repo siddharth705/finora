@@ -25,10 +25,10 @@ interface MarketingPanelProps {
 
 export function MarketingPanel({ badge, headline, description }: MarketingPanelProps) {
   return (
-    <div className="hidden lg:block">
+    <div className="hidden lg:block auth-reveal">
       <Link to="/" className="flex items-center gap-2.5 mb-8 w-fit">
         <BrandMark size={36} variant="auto" className="rounded-lg" />
-        <span className="font-extrabold tracking-wide text-ink text-xl">FYNORA</span>
+        <span className="font-display font-extrabold tracking-wide text-ink text-xl">FYNORA</span>
       </Link>
 
       <span className="inline-block bg-primary-light text-primary text-xs font-medium px-3 py-1 rounded-full mb-4">

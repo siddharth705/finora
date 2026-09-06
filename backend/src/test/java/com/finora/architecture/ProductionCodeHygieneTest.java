@@ -2,8 +2,6 @@ package com.finora.architecture;
 
 import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClasses;
-import com.tngtech.archunit.core.importer.ClassFileImporter;
-import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 
@@ -39,9 +37,7 @@ class ProductionCodeHygieneTest {
     private static final Set<String> DATE_API_BOUNDARY = Set.of("com.finora.security.JwtService");
 
     private JavaClasses productionClasses() {
-        return new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("com.finora");
+        return ProductionClasses.INSTANCE;
     }
 
     private Set<String> classesUsingALegacyDateType() {

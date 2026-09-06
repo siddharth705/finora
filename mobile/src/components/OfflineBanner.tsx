@@ -79,26 +79,40 @@ export function OfflineBoundary({ children }: { children: ReactNode }) {
     wasOnline.current = online;
   }, [online, confirmBackOnline]);
 
-  if (online && !showingBackOnline) return <>{children}</>;
-
+  const showBar = !online || showingBackOnline;
   const barColor = online ? c.successBg : c.warningBg;
   const textColor = online ? c.successInk : c.warningInk;
   const message = online ? BACK_ONLINE_MESSAGE : OFFLINE_MESSAGE;
 
+  // `children` must sit at a STRUCTURALLY IDENTICAL position in both states. This used to early-
+  // return a bare <>{children}</> while online and the wrapped tree otherwise, which changed the
+  // returned root's element type (Fragment <-> View) and re-parented the navigator two levels
+  // deeper. React reconciles by element type per position, so every connectivity flip unmounted
+  // and remounted the ENTIRE app below this boundary -- destroying all component state on a blip
+  // in a lift or a WiFi->cellular handoff. The visible casualty was ImportScreen: a part-reviewed
+  // statement (sessionId, staged rows, per-row decisions, the chosen account) is component state,
+  // so it reset to the upload step and the file had to be picked and parsed again. Rendering the
+  // same wrapper unconditionally and toggling only the strip keeps the subtree mounted.
   return (
     <View style={styles.flex}>
-      <View
-        style={[styles.bar, { backgroundColor: barColor, paddingTop: insets.top + 6 }]}
-        // `accessible` groups the strip into one announced element rather than leaving the role on
-        // a container a screen reader steps past on its way to the text. It is also what makes the
-        // role queryable, so the announcement can actually be asserted rather than assumed.
-        accessible
-        accessibilityRole="alert"
-        accessibilityLiveRegion="polite"
-      >
-        <Text style={[styles.text, { color: textColor }]}>{message}</Text>
-      </View>
-      <SafeAreaInsetsContext.Provider value={{ ...insets, top: 0 }}>
+      {showBar ? (
+        <View
+          style={[styles.bar, { backgroundColor: barColor, paddingTop: insets.top + 6 }]}
+          // `accessible` groups the strip into one announced element rather than leaving the role on
+          // a container a screen reader steps past on its way to the text. It is also what makes the
+          // role queryable, so the announcement can actually be asserted rather than assumed.
+          accessible
+          accessibilityRole="alert"
+          accessibilityLiveRegion="polite"
+        >
+          <Text style={[styles.text, { color: textColor }]}>{message}</Text>
+        </View>
+      ) : null}
+      {/* Always mounted, so the provider itself is never added or removed from the tree above
+          `children` -- only the value changes. `top: 0` while the strip is up tells screens the
+          notch allowance is already spent (see this component's doc comment); passing the real
+          insets through otherwise is exactly what the old early-return achieved by not wrapping. */}
+      <SafeAreaInsetsContext.Provider value={showBar ? { ...insets, top: 0 } : insets}>
         <View style={styles.flex}>{children}</View>
       </SafeAreaInsetsContext.Provider>
     </View>

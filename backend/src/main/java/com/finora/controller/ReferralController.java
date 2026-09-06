@@ -9,8 +9,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** D-28 PR4-C. The current user's own referral code, referrals, and wallet balance
- *  (proposal §4). */
+/** Refer &amp; Earn MVP -- the current user's own referral code and referral count. */
 @RestController
 @RequestMapping("/api/v1/referrals")
 public class ReferralController {

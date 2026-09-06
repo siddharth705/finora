@@ -161,6 +161,16 @@ class BankRegistryTest {
     }
 
     @Test
+    void get_pnbWebsiteUrlIsItsRealBankInDomain_notTheLegacyOne() {
+        // BankLogo.tsx looks this domain up on Logo.dev by hostname, so a stale/wrong domain here
+        // silently surfaces a wrong bank's logo. pnbindia.in is/was PNB's legacy domain; RBI's
+        // bank.in registry gives PNB pnb.bank.in as its verified official domain, and that is the
+        // one Logo.dev should be asked about (confirmed live: pnb.bank.in serves Punjab National
+        // Bank's own site, footer-copyrighted to "Punjab National Bank").
+        assertThat(BankRegistry.get("PNB").websiteUrl()).isEqualTo("https://pnb.bank.in");
+    }
+
+    @Test
     void get_neverThrowsForAnUnrecognizedOrNullId_fallingBackToOther() {
         assertThat(BankRegistry.get("NOT_A_REAL_BANK").id()).isEqualTo(BankRegistry.UNKNOWN_ID);
         assertThat(BankRegistry.get(null).id()).isEqualTo(BankRegistry.UNKNOWN_ID);

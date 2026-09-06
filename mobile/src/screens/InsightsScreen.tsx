@@ -1,18 +1,29 @@
 import {
-  RefreshControl, ScrollView, StyleSheet, Text, View,
+  Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { SkeletonCard } from '../components/skeletons/Skeletons';
 import { insightsApi, recurringApi } from '../api/endpoints';
 import { fmtCurrency, fmtDate } from '../lib/format';
 import { deriveRefreshing } from '../lib/refreshingIndicator';
 import { radius, spacing, useTheme } from '../theme';
+import type { AppTabParamList } from '../navigation/types';
 
 /** Port of frontend/src/pages/Insights.tsx. */
 export function InsightsScreen() {
+  // D3 (Track D security cleanup). Spend movers and observations name real merchants and amounts
+  // -- same screenshot/screen-recording exposure Dashboard/Accounts/Statement History already
+  // guard against.
+  usePreventScreenCapture();
   const c = useTheme();
   const queryClient = useQueryClient();
+  // Lives inside the More stack, not on the tab bar itself -- see BudgetsScreen's identical
+  // comment (Track C/C4).
+  const navigation = useNavigation();
 
   // useQueries, not Promise.all: the web page loses BOTH sections when either endpoint fails,
   // because one rejected promise fails the pair. Recurring payments and observations are
@@ -125,13 +136,25 @@ export function InsightsScreen() {
             <EmptyState message="Not enough history yet to compare trends — add a few months of transactions." />
           ) : (
             movers.map((m) => (
-              <View
+              // Track C/C4. categoryName only, no date range: this endpoint reports a category
+              // mover, not which calendar month it moved in (InsightsData carries no month field
+              // at all, unlike DashboardSummary), so there is no server-given period here to
+              // anchor a range to -- an invented one would be a guess dressed up as a fact. The
+              // category alone is still a real, honest narrowing.
+              <Pressable
                 key={m.category}
                 style={[styles.row, { borderBottomColor: c.border }]}
-                accessible
+                accessibilityRole="button"
                 accessibilityLabel={`${m.category}: ${fmtCurrency(m.current)} versus a usual ${fmtCurrency(
                   m.priorAverage
                 )}, ${(m.pctChange ?? 0) >= 0 ? 'up' : 'down'} ${Math.abs(m.pctChange ?? 0).toFixed(0)} percent`}
+                accessibilityHint="Opens these transactions"
+                android_ripple={{ color: c.border }}
+                onPress={() => {
+                  navigation.getParent<BottomTabNavigationProp<AppTabParamList>>()?.navigate('Transactions', {
+                    filters: { categoryName: m.category, label: m.category, nonce: Date.now() },
+                  });
+                }}
               >
                 <View style={styles.rowMain}>
                   <Text style={[styles.rowTitle, { color: c.ink }]} numberOfLines={1}>
@@ -146,7 +169,7 @@ export function InsightsScreen() {
                 <Text style={[styles.delta, { color: (m.pctChange ?? 0) >= 0 ? c.danger : c.success }]}>
                   {(m.pctChange ?? 0) >= 0 ? '▲' : '▼'} {Math.abs(m.pctChange ?? 0).toFixed(0)}%
                 </Text>
-              </View>
+              </Pressable>
             ))
           )}
         </Card>

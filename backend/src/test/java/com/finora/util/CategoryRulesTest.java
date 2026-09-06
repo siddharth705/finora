@@ -37,6 +37,38 @@ class CategoryRulesTest {
     }
 
     @Test
+    void extractMerchantLabel_isNullWhenNothingButARailTokenSurvives() {
+        // "UPI-REF9182736" has no counterparty at all once the numeric reference is stripped --
+        // extractMerchant() itself still returns "upi" (its raw reduction is reused elsewhere for
+        // symmetric matching, see MerchantNormalizationEngine), but the per-transaction label the
+        // UI shows -- and looks up on Logo.dev by name -- must not be a bare rail word: Logo.dev
+        // resolves "upi"/"ach" to real, unrelated trademarked companies.
+        assertThat(CategoryRules.extractMerchant("UPI-REF9182736")).isEqualTo("upi");
+        assertThat(CategoryRules.extractMerchantLabel("UPI-REF9182736")).isNull();
+    }
+
+    @Test
+    void extractMerchantLabel_isNullWhenEveryTokenIsARailWord() {
+        // "ach" and "transfer" are both in PaymentRailTokens.RAIL_TOKENS -- no counterparty word
+        // survives, so this must null out exactly like the single-rail-token case above.
+        assertThat(CategoryRules.extractMerchantLabel("ACH TRANSFER")).isNull();
+    }
+
+    @Test
+    void extractMerchantLabel_keepsTheRealMerchantWhenARailTokenLeadsIt() {
+        assertThat(CategoryRules.extractMerchantLabel("UPI-SUNIL VERMA-REF9182736"))
+                .isEqualTo("upi sunil verma");
+    }
+
+    @Test
+    void extractMerchantLabel_keepsUnknownAsIs() {
+        // "unknown" is extractMerchant()'s own empty-input fallback (see the test above), not a
+        // rail word -- extractMerchantLabel must not treat it as "nothing survived" and null it
+        // out a second time.
+        assertThat(CategoryRules.extractMerchantLabel("")).isEqualTo("unknown");
+    }
+
+    @Test
     void suggestCategory_matchesDiningKeyword() {
         assertThat(CategoryRules.suggestCategory("SWIGGY*ORDR9182 BLR")).isEqualTo("Dining");
     }
@@ -49,6 +81,31 @@ class CategoryRulesTest {
     @Test
     void suggestCategory_matchesTransferKeyword_forCreditCardPayments() {
         assertThat(CategoryRules.suggestCategory("CC PYMT AUTOPAY VISA")).isEqualTo("Transfer");
+    }
+
+    /**
+     * Real corpus finding (docs/superpowers/specs/2026-09-01-transaction-categorization-design.md
+     * §1): "ASSPL" is how Amazon Seller Services actually appears on real Indian card statements
+     * -- never the word "amazon" itself.
+     */
+    @Test
+    void suggestCategory_matchesAsspl_amazonSellerServicesAbbreviation() {
+        assertThat(CategoryRules.suggestCategory("ASSPL PAYTM 4471829")).isEqualTo("Shopping");
+    }
+
+    /**
+     * Real corpus finding: a BharatBillPay credit-card-bill narration abbreviated to "CC PAYMENT"
+     * -- a near-miss of the already-seeded "credit card payment"/"card bill payment" phrases that
+     * the existing CONTAINS-style keywords don't cover.
+     */
+    @Test
+    void suggestCategory_matchesCcPayment_billerAbbreviation() {
+        assertThat(CategoryRules.suggestCategory("BPPY CC PAYMENT REF882134")).isEqualTo("Transfer");
+    }
+
+    @Test
+    void suggestCategory_matchesCinnabon() {
+        assertThat(CategoryRules.suggestCategory("UPI-Cinnabon CP-REF7719923")).isEqualTo("Dining");
     }
 
     @Test
@@ -141,5 +198,119 @@ class CategoryRulesTest {
     @Test
     void suggestCategory_stillMatchesRealInvestmentSips() {
         assertThat(CategoryRules.suggestCategory("UPI-GROWW INVEST TECH")).isEqualTo("Investments");
+    }
+
+    @Test
+    void theUnspacedMutualFundsTokenMatches_whichTheSpacedKeywordCannotReach() {
+        // normalize() replaces non-alphanumerics with spaces; it never splits a run-together word,
+        // so "mutual fund" can never match "MUTUALFUNDS". Both spellings are needed, and this test
+        // fails if either is removed.
+        assertThat(CategoryRules.suggestCategory("SIP MUTUALFUNDS DEBIT")).isEqualTo("Investments");
+        assertThat(CategoryRules.suggestCategory("MUTUAL FUND PURCHASE")).isEqualTo("Investments");
+    }
+
+    @Test
+    void gokhanaIsDining() {
+        assertThat(CategoryRules.suggestCategory("UPI-GOKHANA-sample@ybl-REF19")).isEqualTo("Dining");
+    }
+
+    @Test
+    void theNewKeywordsAreWordBoundedLikeEveryOther() {
+        // Guards the same class of bug the word-boundary comment in CategoryRules describes: a new
+        // keyword must not match inside a longer word.
+        assertThat(CategoryRules.suggestCategory("GOKHANAPUR LAND TAX")).isEqualTo("Other");
+    }
+
+    /**
+     * Real corpus finding (docs/superpowers/specs/2026-09-01-transaction-categorization-design.md
+     * §1): "Pureplay Skin Sciences" is a real D2C skincare/personal-care brand sold via
+     * e-commerce, missing from the vocabulary the same way "asspl" and "cinnabon" were.
+     */
+    @Test
+    void suggestCategory_matchesPureplay_skincareEcommerceBrand() {
+        assertThat(CategoryRules.suggestCategory("UPI-PUREPLAY SKIN SCIENCES-REF881234")).isEqualTo("Shopping");
+    }
+
+    /**
+     * Real corpus finding: "PMJJBY" is the Government of India's Pradhan Mantri Jeevan Jyoti
+     * Bima Yojana life-insurance scheme, appearing on real statements with a bank-specific
+     * "JNS-" narration prefix.
+     */
+    @Test
+    void suggestCategory_matchesPmjjby_governmentInsuranceScheme() {
+        assertThat(CategoryRules.suggestCategory("JNS-PMJJBY PREMIUM DEDUCTION")).isEqualTo("Insurance");
+    }
+
+    /**
+     * Real corpus finding: "NSE MF" is the National Stock Exchange's mutual-fund investment
+     * platform -- a real narration uses "MF" rather than the already-seeded "mutual fund"/
+     * "mutualfunds" spellings.
+     */
+    @Test
+    void suggestCategory_matchesNseMf_mutualFundPlatformAbbreviation() {
+        assertThat(CategoryRules.suggestCategory("NET PAYIN TO NSE MF A/C 9182736")).isEqualTo("Investments");
+    }
+
+    /**
+     * Real corpus finding (docs/superpowers/specs/2026-09-01-transaction-categorization-design.md
+     * §1): "Housingcom Gurgaon" -- Housing.com printed as one contiguous word on the real
+     * statement. Mapped to Rent on the assumption this is a rent-payment-facilitator narration
+     * (Housing.com/NoBroker/CRED-RentPay-style products let a tenant pay a landlord through the
+     * platform for a fee); confirm this category before relying on it (see Task 3's Context).
+     */
+    @Test
+    void suggestCategory_matchesHousingcom_rentPaymentFacilitator() {
+        assertThat(CategoryRules.suggestCategory("UPI-HOUSINGCOM GURGAON-REF773311")).isEqualTo("Rent");
+    }
+
+    /** Guards the same class of bug the file's other word-boundary tests describe (see
+     *  theNewKeywordsAreWordBoundedLikeEveryOther): "housingcom" must not match inside a longer
+     *  word it happens to be a prefix of. */
+    @Test
+    void suggestCategory_housingCommunityIsNotMisclassifiedAsRent() {
+        assertThat(CategoryRules.suggestCategory("HOUSINGCOMMUNITY CENTRE FEE")).isNotEqualTo("Rent");
+    }
+
+    /**
+     * Real corpus finding: "Tobox Ventures" is the registered corporate name behind "Gokhana"
+     * (a real narration reads "TOBOX VENTURES PRIVATE LIMITED/GOKHANA."), appearing as the
+     * merchant name on statements that print the corporate entity rather than the brand.
+     */
+    @Test
+    void suggestCategory_matchesTobox_corporateNameBehindGokhana() {
+        assertThat(CategoryRules.suggestCategory("UPI-TOBOX VENTURES-REF551209")).isEqualTo("Dining");
+    }
+
+    /** Some real statements truncate this narration to "TOBOX VENT" (a column-width truncation) --
+     *  the keyword must still match on that shortened form, which is why "tobox" is kept as a bare
+     *  single word rather than the two-word "tobox ventures". */
+    @Test
+    void suggestCategory_matchesTobox_evenWhenNarrationIsTruncated() {
+        assertThat(CategoryRules.suggestCategory("UPI/TOBOX VENT/REF88213")).isEqualTo("Dining");
+    }
+
+    /** Word-boundary collision guard: "tobox" must not match as a prefix inside a longer,
+     *  unrelated word. */
+    @Test
+    void suggestCategory_toboxicIsNotMisclassifiedAsDining() {
+        assertThat(CategoryRules.suggestCategory("TOBOXIC LEATHERWORKS FEE")).isNotEqualTo("Dining");
+    }
+
+    /**
+     * Real corpus finding: "Indian Railways" is a distinct real narration form for the national
+     * railway institution, naming it directly rather than through the "irctc" booking portal
+     * already in this table.
+     */
+    @Test
+    void suggestCategory_matchesIndianRailways_asDistinctFromIrctc() {
+        assertThat(CategoryRules.suggestCategory("UPI-INDIAN RAILWAYS-REF662140")).isEqualTo("Transport");
+    }
+
+    /** Word-boundary/phrase collision guard: a bare "indian" would misfire on this real corpus
+     *  narration ("INDIAN CLEARING CORP" settlement lines) -- kept as the full two-word phrase
+     *  specifically to avoid it, the same choice already made for "nse mf" and "cc payment". */
+    @Test
+    void suggestCategory_indianClearingCorpIsNotMisclassifiedAsTransport() {
+        assertThat(CategoryRules.suggestCategory("INDIAN CLEARING CORP SETTLEMENT")).isNotEqualTo("Transport");
     }
 }

@@ -23,6 +23,25 @@ public enum UserFacingImportStatus {
     COMPLETED,
     ACTION_REQUIRED,
     FAILED,
+
+    /**
+     * The statement needs work on our side before it can be imported.
+     *
+     * <p>Deliberately NOT a failure and deliberately NOT given an ETA. Triage is manual and
+     * volume-dependent, so any promised deadline would start breaking the moment volume grew, and a
+     * missed promise costs more trust than an honest open-ended wait.
+     *
+     * <p>Equally deliberately, the copy this maps to never suggests the document's authenticity is
+     * in question. The real cause is a parser gap on our side; in a financial app, telling users
+     * their own bank statement is being checked for genuineness is a trust risk that lands worse
+     * than the delay it was meant to excuse. The message has to stay true as well as kind --
+     * additional checks genuinely do run, by a human, before the import is retried.
+     *
+     * <p>Distinct from {@link #ACTION_REQUIRED} because the user has nothing to do, and distinct
+     * from {@link #PROCESSING} because nothing is actively running -- it is waiting on us.
+     */
+    HELD_FOR_REVIEW,
+
     CANCELLED;
 
     /**
@@ -38,6 +57,13 @@ public enum UserFacingImportStatus {
             case QUEUED, PARSING, ANALYZING, DEDUPING, IMPORTING, LEARNING -> PROCESSING;
             case COMPLETED -> COMPLETED;
             case CANCELLED -> CANCELLED;
+            // Both holds collapse here, deliberately. Internally they are opposites -- one is a
+            // parse that fell over, the other a parse that succeeded and is distrusted -- but from
+            // the user's side they are the same situation: nothing running, nothing theirs to fix,
+            // a person looking at it. Collapsing internal grain is what this enum is for, and
+            // separate copy for the trust hold would be hard to write without leaking "we are
+            // checking whether your statement is real", which the doc below forbids.
+            case HELD_FOR_REVIEW, HELD_FOR_TRUST_REVIEW -> HELD_FOR_REVIEW;
             case FAILED -> ErrorCode.userActionRequiredOrDefault(failureCode) ? ACTION_REQUIRED : FAILED;
         };
     }

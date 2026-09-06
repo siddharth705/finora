@@ -89,8 +89,7 @@ public class SecurityConfig {
 
     @Bean
     public DaoAuthenticationProvider authenticationProvider(PasswordEncoder passwordEncoder) {
-        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
-        provider.setUserDetailsService(userDetailsService);
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider(userDetailsService);
         provider.setPasswordEncoder(passwordEncoder);
         return provider;
     }
@@ -145,6 +144,10 @@ public class SecurityConfig {
                     // Narrowed to GET on this one path -- not the whole /integrations tree, whose
                     // other endpoints (connect, status, disconnect) must stay authenticated.
                     .requestMatchers(HttpMethod.GET, "/api/v1/integrations/google/gmail/callback").permitAll()
+                    // Razorpay calls this directly -- no Finora session, no Authorization header.
+                    // The webhook signature (verified in RazorpayWebhookController) replaces
+                    // authentication here, same reasoning as the Gmail OAuth callback above.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/webhooks/razorpay").permitAll()
                     .requestMatchers("/actuator/health").permitAll();
                 // Anonymous Swagger outside prod only -- see apiDocsPubliclyReachable's doc comment.
                 // Must be registered BEFORE anyRequest(): Spring Security evaluates rules in

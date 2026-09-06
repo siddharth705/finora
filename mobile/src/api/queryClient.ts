@@ -6,7 +6,8 @@ import {
   persistQueryClientRestore,
   persistQueryClientSubscribe,
 } from '@tanstack/react-query-persist-client';
-import { shouldPersistQuery } from './queryPersistence';
+import { PERSISTED_QUERY_KEY_PREFIXES, shouldPersistQuery } from './queryPersistence';
+import { decryptFromStorage, encryptForStorage } from '../lib/queryCacheCipher';
 
 /**
  * Mirrors the web app's QueryClient config (frontend/src/App.tsx). refetchOnWindowFocus is a
@@ -22,6 +23,26 @@ export const queryClient = new QueryClient({
     },
   },
 });
+
+/**
+ * The categorization review queue must never retry, and that policy has to live HERE rather than
+ * on the useQuery calls that read it.
+ *
+ * A Query in query-core v5 holds ONE options bag, not one per observer: `setOptions` replaces
+ * `this.options` wholesale every time an observer drives a fetch, and a client-driven refetch
+ * (`invalidateQueries`/`refetchQueries` -> `query.fetch(undefined, ...)`) carries no observer
+ * options at all, so it silently reuses whatever the last fetching observer left behind. Both
+ * consumers of these two keys are mounted at once -- the Dashboard nudge (Home is a bottom tab,
+ * so it stays mounted) and CategoryReviewScreen -- so with the policy expressed per-observer,
+ * whether a refetch retried depended on which screen had fetched most recently, i.e. on
+ * navigation order. The Dashboard's nudge is documented to fail silently; instead it could sit
+ * through ~7s of backoff holding the pull-to-refresh spinner up.
+ *
+ * setQueryDefaults writes into the Query's `#defaultOptions`, which is spread back in on every
+ * setOptions call and therefore survives all of the above.
+ */
+queryClient.setQueryDefaults(['needs-review'], { retry: false });
+queryClient.setQueryDefaults(['needs-review-groups'], { retry: false });
 
 /**
  * Teaches React Query what "online" means on a device.
@@ -61,10 +82,97 @@ const PERSIST_BUSTER = '1';
 // and then jumps is worse, in a finance app, than the ordinary loading skeleton it replaces.
 const PERSIST_MAX_AGE = 24 * 60 * 60 * 1000;
 
-const persister = createAsyncStoragePersister({
-  storage: AsyncStorage,
-  key: PERSIST_KEY,
+/**
+ * Bumped by pauseQueryPersistence on every logout/session-expiry. `pendingWriteEpoch` records the
+ * epoch that was current when the persister was last ASKED to write; the guarded setItem below
+ * refuses any write whose epoch is no longer current.
+ *
+ * This exists because unsubscribing is not the same as cancelling. createAsyncStoragePersister
+ * wraps persistClient in its own asyncThrottle (1000ms by default) and that throttle has no cancel
+ * path -- once a write is scheduled, `await func(...lastArgs)` is guaranteed to run when the
+ * interval elapses. Worse, persistQueryClientSave calls `dehydrate(queryClient)` EAGERLY at cache-
+ * event time and hands the finished snapshot to the throttle, so emptying the live cache afterwards
+ * cannot empty an already-captured payload. stopPersisting() only detaches the cache subscription;
+ * it cannot reach inside the throttle. removeClient(), by contrast, is an unthrottled
+ * storage.removeItem that runs immediately.
+ *
+ * So the ordering on logout was: snapshot of user A captured -> write scheduled -> cache cleared ->
+ * disk wiped -> ~1s later the queued write lands and puts user A's balances back on disk with a
+ * fresh timestamp. Nothing clears the cache on LOGIN (AuthContext.login only persists the new
+ * session), so the next cold start hydrated that blob and painted the next person's first frame
+ * from the previous account's figures -- the exact disclosure clearPersistedQueryCache exists to
+ * prevent, reintroduced one layer below it.
+ *
+ * Guarding at the storage layer rather than around persistClient is deliberate: the throttle sits
+ * between those two, so a wrapper on persistClient can only suppress writes that haven't been
+ * scheduled yet -- precisely not the dangerous one. An epoch comparison rather than a timer keeps
+ * it deterministic: a write captured before the clear is refused however late it fires, and a write
+ * captured after it (the next user's) is allowed immediately, with no interval to tune or wait out.
+ */
+let cacheEpoch = 0;
+let pendingWriteEpoch = 0;
+
+const storage = {
+  // D4 (Track D security cleanup) -- see queryCacheCipher.ts's own doc comment. A value that
+  // fails to decrypt (corrupted, wrong key, or written before encryption existed) comes back as
+  // null here, which persistQueryClientRestore already treats as an ordinary cold start with
+  // nothing cached -- not a new failure mode.
+  getItem: async (key: string) => {
+    const raw = await AsyncStorage.getItem(key);
+    return raw === null ? null : decryptFromStorage(raw);
+  },
+  removeItem: (key: string) => AsyncStorage.removeItem(key),
+  // The only guarded operation. Reads must still work (restore) and deletes must ALWAYS work --
+  // suppressing removeItem would defeat the wipe this guard exists to protect. The FIRST check
+  // is the original early-exit: a write already invalidated by a logout/session-expiry skips
+  // straight past, before spending any work encrypting a payload nobody wants written.
+  //
+  // The SECOND check (bug fix, found in review) is what actually closes the race the epoch guard
+  // exists for, now that a write is here at all. Before encryption existed, the epoch comparison
+  // and the AsyncStorage.setItem call it guarded ran in the SAME synchronous tick -- nothing else
+  // could run in between. `await encryptForStorage(value)` is a genuine yield point (a SecureStore
+  // read on first use, a native AES call), so a logout arriving during that window bumps
+  // cacheEpoch while this call has already passed the first check -- without re-checking against
+  // the SAME captured epochAtCall right before the write, the encrypted payload would land on
+  // disk anyway, reopening exactly the "queued write resurrects the departed user's data" leak
+  // documented above.
+  setItem: async (key: string, value: string) => {
+    const epochAtCall = pendingWriteEpoch;
+    if (epochAtCall !== cacheEpoch) return;
+    const encrypted = await encryptForStorage(value);
+    if (encrypted !== null && epochAtCall === cacheEpoch) {
+      await AsyncStorage.setItem(key, encrypted);
+    }
+  },
+};
+
+const basePersister = createAsyncStoragePersister({ storage, key: PERSIST_KEY });
+
+// TanStack's persistence contract: a query garbage-collected out of the in-memory cache is also
+// dropped from the next persisted write, so gcTime shorter than the persister's maxAge quietly
+// truncates the cache it was told to keep for 24h. At the 5-minute default, anything restored or
+// prefetched but not looked at within five minutes -- Budgets and Reports, reached through the More
+// stack and so unmounted most of the time -- was evicted mid-session and erased from disk, and the
+// next cold start showed the skeleton this whole mechanism exists to remove.
+//
+// Scoped to the allowlist rather than set as a global default: those are the only queries the 24h
+// promise is made about, and they are small JSON payloads. Applying it globally would also pin
+// every non-persisted screen's data in memory for a day, which is a real cost on a phone and buys
+// nothing -- none of it is on disk to warm-start from anyway.
+PERSISTED_QUERY_KEY_PREFIXES.forEach((prefix) => {
+  queryClient.setQueryDefaults([prefix], { gcTime: PERSIST_MAX_AGE });
 });
+
+const persister = {
+  ...basePersister,
+  persistClient: (client: Parameters<typeof basePersister.persistClient>[0]) => {
+    // Stamped at call time, which is when the snapshot was taken -- not when the throttle
+    // eventually flushes it. The throttle keeps only the newest args, and this is updated on the
+    // same call, so the stamp and the payload it guards can never drift apart.
+    pendingWriteEpoch = cacheEpoch;
+    return basePersister.persistClient(client);
+  },
+};
 
 const dehydrateOptions = {
   shouldDehydrateQuery: shouldPersistQuery,
@@ -166,6 +274,10 @@ export function startQueryPersistence(): () => void {
  */
 export function pauseQueryPersistence(): void {
   clearedDuringRestore = true;
+  // Invalidates any snapshot already captured and queued inside the persister's throttle. This is
+  // the half that stopPersisting() below cannot do -- see the cacheEpoch comment above for why
+  // unsubscribing leaves a scheduled write alive and holding the departing session's data.
+  cacheEpoch += 1;
   stopPersisting?.();
 }
 

@@ -46,6 +46,7 @@ class BootstrapServiceTest {
         when(passwordEncoder.encode(any())).thenReturn("hashed-password");
         when(userRepository.saveAndFlush(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
         when(userRepository.save(any(User.class))).thenAnswer(inv -> inv.getArgument(0));
+        ReflectionTestUtils.setField(bootstrapService, "bootstrapEnabled", true);
     }
 
     private PlatformSettings settingsWith(boolean setupCompleted) {
@@ -79,6 +80,23 @@ class BootstrapServiceTest {
         // Dev default (no FINORA_SETUP_KEY configured): the generated key is written to the file,
         // never logged directly -- see announceSetupKey's own doc comment for why.
         verify(setupKeyFileWriter).write(any());
+    }
+
+    @Test
+    void doesNothing_whenBootstrapIsDisabled() {
+        // A boot that only exists to prove the jar starts (CI's "Production classpath check" /
+        // "Runtime dependency verification") sets this false because it shares a database with the
+        // boot that follows -- see application.yml's app.bootstrap comment for the failure this
+        // guards against. Must not even check platformSettingsService, same as the already-complete
+        // guard below: no path here should ever look for a reason to create a bootstrap account.
+        ReflectionTestUtils.setField(bootstrapService, "bootstrapEnabled", false);
+
+        bootstrapService.run(null);
+
+        verifyNoInteractions(platformSettingsService);
+        verifyNoInteractions(userRepository);
+        verifyNoInteractions(roleRepository);
+        verifyNoInteractions(auditService);
     }
 
     @Test

@@ -17,6 +17,11 @@ env:
 ---
 - launchApp:
     clearState: true
+# Same reasoning as login.yaml's own launchApp -- without asserting the screen has actually
+# settled first, the very first tapOn can fire before AuthEntryScreen has mounted, especially on a
+# slow/cold emulator boot. This flow didn't have the wait login.yaml already does; added after a
+# CI run failed here with "Element not found: Email or mobile number" immediately after launchApp.
+- assertVisible: "Sign in or create an account"
 - tapOn: "Email or mobile number"
 - inputText: ${TEST_EMAIL}
 # See login.yaml's own comment: the keyboard covers "Continue" too, and a tap through it can hit

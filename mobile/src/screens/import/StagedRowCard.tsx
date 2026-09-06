@@ -2,9 +2,35 @@ import { memo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { fmtCurrency } from '../../lib/format';
 import type { DuplicateDecision } from '../../lib/importReview';
-import { isUnderReview } from '../../lib/importReview';
+import { isUnconfirmedGuess, isUnderReview } from '../../lib/importReview';
 import { radius, spacing, useTheme } from '../../theme';
 import type { StagedRow } from '../../types';
+
+/**
+ * Track C/C3. `isUnconfirmedGuess` above already flags the sources with no real evidence behind
+ * them ("Needs a look"); this is the other half -- naming the source for the sources that DO have
+ * evidence, so a confident suggestion doesn't read as indistinguishable from a lucky keyword match.
+ *
+ * Deliberately not exported from lib/importReview.ts alongside isUnconfirmedGuess: that module is
+ * kept diffable against frontend/src/lib/importReview.ts (its own doc comment), and this is a
+ * mobile-only display string with no web counterpart to mirror, not a piece of review state.
+ *
+ * `'rule'` (the static keyword table -- CategorizationService's KEYWORD_MATCH) deliberately gets no
+ * badge: it is the common, unremarkable path most rows take, and badging every row here would be
+ * the noise "Needs a look" exists specifically to stand out from. `'default'`/`'structural_p2p'`
+ * are handled by isUnconfirmedGuess above and never reach this function from a row worth labelling.
+ */
+function confidentSourceLabel(categorySource: StagedRow['categorySource']): string | null {
+  switch (categorySource) {
+    case 'learned': return 'Learned from you';
+    case 'user_rule': return 'Your rule';
+    case 'global_rule': return 'Community rule';
+    // CategorizationService: FILE_PROVIDED is null-confidence by design (Transaction.decisionConfidence's
+    // own comment) because it isn't a guess at all -- the statement itself named the category.
+    case 'file': return 'From your statement';
+    default: return null;
+  }
+}
 
 /**
  * One staged transaction, awaiting review.
@@ -47,6 +73,9 @@ function StagedRowCardInner({
   const c = useTheme();
   const underReview = isUnderReview(row);
   const match = row.duplicateMatch;
+  // Mutually exclusive with isUnconfirmedGuess below by construction -- categorySource is one
+  // value, so a row is never both an unconfirmed guess and a confidently-sourced one.
+  const provenance = confidentSourceLabel(row.categorySource);
 
   return (
     <View
@@ -96,11 +125,18 @@ function StagedRowCardInner({
           </Text>
         </Pressable>
 
-        {/* The engine says where each suggestion came from; "default" means it had no idea and
-            filed it under Other rather than inventing a decision. Worth surfacing, because those
-            are the rows actually worth a human look. */}
-        {row.categorySource === 'default' ? (
+        {/* The engine says where each suggestion came from; an unconfirmed guess is one it had no
+            real evidence for -- "default" (no idea, filed under Other) or a structural
+            person-to-person detection. Worth surfacing, because those are the rows actually worth a
+            human look. See importReview.isUnconfirmedGuess. */}
+        {isUnconfirmedGuess(row.categorySource) ? (
           <Text style={[styles.badge, { color: c.muted, backgroundColor: c.bg }]}>Needs a look</Text>
+        ) : null}
+
+        {/* Track C/C3: the confident half of the same provenance -- see confidentSourceLabel's own
+            comment for why 'rule' (the common case) stays unbadged. */}
+        {provenance ? (
+          <Text style={[styles.badge, { color: c.muted, backgroundColor: c.bg }]}>{provenance}</Text>
         ) : null}
 
         {row.likelyDuplicate ? (

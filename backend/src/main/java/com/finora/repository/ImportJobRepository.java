@@ -1,6 +1,7 @@
 package com.finora.repository;
 
 import com.finora.entity.ImportJob;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -86,6 +87,19 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
     /** Queue depth for the {@code finora.worker.queue_depth} gauge. */
     long countByStatus(ImportJob.Status status);
 
+    /** One page of the admin triage queue. Backed by {@code idx_import_jobs_held} (V134). */
+    Page<ImportJob> findByStatus(ImportJob.Status status, Pageable pageable);
+
+    /**
+     * Jobs an admin has already sent back to the queue that have not finished yet.
+     *
+     * <p>Deliberately not "every QUEUED job": the queue is mostly ordinary uploads, and counting
+     * those would make the triage summary report work nobody is waiting on. {@code
+     * wasHeldForReview} is the marker that survives the reprocess, which is what makes this
+     * answerable at all.
+     */
+    long countByStatusAndWasHeldForReviewTrue(ImportJob.Status status);
+
     /**
      * When the oldest claimable job was created, or empty when the queue is drained.
      *
@@ -111,6 +125,28 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
      * every job that never recorded a session, which today is all of them.
      */
     List<ImportJob> findByImportSessionId(UUID importSessionId);
+
+    /**
+     * The jobs behind these sessions that ever went through a trust hold, whatever became of it --
+     * {@link com.finora.imports.ImportSessionService#claimForConfirmation} and {@code
+     * listResumableSessions} both need this to keep a session out of the user's confirm step, and
+     * the check has to survive the hold being RESOLVED, not just while it is still open.
+     *
+     * <p>Bug fix. A first version of this query filtered on {@code status = HELD_FOR_TRUST_REVIEW}
+     * directly, which is exactly wrong the moment an operator resolves the hold: {@code
+     * HeldStatementService.reject()} moves the job to plain {@code FAILED} (the same terminal
+     * status any other failed import reaches) and never touches the {@code ImportSession} row at
+     * all -- unlike {@code approve()}, whose release is the one case a session SHOULD become
+     * confirmable again. A status-only filter cannot tell those two terminal outcomes apart, so a
+     * rejected extraction's session silently became confirmable again within its ordinary 48h TTL,
+     * reopening the exact bug this whole guard exists to close, just through the reject path
+     * instead of the still-held one. {@code heldStatementId IS NOT NULL} is the query's only job:
+     * name every job that ever had a hold at all, terminal or not, and let the caller resolve
+     * "still blocking" against {@code HeldStatement.status} -- the one place that distinction is
+     * actually recorded (see {@code HeldStatementRepository.findByImportJobIdInAndStatusNot}).
+     */
+    List<ImportJob> findByImportSessionIdInAndHeldStatementIdIsNotNull(
+            java.util.Collection<UUID> importSessionIds);
 
     /**
      * Whether a job outside {@code excludedStatuses} still references this object key. Feeds
@@ -150,4 +186,73 @@ public interface ImportJobRepository extends JpaRepository<ImportJob, UUID> {
      *  any object this job was the sole reference for, for StatementStorageSweepService to
      *  eventually reclaim. */
     void deleteByUserId(UUID userId);
+
+    // ---------------------------------------------------------------- trust telemetry (V141)
+
+    /**
+     * The reliability-status distribution across completed imports, NULL bucket included.
+     *
+     * <p>Scoped to COMPLETED because telemetry is written on the worker's success path only. A
+     * failed or held job has no telemetry by construction rather than by age, so counting it here
+     * would deflate every rate with rows that were never eligible to carry a value.
+     *
+     * <p>The NULL group is returned rather than filtered out: it is the count of imports that
+     * predate V141, and the whole reason those columns are nullable with no default is that
+     * "predates telemetry" must stay visibly distinct from CLEAN.
+     */
+    @Query(value = """
+           SELECT reliability_status, count(*)
+             FROM import_jobs
+            WHERE status = 'COMPLETED'
+            GROUP BY reliability_status
+           """, nativeQuery = true)
+    List<Object[]> telemetryStatusCounts();
+
+    /** Which extraction path produced completed imports -- NATIVE, OCR or NATIVE_PLUS_OCR. Lets a
+     *  candidate threshold be checked against scanned documents separately from native ones, since
+     *  OCR text is noisier and would otherwise be averaged into one misleading rate. */
+    @Query(value = """
+           SELECT text_source, count(*)
+             FROM import_jobs
+            WHERE status = 'COMPLETED' AND reliability_status IS NOT NULL
+            GROUP BY text_source
+           """, nativeQuery = true)
+    List<Object[]> telemetryTextSourceCounts();
+
+    /**
+     * The three flag counts, in one pass: header uncertainty, any FAILED rule, any WARNING rule.
+     *
+     * <p>One query rather than three round trips for three scalars over the same rows.
+     * {@code FILTER} is PostgreSQL-specific, which this repository's class doc already commits to.
+     */
+    @Query(value = """
+           SELECT count(*) FILTER (WHERE header_reconstruction_uncertain),
+                  count(*) FILTER (WHERE verification_failed_count > 0),
+                  count(*) FILTER (WHERE verification_warning_count > 0)
+             FROM import_jobs
+            WHERE status = 'COMPLETED' AND reliability_status IS NOT NULL
+           """, nativeQuery = true)
+    List<Object[]> telemetryFlagCounts();
+
+    /**
+     * The same distribution split by the deploy that did the parsing.
+     *
+     * <p>A parser fix moves the distribution, so one pooled rate averages behaviour from before a
+     * fix with behaviour after it. Bounded by {@code limit} because a deploy SHA changes on every
+     * commit: over a long enough window this groups into hundreds of one-import buckets, and the
+     * recent ones are the only ones a calibration question is ever about.
+     */
+    @Query(value = """
+           SELECT parser_version,
+                  count(*),
+                  count(*) FILTER (WHERE reliability_status = 'CLEAN'),
+                  count(*) FILTER (WHERE reliability_status = 'REVIEW_RECOMMENDED'),
+                  count(*) FILTER (WHERE reliability_status = 'NEEDS_ATTENTION')
+             FROM import_jobs
+            WHERE status = 'COMPLETED' AND reliability_status IS NOT NULL
+            GROUP BY parser_version
+            ORDER BY count(*) DESC
+            LIMIT :limit
+           """, nativeQuery = true)
+    List<Object[]> telemetryParserVersionCounts(@Param("limit") int limit);
 }

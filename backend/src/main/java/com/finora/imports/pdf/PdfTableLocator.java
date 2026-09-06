@@ -5,12 +5,19 @@ import com.finora.imports.DocumentContext;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.time.DateTimeException;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -437,6 +444,26 @@ public class PdfTableLocator {
     private static final Pattern SAVINGS_AND_BENEFITS_SECTION_MARKER = Pattern.compile(
             "(?i)savings\\s+and\\s+benefits\\s+section");
 
+    // LOAN_SUMMARY_TABLE_CLOSED. Two real HSBC credit-card statements (HSBC CC.pdf, HSBC CC
+    // new.pdf) each print a "Loan Summary Table" caption near the end of their real transaction
+    // table, introducing an unrelated EMI/loan schedule (merchant, booking date, principal,
+    // interest, installment amount, tenure) for a loan-on-card product no expected entity in either
+    // document's ground truth declares -- confirmed via that ground truth's own knownOpenDefects
+    // note: "No second account exists in this document." Without this trigger, that schedule's own
+    // header ("Loan Booking Date"/"Installment amount" cells each individually satisfying
+    // HEADER_HINTS's per-word match) reads as a genuinely new table and opens its own section via
+    // COMPOSITE_STATEMENT below -- a phantom that can never stage a real row (its "Loan Booking
+    // Date" column never equals any of TransactionNormalizer's own DATE_HINTS, which requires the
+    // WHOLE column name, not a word within it) but that still steals every real credit-card-summary
+    // phrase (payment due, credit limit) printed after it, which is why the real ledger section
+    // above it was separately observed mistyped SAVINGS on a credit-card statement -- fixing this
+    // trigger repairs both. Confirmed single-occurrence (`grep`) on both real documents, and in
+    // both cases everything the caption introduces (the loan schedule itself, then payment-
+    // instructions/MITC/legal content) genuinely is this document's own trailing content, same as
+    // every other entry in this list.
+    private static final Pattern LOAN_SUMMARY_TABLE_MARKER = Pattern.compile(
+            "(?i)loan\\s+summary\\s+table");
+
     /** One row-shaped trigger the trailing-content suppression gate checks for, paired with the
      *  capability name to record when it fires -- see {@link #trailingContentTriggerCapability}. */
     private record TrailingContentTrigger(Pattern pattern, String capability) {}
@@ -452,16 +479,40 @@ public class PdfTableLocator {
             new TrailingContentTrigger(ACCOUNT_DISCREPANCY_DISCLAIMER_MARKER,
                     "ACCOUNT_DISCREPANCY_DISCLAIMER_CLOSED"),
             new TrailingContentTrigger(STATEMENT_SUMMARY_BLOCK_MARKER, "STATEMENT_SUMMARY_BLOCK_CLOSED"),
-            new TrailingContentTrigger(CHEQUE_PAYABLE_FOOTER_MARKER, "CHEQUE_PAYABLE_FOOTER_CLOSED"),
             new TrailingContentTrigger(NEUCOINS_FOOTNOTE_MARKER, "NEUCOINS_FOOTNOTE_CLOSED"),
             new TrailingContentTrigger(SAVINGS_AND_BENEFITS_SECTION_MARKER,
-                    "SAVINGS_AND_BENEFITS_SECTION_CLOSED"));
+                    "SAVINGS_AND_BENEFITS_SECTION_CLOSED"),
+            new TrailingContentTrigger(LOAN_SUMMARY_TABLE_MARKER, "LOAN_SUMMARY_TABLE_CLOSED"));
 
-    /** The capability name of the first {@link #TRAILING_CONTENT_TRIGGERS} entry matching {@code
-     *  rowLine}, or null if none match. A dedicated method (rather than the boolean-chain shape
-     *  this replaced) so a fifth real-document-evidenced trigger is a one-line addition to the list
-     *  above, not another `!a && !b && ...` clause to get right. */
-    private static String trailingContentTriggerCapability(String rowLine) {
+    /** The capability name the first matching trigger should record for {@code rowLine}, or null
+     *  if none match. {@code pageIndex}/{@code lastPageIndex} exist only for
+     *  CHEQUE_PAYABLE_FOOTER_CLOSED -- see its own check below for why. */
+    private static String trailingContentTriggerCapability(String rowLine, int pageIndex, int lastPageIndex) {
+        // CHEQUE_PAYABLE_FOOTER_CLOSED needs one more check than every other entry below: unlike
+        // those (each confirmed single-occurrence AND genuinely at their evidencing document's true
+        // end), this exact sentence was found on a SECOND real Axis Bank credit-card statement,
+        // printed on page 1 of 3 as part of an ordinary payment-instructions panel next to the
+        // summary -- not a closing block. "Single occurrence" alone does not distinguish an early
+        // informational panel from a genuine document-closing footer; the two real Axis documents
+        // this pattern has now been evidenced against disagree on where it prints. Requiring it to
+        // sit on the document's own actual last page is the one thing a true closing block and this
+        // false-positive panel cannot both satisfy at once, and it needs no new vocabulary -- the
+        // page position is already known to the caller.
+        //
+        // Known limitation, unevidenced against the real corpus so deliberately not solved
+        // speculatively: {@code lastPageIndex} is the WHOLE document's last page, not the
+        // currently-open section's. A composite multi-account statement whose first section's own
+        // true-end footer sits on that section's own last page (not the document's) would be
+        // refused here too. This is not a new risk this fix introduces, though -- pre-fix, the same
+        // false-positive-on-page-1 shape this fix closes would have permanently suppressed every
+        // row for the REST of the document (trailingContentSuppressed never resets), composite
+        // sections included; refusing an early/wrong-page match and letting the normal
+        // SECTION_MARKER/header machinery close the section later is strictly safer than that. No
+        // real document in this corpus evidences CHEQUE_PAYABLE_FOOTER_MARKER on a composite
+        // statement (only single-account Axis credit-card exports) -- revisit if one ever does.
+        if (CHEQUE_PAYABLE_FOOTER_MARKER.matcher(rowLine).find()) {
+            return pageIndex == lastPageIndex ? "CHEQUE_PAYABLE_FOOTER_CLOSED" : null;
+        }
         for (TrailingContentTrigger trigger : TRAILING_CONTENT_TRIGGERS) {
             if (trigger.pattern().matcher(rowLine).find()) return trigger.capability();
         }
@@ -491,6 +542,7 @@ public class PdfTableLocator {
             case "CHEQUE_PAYABLE_FOOTER_CLOSED" -> ctx.record("CHEQUE_PAYABLE_FOOTER_CLOSED");
             case "NEUCOINS_FOOTNOTE_CLOSED" -> ctx.record("NEUCOINS_FOOTNOTE_CLOSED");
             case "SAVINGS_AND_BENEFITS_SECTION_CLOSED" -> ctx.record("SAVINGS_AND_BENEFITS_SECTION_CLOSED");
+            case "LOAN_SUMMARY_TABLE_CLOSED" -> ctx.record("LOAN_SUMMARY_TABLE_CLOSED");
             default -> throw new IllegalStateException(
                     "Unknown trailing-content trigger capability: " + capability);
         }
@@ -564,6 +616,51 @@ public class PdfTableLocator {
      * narration genuinely runs a dozen lines past its own date row has not been seen.
      */
     private static final int MAX_BLOCK_CONTINUATION_ROWS = 12;
+
+    /**
+     * How far a wrapped narration line's left edge may sit from the left edge the same block's own
+     * earlier continuation lines established, in points.
+     *
+     * <p>Measured, not chosen. A cell that wraps re-starts every line at the same x, because it is
+     * one cell: across four real statements every continuation line of every transaction begins at
+     * a single x value -- 118.79 on a Standard Chartered savings export (all lines), 201.41 on a
+     * Bandhan export, 192.00 on an ICICI savings export. A real HDFC savings export is the only one
+     * with any spread at all, and it uses exactly three values 6.00pt apart end to end. This is set
+     * to that widest measured spread; nothing in the corpus needs more.
+     *
+     * <p>What it buys is the discrimination {@link #belongsToTheRowAbove} cannot provide on its own.
+     * Line spacing says a row is near the transaction above it; a document that sets every line on
+     * one uniform grid says that about its closing summary block too. Left-edge alignment says
+     * something different and much harder to counterfeit -- that this row is a continuation of the
+     * same CELL. On the same four documents the text that must NOT be absorbed (a statement-summary
+     * grid's label line, a legend block, a transaction's own date-bearing anchor row) begins at a
+     * visibly different x, because it belongs to a different cell or a different column.
+     */
+    private static final float BLOCK_NARRATION_LEFT_TOLERANCE = 6.0f;
+
+    /**
+     * Absolute ceiling on trailing narration rows admitted by LEFT-EDGE ALIGNMENT, however well
+     * they align.
+     *
+     * <p>Deliberately tighter than {@link #MAX_BLOCK_CONTINUATION_ROWS}, and the difference is the
+     * point. Alignment replaces an absolute bound (two rows, whatever the document prints) with a
+     * relative one, so the worst case it admits is no longer bounded by a constant but by how long
+     * a document keeps printing left-aligned text at the narration's own pitch. A trailing block
+     * that happened to be set that way would be absorbed to the ceiling, and the damage would be
+     * this class's least detectable shape: right dates, right amounts, wrong merchant, with no
+     * missing row anywhere to point at it.
+     *
+     * <p>Six because the corpus says four. Measured per-transaction wrap depth across the real
+     * statements this capability exists for: a real HDFC savings export's histogram runs
+     * {0:19, 1:51, 2:104, 3:68, 4:1}, a second HDFC export reaches four, a Standard Chartered
+     * export reaches four, an ICICI savings export needs four, a Bandhan export needs three. Four
+     * is the deepest wrap anywhere in the corpus; six leaves margin for a document not yet seen
+     * without leaving the failure above unbounded. Raise it only when a real document needs more,
+     * and name that document here.
+     */
+    private static final int MAX_ALIGNED_CONTINUATION_ROWS = 6;
+
+
 
     /**
      * How many consecutive dateless rows may accumulate as LEADING narration before the extractor
@@ -782,16 +879,44 @@ public class PdfTableLocator {
      *  OFFSET_COLUMN_ANCHORS) onto {@code ctx} as they fire (Phase 1 "capture facts" --
      *  docs/engineering/financial-document-intelligence-principles.md). {@code ctx} is nullable. */
     public LocatedDocument locateAll(List<PositionedText> positionedText, DocumentContext ctx) {
-        if (ctx != null) {
-            int maxPageIndex = -1;
-            for (PositionedText t : positionedText) maxPageIndex = Math.max(maxPageIndex, t.pageIndex());
-            ctx.recordPages(maxPageIndex + 1);
-        }
+        int lastPageIndex = -1;
+        for (PositionedText t : positionedText) lastPageIndex = Math.max(lastPageIndex, t.pageIndex());
+        if (ctx != null) ctx.recordPages(lastPageIndex + 1);
         List<List<PositionedText>> rows = groupIntoRows(positionedText);
         PhysicalRowFormationEvidence physicalRowFormationEvidence =
                 measurePhysicalRowFormation(positionedText.size(), rows);
+        // Computed once, up front, for hasDateValue's yearless-date fallback (see that method's
+        // own doc comment) -- every call site below reads this rather than recomputing it per row.
+        Map<Integer, PageDateEvidence> yearsByPage = yearsByPage(rows);
 
         List<LocatedSection> sections = new ArrayList<>();
+        // The row index of the header that opened the section currently accumulating into
+        // currentRows, and the row index of the first header whose section actually SURVIVED being
+        // closed -- both -1 until those happen. See firstStagedHeaderRowIndex's one read site,
+        // after the main loop, for why this exists at all: a real header found LATE in the document
+        // (page 2's own, unrelated table) stops the sections.isEmpty() gate below from ever giving
+        // the content BEFORE it a chance at headerless inference, even when that earlier content is
+        // itself a real, genuinely headerless transaction table.
+        //
+        // Deliberately keyed on SURVIVED, not merely recognized. An earlier version anchored on the
+        // first row that scored as a header, which is the wrong index: closeCurrentSection can
+        // afterwards judge that section a misdetected credit-card payment-summary panel
+        // (looksLikePaymentSummaryPanel) and fold it into auxiliary text without ever staging it,
+        // and anchoring on that phantom would stop the slice short of a genuinely headerless ledger
+        // sitting between the suppressed panel and a later real header -- content the later real
+        // header simultaneously makes unreachable for the sections.isEmpty() whole-document
+        // fallback, so nothing else would recover it either. Three real documents in the corpus do
+        // suppress a panel this way; none of them currently has such a ledger, so this costs
+        // nothing measurable today and exists so the anchor is right when one appears.
+        //
+        // Captured at the FIRST surviving header only -- a later header changing this would
+        // silently narrow or widen the pre-header slice based on unrelated document structure
+        // further down, which has nothing to do with what came before the first one. Only
+        // currentRows' own creation point sets pendingSectionHeaderRowIndex, and currentRows is
+        // created in exactly one place, so the pairing cannot drift onto a section that some other
+        // trigger opened.
+        int pendingSectionHeaderRowIndex = -1;
+        int firstStagedHeaderRowIndex = -1;
         List<String> pendingAuxiliary = new ArrayList<>();
         // Row-accounting evidence: physical rows that had transaction shape (a date-shaped cell
         // and a decimal-amount cell on the same line -- see isTransactionShapedRow) but were about
@@ -811,6 +936,16 @@ public class PdfTableLocator {
         // numeric values -- see bucketRow's RIGHT_ALIGNED_AMOUNTS block for why a left edge alone
         // cannot separate two adjacent amount columns.
         List<Float> headerEnds = null;
+        // COLUMN_SPAN_PLACEMENT. Measured ONCE per header (see the recomputation right after
+        // ctx.recordHeaders below), from real sampled data rather than from the header LABELS
+        // headerAnchors/headerEnds hold -- see measureTextColumnSpans's own doc comment for why a
+        // label-position boundary is sometimes simply wrong and no amount of retuning it fixes
+        // that. Index-aligned with headerNames; a null entry means that column's span could not be
+        // measured with enough confidence to act on (see ColumnSpan's own doc comment on the
+        // minimum-sample guard). null (not an empty array) whenever no header is active, so
+        // bucketRow's containment branch can tell "not computed for this call site" (headerless
+        // path, a speculative header-quality probe) apart from "computed, nothing measured."
+        ColumnSpan[] textColumnSpans = null;
         Set<String> currentHeaderSignature = null;
         // Account number named by the SECTION_MARKER banner that opened the active section, so a
         // later banner naming the SAME account is recognized as a repeated page header rather than
@@ -831,6 +966,15 @@ public class PdfTableLocator {
         Float lastRowY = null;
         Float blockPitch = null;
         Float blockSeparation = null;
+        // The x this block's own wrapped narration re-starts at, learned from its first
+        // continuation line exactly the way blockPitch is -- see BLOCK_NARRATION_LEFT_TOLERANCE.
+        Float blockNarrationLeftX = null;
+        // Whether the anchor row currently open began its OWN narration on its own physical line.
+        // See alignsWithTheBlocksNarration's caller for why the left-edge test is unsafe without it.
+        boolean anchorCarriedItsOwnNarration = false;
+        // Whether every row buffered into pendingLeading so far was placed ABOVE by the document's
+        // own spacing. See the leading branch's buffer-split for what this is for.
+        boolean pendingLeadingAllBelongAbove = true;
         // The row physically above the one being processed, whatever it turned out to be -- a
         // header, a skipped page footer, a continuation. Tracked separately from lastRow* (which
         // follows only rows ATTACHED to a transaction) because blockSeparation has to be
@@ -916,7 +1060,8 @@ public class PdfTableLocator {
                 pendingAuxiliary.add(rowLine);
                 continue;
             }
-            String trailingContentTrigger = trailingContentTriggerCapability(rowLine);
+            int rowPageIndex = row.isEmpty() ? -1 : row.get(0).pageIndex();
+            String trailingContentTrigger = trailingContentTriggerCapability(rowLine, rowPageIndex, lastPageIndex);
             if (trailingContentTrigger != null) {
                 trailingContentSuppressed = true;
                 // Closes whatever REAL section is open exactly the same way the header-signature
@@ -924,8 +1069,12 @@ public class PdfTableLocator {
                 // a genuine header-based table followed by this appendix/closing marker must keep
                 // that real section, not lose it along with the boilerplate that follows.
                 if (currentRows != null) {
+                    int sectionsBeforeClose = sections.size();
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
                             pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
+                    if (firstStagedHeaderRowIndex < 0 && sections.size() > sectionsBeforeClose) {
+                        firstStagedHeaderRowIndex = pendingSectionHeaderRowIndex;
+                    }
                     pendingAuxiliary = closed.auxiliary();
                     pendingDroppedCandidates = closed.droppedCandidates();
                     pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
@@ -977,8 +1126,12 @@ public class PdfTableLocator {
                     continue; // repeated per-page banner for the account already in progress
                 }
                 if (currentRows != null) {
+                    int sectionsBeforeClose = sections.size();
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
                             pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
+                    if (firstStagedHeaderRowIndex < 0 && sections.size() > sectionsBeforeClose) {
+                        firstStagedHeaderRowIndex = pendingSectionHeaderRowIndex;
+                    }
                     pendingAuxiliary = closed.auxiliary();
                     pendingDroppedCandidates = closed.droppedCandidates();
                     pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
@@ -1004,12 +1157,14 @@ public class PdfTableLocator {
                 headerNames = null;
                 headerAnchors = null;
                 headerEnds = null;
+                textColumnSpans = null;
                 currentHeaderSignature = null;
                 currentSectionAccountId = markerAccountId;
                 lastRowPage = null;
                 lastRowY = null;
                 blockPitch = null;
                 blockSeparation = null;
+                blockNarrationLeftX = null;
                 trailingCountSinceLastAnchor = 0;
                 pendingLeading = null;
                 pendingLeadingFromProximity = false;
@@ -1108,10 +1263,18 @@ public class PdfTableLocator {
                 recordIfHeaderReconstructionCandidate(row, pendingHeaderReconstructionVocab);
             }
             if (looksLikeHeaderRow(headerRow)) {
+                // Captured before `rowIndex` advances for a wrapped header just below, so the
+                // index refers to the header's FIRST physical line. Carried down to where the
+                // section this header opens is actually created -- see
+                // firstStagedHeaderRowIndex's own doc comment.
+                int thisHeaderRowIndex = rowIndex;
                 row = headerRow;
                 if (wrappedHeaderLines > 0) {
                     rowIndex += wrappedHeaderLines;
                     if (ctx != null) ctx.record("WRAPPED_HEADER");
+                    if (wrapped.admittedInteriorTierColumns() && ctx != null) {
+                        ctx.record("WRAPPED_HEADER_INTERIOR_TIER_COLUMNS");
+                    }
                     // The absorbed lines are never revisited, so the running "row physically above
                     // this one" pointer has to be advanced past them by hand -- left at the
                     // header's FIRST line, every spacing measurement taken below (blockSeparation,
@@ -1158,12 +1321,50 @@ public class PdfTableLocator {
                     continue; // repeated header of the table already in progress -- not a data row
                 }
                 if (currentRows != null) {
+                    // TRAILING_IDENTITY_CARRIED_FORWARD. pendingAuxiliary is a running list built
+                    // across this section's whole lifetime, and closeCurrentSection attaches ALL of
+                    // it to the section that is CLOSING -- correct for the vast majority of it (an
+                    // account-holder/number line that appeared right after THIS section's own
+                    // header genuinely belongs to it), but wrong for its own trailing run: a real
+                    // identity line for the section about to OPEN, printed just before that
+                    // section's own header is recognized, otherwise gets misattributed to the
+                    // section ending here instead. Confirmed on a real HDFC composite statement:
+                    // the Recurring Deposit's own "Account Number"/"Account Type: RECURRING
+                    // DEPOSIT"/"RD ACCOUNT SUMMARY" identity block prints immediately after the
+                    // FIXED DEPOSIT ledger's last row and before the RD table's own header, so it
+                    // landed in the FD section's trailing auxiliary text -- PdfMetadataExtractor
+                    // then correctly extracted AN account number from it, just the wrong section's.
+                    // Extracted from the TRAILING run only (working backward from the end, stopping
+                    // at the first non-identity-shaped line): an identity line buried earlier in the
+                    // section's own aux text, with ordinary content after it, unambiguously belongs
+                    // to THIS section, not the next one.
+                    //
+                    // currentSectionAccountId passed through so a RESTATEMENT of the SAME account
+                    // (the exact real shape AccountIdentityLinePdfTableLocatorTest pins: a deposit
+                    // schedule's own summary block restates its own "Account Number:" line as
+                    // trailing text before a genuinely different table) is never carried forward --
+                    // it identifies the section that is closing, not the one about to open. Found
+                    // by that test failing after this capability first shipped: it correctly stayed
+                    // with the closing section pre-TRAILING_IDENTITY_CARRIED_FORWARD (the ordinary
+                    // "sameAccountIdentityRepeated" branch above already handles a restatement
+                    // correctly on its own), and this capability's own shape-only check had no way
+                    // to tell that apart from a genuinely new identity.
+                    List<String> carriedForwardIdentity =
+                            extractTrailingIdentityLines(pendingAuxiliary, currentSectionAccountId);
                     // A different header shape, or a same-shaped header with a contradicting
                     // identity line since this section opened -- fallback signal for a new section
                     // in a document without a banner line.
+                    int sectionsBeforeClose = sections.size();
                     PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
                             pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
+                    if (firstStagedHeaderRowIndex < 0 && sections.size() > sectionsBeforeClose) {
+                        firstStagedHeaderRowIndex = pendingSectionHeaderRowIndex;
+                    }
                     pendingAuxiliary = closed.auxiliary();
+                    if (!carriedForwardIdentity.isEmpty()) {
+                        pendingAuxiliary.addAll(0, carriedForwardIdentity);
+                        if (ctx != null) ctx.record("TRAILING_IDENTITY_CARRIED_FORWARD");
+                    }
                     pendingDroppedCandidates = closed.droppedCandidates();
                     pendingHeaderReconstructionVocab = closed.headerReconstructionVocab();
                     if (ctx != null) ctx.record("COMPOSITE_STATEMENT");
@@ -1242,18 +1443,55 @@ public class PdfTableLocator {
                 }
                 pendingAuxiliary.addAll(orphanedHeaderRowText);
                 if (ctx != null) ctx.recordHeaders(headerNames);
+                // COLUMN_SPAN_PLACEMENT. Measured once, right here, rather than per bucketRow call
+                // -- the header is now final for both branches above, and every bucketRow call for
+                // this header (the loop below) reuses the same measurement. Sampled forward from
+                // the row right after the header itself, the same way headerQualityWeak already
+                // samples forward from a candidate header to judge it.
+                textColumnSpans = measureTextColumnSpans(headerNames,
+                        sampleRealDataRows(rows, thisHeaderRowIndex + 1, COLUMN_SPAN_SAMPLE_SIZE), yearsByPage);
                 currentHeaderSignature = signature;
                 currentRows = new ArrayList<>();
+                // The one place currentRows is ever created, so the one place this pairing is made.
+                pendingSectionHeaderRowIndex = thisHeaderRowIndex;
                 lastRowPage = null;
                 lastRowY = null;
                 blockPitch = null;
                 blockSeparation = null;
+                blockNarrationLeftX = null;
                 trailingCountSinceLastAnchor = 0;
                 pendingLeading = null;
                 pendingLeadingFromProximity = false;
                 leadingCount = 0;
                 pageLegendBlockActive = false;
                 continue;
+            }
+
+            // Bug fix, 2026-08-31: pageLegendBlockActive's only resume signal used to be a newly
+            // recognized header row (see the pageLegendBlockActive = false call sites above). That
+            // assumption silently broke on any real document whose per-page legend/footer sits
+            // under a table that does NOT reprint its header on every page -- a real HDFC savings
+            // statement (24 pages) prints its header exactly once, on page 1, and never again; once
+            // its own per-page footer ("Closing balance includes funds earmarked...", part of
+            // PAGE_LEGEND_BLOCK_START above) set this flag on page 1, there was no "next header"
+            // ever again to reset it, and every one of the document's remaining 23 pages -- 231 of
+            // 243 real transactions -- was silently suppressed for the rest of the document. A
+            // second, independent resume signal: a row that is transaction-shaped
+            // (isTransactionShapedRow -- some cell parses as a date AND some cell parses as a
+            // decimal amount, not necessarily the same cell; the same admission test the headerless
+            // path already trusts) is treated as proof the block has ended, with or without a header
+            // row in between.
+            //
+            // Known limitation, unevidenced against the real corpus so deliberately not solved
+            // speculatively: none of the three real PAGE_LEGEND_BLOCK_START sentences (SBI, Kotak,
+            // HDFC -- see that pattern's own doc comment) are documented as being followed by a
+            // date-and-amount-bearing row within their own legend/disclaimer block, but nothing
+            // structurally prevents one -- a summary panel with an effective-date field and a
+            // nearby currency figure on the same physical line would satisfy isTransactionShapedRow
+            // without being a real transaction, resuming suppression a row early and admitting that
+            // row as a spurious transaction. Revisit if a real document ever shows this shape.
+            if (pageLegendBlockActive && isTransactionShapedRow(row)) {
+                pageLegendBlockActive = false;
             }
 
             if (currentRows == null) {
@@ -1313,7 +1551,17 @@ public class PdfTableLocator {
                 recordIfTransactionShaped(row, "TRANSACTION_CATEGORY_HEADER_SUPPRESSED", pendingDroppedCandidates);
                 continue;
             } else {
-                Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
+                PageDateEvidence rowCandidateYears = yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE);
+                // Substituted before bucketRow for the identical reason inferHeaderlessSection's
+                // own call does (see substituteYearlessDates' own doc comment): without it, the
+                // RAW yearless text ("May 01") reaches bucketRow's stored value, and
+                // TransactionNormalizer downstream rejects it through the same CsvParser.parseDate
+                // call that has no yearless awareness at all -- hasDateValue recognizing it a few
+                // lines up only gets the row treated as an anchor, it does not fix what ends up
+                // stored in that anchor's own date cell.
+                List<PositionedText> resolvedRow = substituteYearlessDates(row, rowCandidateYears);
+                Map<String, String> bucketed = bucketRow(resolvedRow, headerNames, headerAnchors, headerEnds, ctx,
+                        rowCandidateYears, textColumnSpans);
                 if (bucketed.isEmpty()) {
                     // Row-accounting evidence: the row survived every structural gate up to
                     // bucketing and still produced literally nothing -- the strongest "we don't
@@ -1346,7 +1594,88 @@ public class PdfTableLocator {
                 // crossing a header/section boundary above.
                 boolean samePage = lastRowPage != null && !row.isEmpty() && row.get(0).pageIndex() == lastRowPage;
 
-                if (hasDateValue(bucketed)) {
+                // SAME_DAY_CONTINUATION_TRANSACTION. The date-anchor model above assumes every real
+                // transaction prints its own date value -- true everywhere else in this class, false
+                // on a real HSBC savings statement (OCR-acquired, but the mechanism is generic to any
+                // acquisition source: nothing here reads TextSource): a second same-day transaction
+                // does not repeat the date at all, it simply continues under the first one's.
+                //
+                // Traced on that real document: the first transaction's own reference-number lines
+                // (two of them) push trailingCountSinceLastAnchor to the trailing cap by the time its
+                // own amount+balance row is merged, so the SECOND transaction's reference lines
+                // exhaust the cap's aligned-narration extension too, and by the time ITS OWN
+                // amount+balance row arrives, both continuesTheBlock (the accumulated pitch has
+                // drifted 1.7pt past blockPitch, just over BLOCK_PITCH_TOLERANCE) and the plain count
+                // check fail. The row falls into the ordinary "leading narration for whatever anchor
+                // comes next" branch below -- exactly correct for a row that truly precedes an
+                // unrelated transaction, and exactly wrong here, because "whatever comes next" is the
+                // FOLLOWING day's transaction, not this one. Two failures result, not one:
+                // mergeLeadingInto stamps the wrong date onto it, and when this document's third
+                // transaction's own amount+balance row later reaches the now-already-populated
+                // Balance cell that merge stole, mergeInto's own guard against invalidating a
+                // structured value redirects the second value into free text instead of staging it --
+                // that transaction never becomes a row at all.
+                //
+                // The signal a genuinely NEW transaction gives that no amount of pitch or count
+                // tuning can: it carries its own Balance, and the anchor still open already recorded
+                // one. A ledger states one running balance per transaction, never two, so this can
+                // only mean a second transaction has arrived under the still-open anchor's date --
+                // never a continuation of it, regardless of how the trailing-continuation state
+                // machine below would otherwise have classified this exact row. Deliberately
+                // narrower than the general "reopen a transaction on any amount collision" idea it
+                // might generalize to: only Balance is checked, because it is the one value every
+                // layout this class already recognizes as singular per transaction, whereas
+                // Withdrawals/Deposits legitimately repeat blank across many real layouts and would
+                // need evidence of their own before being trusted the same way.
+                //
+                // Bug fix, found regression-testing this against the full real corpus: the anchor's
+                // OWN date must independently pass hasDateValue before its value is trusted enough
+                // to copy forward -- assuming "already an anchor" implied "already has a genuine
+                // date" was wrong. A real Kotak savings statement opens its very first section with
+                // an "Opening Balance" row via the completely separate currentRows.isEmpty() branch
+                // below, which admits it on the strength of a real Balance value alone and a bare
+                // "-" placeholder in the date column -- never checked against hasDateValue at all.
+                // Every following row's own date column failed to parse for unrelated reasons, so
+                // every one of them collided on Balance against whatever came before, and each
+                // collision copied the previous row's already-corrupt "date" forward and appended
+                // its own unparseable text onto it (mergeInto's date guard only refuses to overwrite
+                // a date that already parses; "-" doesn't). 2 expected rows became 110, each one's
+                // date field longer than the last. Requiring hasDateValue on the anchor itself stops
+                // the chain at its first link: there is no genuine date to share when the anchor
+                // never had one, so this branch now correctly declines and the row falls through to
+                // whatever handled it before this branch existed.
+                if (!hasDateValue(bucketed, yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))
+                        && !currentRows.isEmpty()
+                        && hasDateValue(currentRows.get(currentRows.size() - 1),
+                                yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))
+                        && closesADifferentTransactionThanTheOpenAnchor(bucketed,
+                                currentRows.get(currentRows.size() - 1), headerNames)) {
+                    Map<String, String> openAnchor = currentRows.get(currentRows.size() - 1);
+                    Map<String, String> sameDayRow = new LinkedHashMap<>();
+                    headerNames.stream().filter(this::isDateColumn).findFirst()
+                            .ifPresent(dateColumn -> sameDayRow.put(dateColumn, openAnchor.get(dateColumn)));
+                    if (pendingLeading != null) {
+                        mergeInto(sameDayRow, pendingLeading, headerNames);
+                        pendingLeading = null;
+                        pendingLeadingFromProximity = false;
+                        pendingLeadingAllBelongAbove = true;
+                        leadingCount = 0;
+                    }
+                    mergeInto(sameDayRow, bucketed, headerNames);
+                    currentRows.add(sameDayRow);
+                    if (ctx != null) ctx.record("SAME_DAY_CONTINUATION_TRANSACTION");
+                    anchorCarriedItsOwnNarration = hasNarrationOfItsOwn(bucketed, headerNames);
+                    if (gapFromPreviousRow != null) blockSeparation = gapFromPreviousRow;
+                    lastRowPage = row.get(0).pageIndex();
+                    lastRowY = row.get(0).y();
+                    blockPitch = null;
+                    blockNarrationLeftX = null;
+                    trailingCountSinceLastAnchor = 0;
+                } else if (hasDateValue(bucketed, yearsByPage.getOrDefault(rowPageIndex, PageDateEvidence.NONE))) {
+                    // Read BEFORE any leading narration is merged in: the question is whether this
+                    // transaction printed its own narration on its own date row, which merging a
+                    // buffered leading line would otherwise disguise.
+                    anchorCarriedItsOwnNarration = hasNarrationOfItsOwn(bucketed, headerNames);
                     // A new transaction anchor. Any leading narration buffered since the last
                     // anchor belongs to THIS one -- claim it first (prepended, so it reads in the
                     // order it actually appeared), then this row becomes the new anchor, open to
@@ -1360,6 +1689,7 @@ public class PdfTableLocator {
                         }
                         pendingLeading = null;
                         pendingLeadingFromProximity = false;
+                        pendingLeadingAllBelongAbove = true;
                         leadingCount = 0;
                     }
                     currentRows.add(bucketed);
@@ -1376,6 +1706,7 @@ public class PdfTableLocator {
                     lastRowPage = row.get(0).pageIndex();
                     lastRowY = row.get(0).y();
                     blockPitch = null;
+                    blockNarrationLeftX = null;
                     trailingCountSinceLastAnchor = 0;
                 } else if (currentRows.isEmpty() && (!isNarrationOnly(bucketed)
                         // A row that populates MORE THAN ONE column, even carrying no date/number
@@ -1398,7 +1729,8 @@ public class PdfTableLocator {
                         // only signal that told these apart from the one real ICICI savings
                         // document this whole gate exists for: whether a genuine hasDateValue row
                         // actually follows, within a bounded lookahead.
-                        || !anchorFollowsWithinSection(rows, rowIndex + 1, headerNames, headerAnchors, headerEnds)
+                        || !anchorFollowsWithinSection(rows, rowIndex + 1, headerNames, headerAnchors, headerEnds,
+                                yearsByPage)
                         // A real anchor existing somewhere ahead still is not enough on its own --
                         // found on a real HDFC Credit Card statement: a genuine two-line merchant
                         // caption, printed LOOSELY spaced above its own tightly-spaced pair with the
@@ -1412,7 +1744,8 @@ public class PdfTableLocator {
                         // second line's gap to the real anchor (4.3pt), a genuine pitch break. Only
                         // checked when something sits between this row and the anchor -- a row
                         // immediately adjacent to the anchor has no prior chain pitch to break.
-                        || !firstHopIsPitchConsistentOrDirect(rows, rowIndex, headerNames, headerAnchors, headerEnds))) {
+                        || !firstHopIsPitchConsistentOrDirect(rows, rowIndex, headerNames, headerAnchors, headerEnds,
+                                yearsByPage))) {
                     // Nothing to attach to at all yet (e.g. an "Opening Balance" summary line
                     // before any real transaction) -- stands on its own, same as before. Closed to
                     // trailing continuation immediately: a summary row isn't a transaction, and
@@ -1432,10 +1765,24 @@ public class PdfTableLocator {
                     // (whose own samePage check is also false) into the leading-narration branch at
                     // the bottom, unchanged.
                     currentRows.add(bucketed);
-                    lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
-                    lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
+                    // CodeQL (java/dereferenced-value-may-be-null), 2026-09-04: pageIndex()/y()
+                    // return primitive int/float, so the old `row.isEmpty() ? lastRowPage : ...`
+                    // ternary forced JLS numeric-promotion unboxing on the lastRowPage/lastRowY
+                    // branch whenever it was the one selected -- and the comment two lines up
+                    // already documents that lastRowPage really can be null here ("still null,
+                    // reset when this section opened"). Whether row.isEmpty() can ALSO be true at
+                    // that exact moment wasn't fully traced against this method's full state
+                    // space; this if-form is behaviourally identical to the ternary for every case
+                    // that already works (plain assignment when non-empty, untouched otherwise)
+                    // and cannot unbox a null under any circumstance, so it closes the risk without
+                    // needing that proof.
+                    if (!row.isEmpty()) {
+                        lastRowPage = row.get(0).pageIndex();
+                        lastRowY = row.get(0).y();
+                    }
                     blockPitch = null;
                     blockSeparation = null;
+                    blockNarrationLeftX = null;
                     trailingCountSinceLastAnchor = MAX_TRAILING_CONTINUATION_ROWS;
                 } else if (!currentRows.isEmpty() && samePage
                         // Explicit currentRows.isEmpty() guard, found via a real corpus crash: with
@@ -1449,19 +1796,90 @@ public class PdfTableLocator {
                         && (continuesTheBlock(row, lastRowY, blockPitch, blockSeparation,
                                     trailingCountSinceLastAnchor)
                             || isChequeReferenceTrailer(rowLine)
-                            || (trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
-                                && (!isNarrationOnly(bucketed)
-                                    || belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow))))) {
+                            || (isNarrationOnly(bucketed)
+                                    // A narration-only row is placed by WHERE IT IS PRINTED, not
+                                    // by how many came before it. belongsToTheRowAbove was already
+                                    // computed and already wired in here, but it sat behind the
+                                    // count cap and so could never be reached on the documents
+                                    // that need it most: a layout whose lines are all set on one
+                                    // uniform pitch gives continuesTheBlock's separatesItsBlocks
+                                    // guard nothing to work with, which left the constant 2 as the
+                                    // only rule in force. Measured, a real HDFC savings statement
+                                    // sets EVERY line 17.20pt apart and wraps a third and fourth
+                                    // narration line on half its transactions; the over-cap lines
+                                    // were buffered forward, refused, and staged as their own
+                                    // dateless rows -- each one a narration truncated mid-word
+                                    // above it and an unparseable row below it.
+                                    //
+                                    // The count cap is kept for the OTHER sub-branch, and that is
+                                    // the important half of this condition: a dateless row that
+                                    // carries a figure is not narration, and proximity has no
+                                    // business moving it (see isNarrationOnly's own doc comment for
+                                    // the two real rows that changed value when it was allowed to).
+                                    // One real corpus statement prints every transaction with a
+                                    // second, genuinely dateless line carrying its reference,
+                                    // amounts and balance -- that row must keep the count cap.
+                                    //
+                                    // MAX_BLOCK_CONTINUATION_ROWS, not unbounded, for the reason
+                                    // its own doc comment already gives: a ceiling against
+                                    // pathology, not a model of narration.
+                                    ? (belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow)
+                                        && (trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
+                                            // Past the count cap, and ONLY past it, the row must also
+                                            // start where this block's own narration starts. Within
+                                            // the cap nothing changes -- the first continuation is
+                                            // what TEACHES the block its left edge, so requiring the
+                                            // edge before it is known would refuse every block's
+                                            // first line and the edge would never be learned at all.
+                                            // anchorCarriedItsOwnNarration is what makes the
+                                            // left-edge test safe. On a statement that prints a
+                                            // transaction's narration BEFORE its date row, the next
+                                            // transaction's leading narration is printed in the same
+                                            // column, at the same left edge, at the same pitch as
+                                            // this transaction's trailing narration -- the three
+                                            // signals are identical and no geometry separates them.
+                                            // The count cap is the only thing that ever did, and on
+                                            // such a document it stays in force. Where the anchor
+                                            // carries its own narration there is no leading-narration
+                                            // ambiguity to begin with: every dateless row after it
+                                            // continues the cell that started on the anchor row.
+                                            || (anchorCarriedItsOwnNarration
+                                                && alignsWithTheBlocksNarration(row, blockNarrationLeftX)
+                                                && trailingCountSinceLastAnchor < MAX_ALIGNED_CONTINUATION_ROWS)))
+                                    : trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS))) {
                     // The pitch this block prints its own wrapped lines at, learned from the first
                     // one and never revised -- so a later line that breaks the pitch cannot quietly
                     // redefine it and chain the whole page together (see BLOCK_PITCH_TOLERANCE).
                     if (trailingCountSinceLastAnchor == 0 && lastRowY != null) {
                         blockPitch = row.get(0).y() - lastRowY;
+                        blockNarrationLeftX = leftmostRunX(row);
                     }
                     mergeInto(currentRows.get(currentRows.size() - 1), bucketed, headerNames);
                     if (ctx != null) {
                         ctx.record("WRAPPED_DESCRIPTION");
                         if (isChequeReferenceTrailer(rowLine)) ctx.record("CHEQUE_REFERENCE_TRAILER_RECOVERED");
+                        // Recorded only when the LEFT-EDGE path is what admitted this row. A bare
+                        // "past the count cap" test would also fire for rows admitted by
+                        // continuesTheBlock or isChequeReferenceTrailer, which were already being
+                        // merged before this capability existed -- and a capability that reports
+                        // itself active on a document it changed nothing about is the kind of
+                        // misleading signal CapabilityCoverageService's own doc comment exists to
+                        // keep out of the coverage map.
+                        if (trailingCountSinceLastAnchor >= MAX_TRAILING_CONTINUATION_ROWS
+                                && isNarrationOnly(bucketed)
+                                && anchorCarriedItsOwnNarration
+                                && alignsWithTheBlocksNarration(row, blockNarrationLeftX)
+                                // ...and only when no OTHER disjunct would have admitted this row
+                                // anyway. Without these two negations the capability also fired on a
+                                // real Bank of Baroda export, whose rows past the cap are admitted
+                                // by continuesTheBlock exactly as they were before this capability
+                                // existed -- claiming credit for a merge that already happened, on
+                                // a document whose output this change does not alter at all.
+                                && !continuesTheBlock(row, lastRowY, blockPitch, blockSeparation,
+                                        trailingCountSinceLastAnchor)
+                                && !isChequeReferenceTrailer(rowLine)) {
+                            ctx.record("WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP");
+                        }
                     }
                     trailingCountSinceLastAnchor++;
                     lastRowPage = row.get(0).pageIndex();
@@ -1504,29 +1922,84 @@ public class PdfTableLocator {
                             trailingCountSinceLastAnchor < MAX_TRAILING_CONTINUATION_ROWS
                                     && isNarrationOnly(bucketed)
                                     && !belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow);
+
+                    // BUFFER SPLIT. One buffer can otherwise hold two different transactions' text:
+                    // a previous transaction's narration that ran past the trailing cap, followed by
+                    // the NEXT transaction's leading narration. Both are dateless, both sit in the
+                    // description column, and the whole buffer is then prepended to the next
+                    // anchor -- so the earlier transaction's tail is silently moved onto the later
+                    // one. Measured on a real ICICI savings export: every transaction's remarks
+                    // began with the previous transaction's reference tail, and every transaction's
+                    // own remark was truncated. No row was lost and no amount was wrong, which is
+                    // exactly why it needed looking for.
+                    //
+                    // The split point is the first row the document places DECISIVELY below rather
+                    // than above -- belongsToTheRowAbove is false, meaning this row is visibly
+                    // nearer the transaction under it than the one over it. Everything buffered
+                    // before that point was placed above, so it belongs to the transaction above,
+                    // and is merged there instead of travelling forward.
+                    //
+                    // Deliberately gated on a DECISIVE reading. Where a document spaces every line
+                    // identically the comparison is a tie, belongsToTheRowAbove reports true for
+                    // every row, this never fires, and the count cap continues to decide exactly as
+                    // before -- which is the conservative behaviour a uniform layout has to keep,
+                    // because there the two cases are genuinely indistinguishable by geometry.
+                    boolean decisivelyBelongsBelow = isNarrationOnly(bucketed)
+                            && !belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow);
+                    if (decisivelyBelongsBelow && pendingLeading != null
+                            && pendingLeadingAllBelongAbove && !currentRows.isEmpty()) {
+                        appendNarrationTo(currentRows.get(currentRows.size() - 1), pendingLeading,
+                                headerNames);
+                        if (ctx != null) ctx.record("LEADING_BUFFER_SPLIT_AT_ITS_OWN_BOUNDARY");
+                        pendingLeading = null;
+                        pendingLeadingFromProximity = false;
+                        pendingLeadingAllBelongAbove = true;
+                    }
+
                     if (pendingLeading == null) {
                         pendingLeading = new LinkedHashMap<>();
                         pendingLeadingFromProximity = nearerToTheTransactionBelow;
-                    } else if (!nearerToTheTransactionBelow) {
-                        pendingLeadingFromProximity = false;
+                        // isNarrationOnly as well as proximity, and for the same reason that
+                        // predicate gates every other proximity decision in this file: the split
+                        // below MERGES this buffer into the transaction above it, and a buffered row
+                        // that carries a figure is not narration -- moving it changes what that
+                        // transaction is worth. Measured without this conjunct, a real Standard
+                        // Chartered export lost fourteen genuine transactions whose rows were
+                        // buffered and then folded into their predecessor.
+                        pendingLeadingAllBelongAbove = isNarrationOnly(bucketed)
+                                && belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow);
+                    } else {
+                        if (!nearerToTheTransactionBelow) pendingLeadingFromProximity = false;
+                        pendingLeadingAllBelongAbove = pendingLeadingAllBelongAbove
+                                && isNarrationOnly(bucketed)
+                                && belongsToTheRowAbove(gapFromPreviousRow, gapToNextRow);
                     }
                     mergeInto(pendingLeading, bucketed, headerNames);
                     leadingCount++;
                     if (ctx != null) ctx.record("LEADING_NARRATION_CONTINUATION");
-                    lastRowPage = row.isEmpty() ? lastRowPage : row.get(0).pageIndex();
-                    lastRowY = row.isEmpty() ? lastRowY : row.get(0).y();
+                    // CodeQL (java/dereferenced-value-may-be-null), 2026-09-04 -- same fix, same
+                    // reasoning as this method's other lastRowPage/lastRowY update above.
+                    if (!row.isEmpty()) {
+                        lastRowPage = row.get(0).pageIndex();
+                        lastRowY = row.get(0).y();
+                    }
                     // The block above is closed the moment a row is buffered forward instead of
                     // merged into it. Without this, a later row that happened to match the old
                     // pitch would be appended to a transaction whose narration this buffered row
                     // already moved past -- text rejoining a transaction out of order, behind text
                     // that had been given to the next one.
                     blockPitch = null;
+                    blockNarrationLeftX = null;
                 }
             }
         }
         if (currentRows != null) {
+            int sectionsBeforeClose = sections.size();
             PendingState closed = closeCurrentSection(currentRows, pendingLeading, headerNames,
                     pendingAuxiliary, pendingDroppedCandidates, pendingHeaderReconstructionVocab, sections, ctx);
+            if (firstStagedHeaderRowIndex < 0 && sections.size() > sectionsBeforeClose) {
+                firstStagedHeaderRowIndex = pendingSectionHeaderRowIndex;
+            }
             // closeCurrentSection's auxiliary is non-empty only when it just suppressed a
             // payment-summary panel instead of staging a section (the ordinary path always
             // returns a fresh, empty list for whatever section comes next). This is the end of the
@@ -1563,6 +2036,44 @@ public class PdfTableLocator {
             sections.set(sections.size() - 1,
                     new LocatedSection(mergedAuxiliary, last.rows(), last.evidence()));
         }
+        // Real HSBC evidence: a genuinely headerless transaction table can sit BEFORE a later,
+        // completely unrelated table whose own header IS recognized (there, a "Loan Summary
+        // Table" EMI schedule on a later page) -- once ANY header is found anywhere in the
+        // document, sections is never empty again, and the sections.isEmpty() gate below never
+        // gives the earlier, real content a chance at headerless inference at all, independent of
+        // how many transactions it has. Tried BEFORE that gate, on ONLY the physical rows before
+        // the document's own first SURVIVING header (see firstStagedHeaderRowIndex's doc comment) --
+        // deliberately not a comparison of which interpretation "found more," which would risk
+        // overriding an already-correct header-based section on some other document; this only
+        // ever ADDS content nothing else was going to claim. Inserted at the front of `sections`
+        // (not appended) since it physically precedes everything else found.
+        //
+        // Downstream interaction with PdfPreviewGenerator, measured rather than assumed: turning a
+        // document's section count from 1 to 2 also turns off TransactionTableDateRangeExtractor
+        // and StatementTitleDateRangeExtractor (both gated on doc.sections().size() <= 1), on the
+        // reasoning that a document with more than one section may be a genuine multi-account
+        // composite where one section's printed range must not be copied onto another. That
+        // reasoning does not describe the documents recovered here (the "second section" is an
+        // unrelated Loan Summary table, not another account), so the gate looked like a real loss.
+        // It is not: removing both gates entirely and re-running the full 29-document real corpus
+        // changes NOTHING anywhere -- neither extractor finds a date range on either HSBC document
+        // with or without the gate, and no other document's section count is affected by this
+        // block at all. attributePrintedSummary's own gate (exactly one section with rows) is
+        // likewise untouched, because the added section is the one WITH rows and the pre-existing
+        // one has none. So there is no field to recover and nothing to trade off; the gate stays as
+        // it is, protecting the genuine composites (one real statement in this corpus splits into
+        // five sections) that it was written for.
+        // Anchored on the first header whose section actually SURVIVED closing, not on the first
+        // row that merely scored as one -- see firstStagedHeaderRowIndex's own doc comment for the
+        // suppressed-payment-summary-panel case that distinguishes them. On every document where
+        // nothing is suppressed the two indices are identical, so this is a no-op there.
+        if (firstStagedHeaderRowIndex > 0) {
+            LocatedSection preHeaderInferred = inferHeaderlessSection(rows.subList(0, firstStagedHeaderRowIndex), ctx);
+            if (preHeaderInferred != null) {
+                if (ctx != null) ctx.record("HEADERLESS_LAYOUT_BEFORE_LATER_HEADER");
+                sections.add(0, preHeaderInferred);
+            }
+        }
         // INFERRED_HEADERLESS_LAYOUT. Only ever attempted once the loop above has already found
         // nothing -- see this capability's own doc comment on inferHeaderlessSection for why a
         // header-vocabulary miss on the whole document is a different problem from every other
@@ -1574,6 +2085,8 @@ public class PdfTableLocator {
             if (inferred == null) inferred = inferTwoLineDateBlockSection(rows, ctx);
             if (inferred != null) sections.add(inferred);
         }
+        remergeSameTableSections(sections, ctx);
+        dropCompletelyEmptySections(sections, ctx);
         if (ctx != null) ctx.recordTables(sections.size());
         return new LocatedDocument(sections, physicalRowFormationEvidence);
     }
@@ -1662,6 +2175,85 @@ public class PdfTableLocator {
         if (above == null || below == null || above.isEmpty() || below.isEmpty()) return null;
         if (above.get(0).pageIndex() != below.get(0).pageIndex()) return null;
         return below.get(0).y() - above.get(0).y();
+    }
+
+    /**
+     * Whether this freshly-bucketed anchor row carries description text of its own.
+     *
+     * <p>Read at the anchor, before any buffered leading narration is merged into it -- merging
+     * would make every anchor look as though it had. The distinction it draws is between two
+     * layout families this class already handles separately: a statement whose transaction starts
+     * its narration on its own date row, and one that prints the narration above the date row. On
+     * the second family the next transaction's LEADING narration and this transaction's TRAILING
+     * narration occupy the same column, the same left edge and the same line pitch, so no geometric
+     * test can tell them apart -- only the count cap ever could.
+     */
+    private boolean hasNarrationOfItsOwn(Map<String, String> bucketed, List<String> headerNames) {
+        String descriptionColumn = descriptionColumnIn(bucketed, headerNames);
+        if (descriptionColumn == null) return false;
+        String value = bucketed.get(descriptionColumn);
+        return value != null && !value.isBlank();
+    }
+
+
+    /**
+     * Appends a narration-only buffer's text to {@code target}'s DESCRIPTION cell, and touches
+     * nothing else.
+     *
+     * <p>Deliberately not {@link #mergeInto}. A buffered continuation line is bucketed by geometry
+     * like any other row, so its text sits under whichever column its x happened to fall nearest --
+     * and on a real Standard Chartered export that is the value-date column, because the narration's
+     * left edge is nearer the date anchors than its own header's. Merging such a buffer column-wise
+     * writes that text into the target's value-date cell, which then fails to parse, and the whole
+     * transaction is lost at normalization: measured, fourteen genuine transactions on that one
+     * document, with no missing row anywhere to point at them.
+     *
+     * <p>The buffer is known narration-only at every call site, so joining its cells and appending
+     * them as description loses nothing: there is no figure in it to misplace.
+     */
+    private void appendNarrationTo(Map<String, String> target, Map<String, String> buffer,
+                                   List<String> headerNames) {
+        String descriptionColumn = descriptionColumnIn(target, headerNames);
+        if (descriptionColumn == null) return;
+        StringBuilder text = new StringBuilder();
+        for (String value : buffer.values()) {
+            if (value == null || value.isBlank()) continue;
+            if (text.length() > 0) text.append(' ');
+            text.append(value.trim());
+        }
+        if (text.length() == 0) return;
+        String existing = target.get(descriptionColumn);
+        target.put(descriptionColumn,
+                existing == null || existing.isBlank() ? text.toString() : existing + " " + text);
+    }
+
+    /** The x of this row's leftmost non-blank run, or null for a row with nothing in it. */
+    private static Float leftmostRunX(List<PositionedText> row) {
+        Float leftmost = null;
+        for (PositionedText t : row) {
+            if (t.text().isBlank()) continue;
+            if (leftmost == null || t.x() < leftmost) leftmost = t.x();
+        }
+        return leftmost;
+    }
+
+    /**
+     * Whether this row starts where the block's own wrapped narration starts.
+     *
+     * <p>The signal {@link #belongsToTheRowAbove} cannot supply. Proximity is scale-free -- it
+     * compares two gaps and says nothing about how big either is -- so on a statement that sets
+     * every line on one uniform grid it answers "belongs above" for the closing summary block just
+     * as readily as for a genuine wrap, and admitted nine lines of one on a real Bandhan export.
+     * Alignment asks whether this row is a continuation of the same CELL, which boilerplate printed
+     * in a different column cannot satisfy by accident.
+     *
+     * <p>Returns false when the block never established a left edge, which is the conservative
+     * reading: with nothing to compare against, the count cap decides, exactly as before.
+     */
+    private boolean alignsWithTheBlocksNarration(List<PositionedText> row, Float blockNarrationLeftX) {
+        if (blockNarrationLeftX == null) return false;
+        Float left = leftmostRunX(row);
+        return left != null && Math.abs(left - blockNarrationLeftX) <= BLOCK_NARRATION_LEFT_TOLERANCE;
     }
 
     /**
@@ -1802,6 +2394,219 @@ public class PdfTableLocator {
      */
     private static final int LOW_CONFIDENCE_TRANSACTION_HEADER_COLUMN_COUNT = 3;
 
+    /**
+     * RECONCILED_HEADER_SECTIONS_REMERGED. Folds two adjacent sections back into one when their
+     * final, fully-reconciled column sets turn out identical -- the header-diff split at {@code
+     * headerSignature}'s own call site runs against the RAW row, before {@code
+     * coalesceHeaderRuns}/{@code reconstructHeader} have a chance to normalize it (see that call
+     * site's own comment), so a same-table repeated header can be split on a rendering quirk that
+     * the reconciliation pipeline later proves was never a real difference at all.
+     *
+     * <h2>Two real documents, two different proximate triggers, the same underlying shape</h2>
+     *
+     * On a real SBI credit-card statement, one column label on the repeated header renders ~8pt
+     * detached (in y) from its three siblings, landing in a separate physical row that {@code
+     * wrappedHeaderAt}'s own strict x-proximity merge (correctly) refuses to rejoin -- the split
+     * header is later repaired by the heavier {@code reconstructHeader} engine, but only after the
+     * section-boundary decision has already run. On a real Indusland credit-card statement, the
+     * same five columns render as word-fragments tight enough to stay one physical row, but still
+     * individually un-coalesced at the point the raw signature is hashed -- repaired by the lighter
+     * {@code coalesceHeaderRuns} step inside {@code buildHeaderColumns}, again too late to inform
+     * the split. Both real documents genuinely hold ONE credit-card account each: 30+28 rows on
+     * SBI, 7+2 on Indusland, both halves carrying the identical final column set once reconciled.
+     *
+     * <h2>Why this runs here, once, at the very end -- not earlier, at the split decision</h2>
+     *
+     * Moving reconciliation earlier in the per-row loop would touch the same fragile, heavily-
+     * scarred split-decision code the header-diff block's own comments already document as
+     * deliberately narrow (see {@code headerSignature}'s call site: "this cannot merge two sections
+     * that should stay separate: the REPEATED_HEADER/closeCurrentSection decision above has already
+     * run"). A post-hoc pass over the FINAL section list needs no such surgery: by the time this
+     * runs, every section's rows already reflect whatever reconciliation actually happened, so
+     * comparing their column sets directly is sufficient and touches nothing upstream.
+     *
+     * <h2>The identity-safety guard -- why this cannot merge two genuinely different accounts</h2>
+     *
+     * {@code closeCurrentSection}'s own header-diff branch fires {@code COMPOSITE_STATEMENT} for
+     * BOTH a pure header-shape mismatch AND a same-shaped header following a contradicting {@code
+     * ACCOUNT_IDENTITY_LINE}/{@code SECTION_MARKER} -- the second case is exactly two different
+     * accounts sharing one column layout, and must never be merged back together. {@link
+     * LocatedSection} carries no account-identity field (identity/product interpretation is
+     * strictly downstream, per its own doc comment), so rather than thread new bookkeeping through
+     * the per-row loop, this reuses the SAME {@link #SECTION_MARKER}/{@link #ACCOUNT_IDENTITY_LINE}
+     * patterns that loop already trusts to recognize identity, applied to each candidate section's
+     * own {@code auxiliaryText}: if either section shows so much as one recognized identity line,
+     * account identity might genuinely differ and the merge is refused. Confirmed against real
+     * evidence, not assumed: neither SBI's nor Indusland's real document ever trips either pattern
+     * at all (both state their identity as "Card Number"/"Card No.", a shape neither pattern
+     * recognizes) -- so for the two documents this exists to fix, identity was never resolved for
+     * either candidate section, which is precisely the "genuinely unknown, only the header agrees"
+     * case this guard is designed to allow.
+     *
+     * <h2>Why "identical column set," not "any header at all," is the merge trigger</h2>
+     *
+     * A genuine multi-account composite with two DIFFERENT real sub-tables (HSBC's former Loan
+     * Summary phantom, Shivani's FD/RD blocks) never satisfies this condition -- their reconciled
+     * headers differ, by construction, from whatever table came before. The only way two ADJACENT
+     * sections end up with an IDENTICAL final column set after a header-diff split is precisely
+     * this shape: the same table, momentarily misread as a different one.
+     */
+    private void remergeSameTableSections(List<LocatedSection> sections, DocumentContext ctx) {
+        for (int i = 0; i < sections.size() - 1; ) {
+            LocatedSection first = sections.get(i);
+            LocatedSection second = sections.get(i + 1);
+            if (canRemergeAdjacentSections(first, second)) {
+                List<Map<String, String>> mergedRows = new ArrayList<>(first.rows());
+                mergedRows.addAll(second.rows());
+                List<String> mergedAuxiliary = new ArrayList<>(first.auxiliaryText());
+                mergedAuxiliary.addAll(second.auxiliaryText());
+                List<DroppedCandidateRow> mergedDropped =
+                        new ArrayList<>(first.evidence().droppedTransactionCandidates());
+                mergedDropped.addAll(second.evidence().droppedTransactionCandidates());
+                List<HeaderReconstructionFinding> mergedFindings =
+                        new ArrayList<>(first.evidence().headerReconstructionFindings());
+                mergedFindings.addAll(second.evidence().headerReconstructionFindings());
+                sections.set(i, new LocatedSection(mergedAuxiliary, mergedRows,
+                        new ExtractionEvidence(mergedDropped, mergedFindings)));
+                sections.remove(i + 1);
+                if (ctx != null) ctx.record("RECONCILED_HEADER_SECTIONS_REMERGED");
+                // Re-check the same index: the section that absorbed `second` might now also
+                // reconcile with what is newly at i+1, on a document where the same table was
+                // torn into three or more pieces, not just two.
+            } else {
+                i++;
+            }
+        }
+    }
+
+    /**
+     * A section that closed with literally nothing collected -- zero rows, zero auxiliary text --
+     * can never represent real content; the header-diff split at {@code headerSignature}'s own
+     * call site (see that comment) has no way to know this until the section it opens for a
+     * candidate header turns out empty, and {@code closeCurrentSection} stages it unconditionally
+     * regardless (no empty-guard at its own {@code sections.add(...)} call).
+     *
+     * <p>Confirmed on a real HDFC composite statement: a Fixed Deposit block prints its own
+     * TWO-line caption header back to back -- an 8-column band (FD Number, FD CCY, Original
+     * Principal, ...) immediately followed, with zero intervening text, by a narrower 3-column band
+     * (Current FD Amount, Maturity Date, Available Withdrawable) that is the block's REAL accepted
+     * header. The first band alone clears {@code looksLikeHeaderRow}'s own bar (a date-hint word in
+     * "...Renew Date", two amount-hint words), so the header-diff split opens a section for it --
+     * which the very next line (the second band) immediately closes again, having collected
+     * nothing at all. Measured directly: 0 raw bucketed rows, 0 detected columns, 0
+     * auxiliary-text lines, every metadata field null.
+     *
+     * <p>Deliberately general, not a per-document caption match (unlike {@link
+     * #LOAN_SUMMARY_TABLE_MARKER}'s own targeted suppression, needed there because that phantom
+     * section was NOT empty -- it carried real raw rows and real auxiliary text that had to be
+     * kept, just not as its own section): "collected nothing at all" is a structural fact about the
+     * section itself, true or false regardless of what caused it, so this needs no document-
+     * specific trigger to recognize.
+     *
+     * <p>Never drops the LAST remaining section, even an empty one -- {@code sections} must stay
+     * non-empty here, since emptying it after this point would skip every headerless-inference
+     * fallback above, which has already had its own chance and declined.
+     */
+    private void dropCompletelyEmptySections(List<LocatedSection> sections, DocumentContext ctx) {
+        for (int i = sections.size() - 1; i >= 0 && sections.size() > 1; i--) {
+            LocatedSection section = sections.get(i);
+            if (section.rows().isEmpty() && section.auxiliaryText().isEmpty()) {
+                sections.remove(i);
+                if (ctx != null) ctx.record("EMPTY_SECTION_DROPPED");
+            }
+        }
+    }
+
+    /** True when {@code first} and {@code second} are safe to fold back into one section -- see
+     *  {@link #remergeSameTableSections}'s own doc comment for the full guard rationale. Both
+     *  sections must carry real rows (an empty section is a different problem, handled elsewhere),
+     *  their rows' own column sets must be identical, and neither may show a recognized account-
+     *  identity line -- the one signal that would mean these are two different real accounts, not
+     *  one table momentarily misread as two. */
+    private boolean canRemergeAdjacentSections(LocatedSection first, LocatedSection second) {
+        if (first.rows().isEmpty() || second.rows().isEmpty()) return false;
+        // The UNION of every row's own keys, not just rows().get(0) -- an individual row can
+        // legitimately carry fewer keys than its section's real column set (a value genuinely
+        // blank on that one row, a trailing/partial row), confirmed on the real Indusland document
+        // this exists to fix: its very first bucketed row carries only a Date value, while the
+        // section's other rows carry the full five-column set. Comparing row 0 alone refused a
+        // same-table merge that should have fired. This is the same union-of-all-rows approach
+        // PdfPipelineDiagnostic's own "Detected table columns" report already uses.
+        if (!detectedColumnsOf(first).equals(detectedColumnsOf(second))) return false;
+        return first.auxiliaryText().stream().noneMatch(this::looksLikeIdentityLine)
+                && second.auxiliaryText().stream().noneMatch(this::looksLikeIdentityLine);
+    }
+
+    private static Set<String> detectedColumnsOf(LocatedSection section) {
+        Set<String> columns = new LinkedHashSet<>();
+        for (Map<String, String> row : section.rows()) columns.addAll(row.keySet());
+        return columns;
+    }
+
+    // A real SECTION_MARKER/ACCOUNT_IDENTITY_LINE banner is inherently short -- a label plus a
+    // number ("SAVINGS ACCOUNT - 1234567890", "Account No: 1234567890"), the shape both patterns   // synthetic-ok: invented placeholder digits, not a real account number
+    // were designed to recognize per ORIGINAL PHYSICAL ROW elsewhere in this class. Reused here
+    // against LocatedSection.auxiliaryText(), whose entries can be long, multi-sentence blocks
+    // (several original rows already joined), the same SECTION_MARKER pattern false-matched a real
+    // SBI MITC disclaimer's illustrative example -- "...a Credit Card account is 31st March
+    // 2021..." -- purely because "Credit Card account" and a 4-digit year happened to appear in one
+    // long sentence together. This length cap is what tells a genuine short banner apart from a
+    // coincidental match buried in ordinary prose; a real banner line never approaches it.
+    private static final int IDENTITY_LINE_MAX_LENGTH = 80;
+
+    private boolean looksLikeIdentityLine(String line) {
+        if (line.length() > IDENTITY_LINE_MAX_LENGTH) return false;
+        return SECTION_MARKER.matcher(line).find() || ACCOUNT_IDENTITY_LINE.matcher(line).find();
+    }
+
+    // How many of pendingAuxiliary's own trailing lines extractTrailingIdentityLines is willing to
+    // search for a real identity match. Bounded, not unlimited, so a coincidental identity-shaped
+    // line genuinely belonging to a section's OWN much-earlier content can never be reached by this
+    // search -- only a match close enough to the split to plausibly BE the next section's own
+    // leading block. The real document that forced this (see extractTrailingIdentityLines' own doc
+    // comment) needed 9: "Account Number : ..." sits nine lines back from that trailing block's own
+    // last line, itself not identity-shaped ("RD ACCOUNT SUMMARY", a caption, not a label:value
+    // line) -- rounded up with a small margin, not tuned to the exact number.
+    private static final int TRAILING_IDENTITY_LOOKBACK = 12;
+
+    /** TRAILING_IDENTITY_CARRIED_FORWARD's own extraction step -- see the header-diff call site's
+     *  own comment for why this exists. A real misattributed identity block is rarely ONE
+     *  identity-shaped line alone: a name, a customer ID, the identity line itself, then a caption
+     *  ("RD ACCOUNT SUMMARY") all belong together, and only the identity line in the middle of that
+     *  run actually matches {@link #looksLikeIdentityLine}. So this searches the last {@link
+     *  #TRAILING_IDENTITY_LOOKBACK} lines of {@code auxiliary} for the LAST (closest to the end)
+     *  identity match, and -- once found -- carries everything from THAT line to the end forward,
+     *  not just lines that individually match. Mutates {@code auxiliary} in place and returns the
+     *  removed lines in their original order, ready to seed the NEXT section's own leading
+     *  auxiliary text. Returns an empty list, unmodified, when no match is found within the
+     *  lookback window -- the common case, on every document with no such misattribution.
+     *
+     *  <p>{@code closingSectionAccountId} (may be null) is the identity already established for the
+     *  section that is closing. A matched line whose OWN parsed identity ({@link #accountIdentityIn})
+     *  equals it is a RESTATEMENT of that same account, not evidence of a new one about to open --
+     *  see AccountIdentityLinePdfTableLocatorTest's own
+     *  trailingIdentityRestatement_keepsItsMetadata_doesNotStealTheNextSections for the real shape
+     *  this guards (a deposit schedule's own summary block restates its own "Account Number:" line
+     *  before a genuinely different table follows). Such a line is skipped,
+     *  not treated as the carry point -- the search continues further back for a genuinely
+     *  different identity, exactly as if this line were not identity-shaped at all. */
+    private List<String> extractTrailingIdentityLines(List<String> auxiliary, String closingSectionAccountId) {
+        int searchFrom = Math.max(0, auxiliary.size() - TRAILING_IDENTITY_LOOKBACK);
+        int lastIdentityIndex = -1;
+        for (int i = auxiliary.size() - 1; i >= searchFrom; i--) {
+            String line = auxiliary.get(i);
+            if (!looksLikeIdentityLine(line)) continue;
+            String parsedId = accountIdentityIn(line);
+            if (parsedId != null && parsedId.equals(closingSectionAccountId)) continue;
+            lastIdentityIndex = i;
+            break;
+        }
+        if (lastIdentityIndex < 0) return List.of();
+        List<String> carried = new ArrayList<>(auxiliary.subList(lastIdentityIndex, auxiliary.size()));
+        auxiliary.subList(lastIdentityIndex, auxiliary.size()).clear();
+        return carried;
+    }
+
     /** Closes whatever section is currently open: flushes any pending leading narration, then
      *  either stages it as a real {@link LocatedSection} or -- when {@link
      *  #looksLikePaymentSummaryPanel} says it looks like a misdetected payment-summary panel
@@ -1880,11 +2685,27 @@ public class PdfTableLocator {
      * nothing here, so EVERY row of such a table failed this check, none became a transaction
      * anchor, and the whole table collapsed into one merged row. Now asked per word, the way every
      * other date-column decision in this class is asked.
+     *
+     * <p>Third bug fix, same shape again: {@link CsvParser#parseDate} alone also misses a
+     * genuinely yearless date column -- a real Standard Chartered savings statement prints every
+     * transaction's date as a bare "May 01", relying on the account-summary block's own statement
+     * date range for the year. {@link #resolveYearlessDate} already exists to resolve exactly this
+     * (see its own doc comment), but until now every caller of it was a narrower, evidence-gated
+     * capability (INFERRED_HEADERLESS_LAYOUT) rather than this method, the central anchor gate --
+     * so a row whose ONLY date value was yearless never registered as a transaction anchor at all,
+     * and the whole table collapsed into trailing continuations of whichever row happened to also
+     * carry a full, year-bearing date. {@code candidateYears} is threaded in from {@link
+     * #yearsByPage}, scoped to the row's OWN page for the identical reason that scoping already
+     * exists there.
      */
-    private boolean hasDateValue(Map<String, String> bucketed) {
+    private boolean hasDateValue(Map<String, String> bucketed, PageDateEvidence candidateYears) {
         for (Map.Entry<String, String> e : bucketed.entrySet()) {
             if (e.getKey() == null || e.getValue() == null || e.getValue().isBlank()) continue;
-            if (isDateColumn(e.getKey()) && CsvParser.parseDate(e.getValue().trim()) != null) return true;
+            if (!isDateColumn(e.getKey())) continue;
+            String value = e.getValue().trim();
+            if (CsvParser.parseDate(value) != null || resolveYearlessDate(value, candidateYears) != null) {
+                return true;
+            }
         }
         return false;
     }
@@ -2159,15 +2980,55 @@ public class PdfTableLocator {
             boolean sameRow = currentRowY != null && t.pageIndex() == currentPage
                     && Math.abs(t.y() - currentRowY) <= ROW_Y_TOLERANCE;
             if (!sameRow) {
-                if (!current.isEmpty()) rows.add(current);
+                if (!current.isEmpty()) rows.add(inReadingOrder(current));
                 current = new ArrayList<>();
                 currentPage = t.pageIndex();
             }
             current.add(t);
             currentRowY = t.y();
         }
-        if (!current.isEmpty()) rows.add(current);
+        if (!current.isEmpty()) rows.add(inReadingOrder(current));
         return rows;
+    }
+
+    /**
+     * A finished row's members, re-sorted left-to-right -- the order every downstream consumer of
+     * a row already assumes it's in (this class's own comments say so explicitly: {@code
+     * mergeHeaderLines}'s doc comment calls left-to-right "the invariant... the whole pipeline
+     * downstream of here reads header cells in", and the single-line header path carries its own
+     * ad-hoc x-sort for the identical reason -- see the real SBI credit-card statement cited where
+     * skipping it sent "Transaction Details" before "Date" and merged a whole column into another).
+     * Both of those fixes sorted AFTER the fact, at their own call site, because the row itself
+     * wasn't guaranteed to arrive in that order. This is the gap that left open: {@code current}'s
+     * members are collected in the CLUSTERING sort's order (page, then y ascending, then x -- see
+     * this method's own header comment), which groups the right runs into one row but says nothing
+     * about their order once grouped, and two runs on the same visual line routinely differ by a
+     * fraction of a point in y (sub-pixel rendering jitter, not a real vertical offset) -- enough
+     * to sort one before the other by Y ONLY, regardless of which one a reader would actually
+     * encounter first, left to right.
+     *
+     * <p>Confirmed on a real Standard Chartered savings statement: a transaction's narration run
+     * prints at y=274.10, its own date-column value at y=274.75 -- 0.65pt apart, both comfortably
+     * one visual line, but the narration sorts first. {@link #bucketRow}'s OFFSET_COLUMN_ANCHORS
+     * redirect (search this class for that name) exists exactly to catch a run that overshoots a
+     * column already holding a value and send it to the next one over -- but it only ever sees
+     * "already holding a value" if the real value arrived FIRST. With the narration processed
+     * first, it fills the date column outright (nothing else claims it yet), and the row's own
+     * genuine date arrives afterward to find that column already non-blank -- concatenated onto
+     * the narration instead of recognized as this row's anchor. Most of that statement's rows
+     * carry no date value ANYWHERE else, so almost every transaction silently became a trailing
+     * continuation of whichever one happened to keep its date, and 15+ real transactions collapsed
+     * into 2 raw rows.
+     *
+     * <p>Sorting by x here, once, fixes it at the source for every consumer at once rather than
+     * adding a third ad-hoc sort at a third call site -- and only ever reorders text that {@code
+     * ROW_Y_TOLERANCE} already decided belongs to the same visual line, so it cannot merge or split
+     * a row, only correct the order its members are visited in.
+     */
+    private List<PositionedText> inReadingOrder(List<PositionedText> row) {
+        List<PositionedText> ordered = new ArrayList<>(row);
+        ordered.sort(Comparator.comparing(PositionedText::x));
+        return ordered;
     }
 
     /** Measures {@link #groupIntoRows}' own output after the fact -- reads the rows it already
@@ -2212,7 +3073,7 @@ public class PdfTableLocator {
 
     /** A header reconstructed from several visual lines, and how many lines past the first the
      *  caller must skip. */
-    private record WrappedHeader(List<PositionedText> row, int extraLines) {}
+    private record WrappedHeader(List<PositionedText> row, int extraLines, boolean admittedInteriorTierColumns) {}
 
     /**
      * WRAPPED_HEADER: the header that begins at {@code index} and continues onto the line(s)
@@ -2284,8 +3145,30 @@ public class PdfTableLocator {
             // lose its third line's column names. Safe to be greedy because wrapsOnto has already
             // refused every line carrying a data value, so the run cannot reach into the table's
             // first row.
-            List<PositionedText> candidate = mergeHeaderLines(block);
-            if (candidate == null) break; // mergeHeaderLines has already explained which cell refused
+            // INTERIOR_TIER_COLUMNS. Only reachable when the upper line does not already score --
+            // see mergeHeaderLinesAdmittingInteriorTierColumns' own doc comment for why that
+            // restriction is what keeps this from reopening the FD/RD cross-contamination risk
+            // mergeHeaderLines' own doc comment records as tried and reverted.
+            //
+            // Also only reachable when the SEED (first) itself has at least two non-blank cells.
+            // Confirmed necessary against a real synthetic regression: a one-cell summary line
+            // ("Opening Balance 24818.22", carrying no value as a WHOLE cell so carriesNoDataValue
+            // passes it, but containing the word "balance") sitting one line above a genuine
+            // ledger header can seed a merge exactly like any real upper tier does. Genuine upper
+            // tiers name several of the table's own columns (Statement.pdf's real fix: three
+            // cells); a stray single-cell line does not, and GROUNDED_SEED_COLUMNS alone does not
+            // catch this shape -- the caption's own cell gets RENAMED (not left lonely), because it
+            // happens to share the header's leftmost column's x position ("Txn Date" both name the
+            // ledger's date column and, coincidentally, sit at the same left margin as the caption
+            // line above it). A one-cell seed still gets the ORIGINAL strict merge, which already
+            // handled this correctly: it joins the one coincidentally-aligned cell then refuses
+            // outright the moment a further cell fails to join, exactly the safety property this
+            // capability must not weaken for a shape it was never meant to reach.
+            boolean seedHasMultipleCells = nonBlankCount(first) >= 2;
+            List<PositionedText> candidate = (alreadyScores || !seedHasMultipleCells)
+                    ? mergeHeaderLines(block)
+                    : mergeHeaderLinesAdmittingInteriorTierColumns(block);
+            if (candidate == null) break; // the merge helper has already explained which cell refused
             if (looksLikeHeaderRow(candidate)) {
                 // The strict admission rule applies ONLY when the upper line already scores on its
                 // own. Kept as a `continue` rather than a `break` so a refused two-line span can
@@ -2293,7 +3176,17 @@ public class PdfTableLocator {
                 // cells and column names, which is the direction that makes gates 1 and 4 easier
                 // while gate 2 stays exactly as strict.
                 if (alreadyScores && !refinesRatherThanRedefines(block, candidate)) continue;
-                found = new WrappedHeader(candidate, span);
+                boolean admittedInteriorTierColumns = !alreadyScores && candidate.size() > nonBlankCount(first);
+                // GROUNDED_SEED_COLUMNS. Checked here, against the CURRENT span's own candidate --
+                // not inside the merge helper itself -- specifically so an ungrounded span doesn't
+                // abort the whole search (`continue`, not `break`): the seed cell this rejects
+                // might still get renamed by a LINE THIS SPAN HASN'T REACHED YET, exactly
+                // Statement.pdf's own case (see that method's own doc comment). Only asked when a
+                // new column may have been admitted in the first place -- the strict path
+                // (mergeHeaderLines) never introduces an unjoined seed cell for this to catch, and
+                // asking it there would be pure overhead.
+                if (admittedInteriorTierColumns && !seedColumnsAreGrounded(first, candidate)) continue;
+                found = new WrappedHeader(candidate, span, admittedInteriorTierColumns);
                 int lines = span + 1;
                 explainWrap(first, () -> "MERGED across " + lines + " lines: every lower cell joined a"
                         + " column above, and the joined row scores as a header -> "
@@ -2307,6 +3200,50 @@ public class PdfTableLocator {
             }
         }
         return found;
+    }
+
+    /**
+     * GROUNDED_SEED_COLUMNS. True unless {@code candidate} (the merged header row {@link
+     * #mergeHeaderLinesAdmittingInteriorTierColumns} produced from {@code seedLine} as its block's
+     * first line) contains a seed cell that stayed completely alone -- nothing from a later line
+     * ever joined or renamed it -- AND is not itself recognized column-name vocabulary ({@link
+     * #isRecognizedHeaderWord}). A lone, unrecognized seed cell is exactly what a caption sitting
+     * near the real table looks like once it happens to satisfy {@link #wrappedHeaderAt}'s own
+     * "carries no data value, not structural" admission on its own merits, same as any genuine
+     * header line does; nothing about being the SEED specifically vouches for it.
+     *
+     * <p>Confirmed on a real Axis Bank credit-card statement: "Account Summary" -- an unrelated
+     * section caption -- became a seed this way, and the real header line below it (DATE /
+     * TRANSACTION DETAILS / MERCHANT CATEGORY / AMOUNT (Rs.)) is entirely recognized vocabulary,
+     * so {@link #isPureVocabularyTier} correctly admitted its four cells as new interior-tier
+     * columns -- but nothing in that line was ever within {@link #HEADER_WRAP_MAX_COLUMN_JOIN} of
+     * "Account Summary" itself, so it stayed an isolated, unrenamed, unrecognized column of its
+     * own, inserted between two genuine ones. {@link #looksLikeHeaderRow}'s own density check
+     * cannot see this: one unrecognized cell among four recognized ones is easily dense enough to
+     * pass.
+     *
+     * <p>Distinguishes this from Statement.pdf's own real fix, where none of the seed line's own
+     * three cells ("Date(Value", "Ref No.", "Transaction") are individually recognized either --
+     * but all three are later renamed by a THIRD line ("Date)", "/Cheque No", "Type"), which is
+     * exactly the corroborating evidence "Account Summary" never receives.
+     *
+     * <p>Checked by STRING identity against {@code candidate}'s own cell text, not by re-walking
+     * {@code mergeHeaderLinesAdmittingInteriorTierColumns}'s internal column-building state --
+     * {@link #asOneCell} only ever changes a column's text by joining it to something else with a
+     * space, so a seed cell's trimmed text surviving into the candidate UNCHANGED is exactly the
+     * fact "nothing joined this column" reduces to once the merge has finished and the internal
+     * per-column bookkeeping is gone.
+     */
+    private boolean seedColumnsAreGrounded(List<PositionedText> seedLine, List<PositionedText> candidate) {
+        Set<String> candidateTexts = new HashSet<>();
+        for (PositionedText t : candidate) candidateTexts.add(t.text().trim());
+        for (PositionedText t : seedLine) {
+            if (t.text().isBlank()) continue;
+            String seedText = t.text().trim();
+            if (!candidateTexts.contains(seedText)) continue; // joined into something else -- fine
+            if (!isRecognizedHeaderWord(seedText)) return false;
+        }
+        return true;
     }
 
     /**
@@ -2357,14 +3294,31 @@ public class PdfTableLocator {
     private boolean refinesRatherThanRedefines(List<List<PositionedText>> block, List<PositionedText> merged) {
         List<PositionedText> upper = block.get(0);
 
-        // Gate 1 -- the lower band has to contribute more than one stray token.
+        // Gate 1 -- the lower band has to contribute more than one stray token, UNLESS that lone
+        // token is itself exact recognized column-name vocabulary. Confirmed on a real Standard
+        // Chartered savings statement: its header's only wrap is a single cell, "Date", printed
+        // one line below "Value" -- a genuine "Value Date" column split across two lines, not a
+        // footnote (a footnote is prose or a unit annotation; a lone cell whose ENTIRE text
+        // exactly equals a recognized column-name word is neither). Left unrecovered, the column
+        // stays named bare "Value", which isDateColumn does not recognize the way it recognizes
+        // "Value Date" (a literal entry in DATE_HINTS) -- and most of this statement's own
+        // transaction rows print their date in exactly that column and nowhere else, so without
+        // the rename most rows never register as carrying a date at all and collapse into
+        // trailing continuations of whichever row DID have one. Still gated by 2 (within
+        // STRICT_COLUMN_JOIN of an upper anchor) and 4 (a net improvement in whole-cell hint
+        // matches) below, so this is narrower than "any one recognized word", not a general
+        // loosening of the footnote guard.
         int lowerCells = 0;
+        PositionedText onlyLowerCell = null;
         for (int line = 1; line < block.size(); line++) {
             for (PositionedText t : block.get(line)) {
-                if (!t.text().isBlank()) lowerCells++;
+                if (t.text().isBlank()) continue;
+                lowerCells++;
+                onlyLowerCell = t;
             }
         }
-        if (lowerCells < HEADER_WRAP_STRICT_MIN_LOWER_CELLS) {
+        boolean singleRecognizedWordWrap = lowerCells == 1 && isRecognizedHeaderWord(onlyLowerCell.text());
+        if (lowerCells < HEADER_WRAP_STRICT_MIN_LOWER_CELLS && !singleRecognizedWordWrap) {
             int counted = lowerCells;
             explainWrap(upper, () -> "NO_MERGE (strict): the upper line already scores as a header on"
                     + " its own, and the lower line(s) contribute only " + counted + " cell(s) -- fewer"
@@ -2793,13 +3747,18 @@ public class PdfTableLocator {
      * look further.
      */
     private boolean anchorFollowsWithinSection(List<List<PositionedText>> rows, int fromIndex,
-            List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds) {
+            List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds,
+            Map<Integer, PageDateEvidence> yearsByPage) {
         int scanLimit = Math.min(rows.size(), fromIndex + MAX_LEADING_CONTINUATION_ROWS);
         for (int i = Math.max(fromIndex, 0); i < scanLimit; i++) {
             List<PositionedText> row = rows.get(i);
             if (row.isEmpty()) continue;
             if (carriesStructuralMeaning(row)) return false;
-            if (hasDateValue(bucketRow(row, headerNames, headerAnchors, headerEnds, null))) return true;
+            PageDateEvidence candidateYears = yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
+            if (hasDateValue(bucketRow(row, headerNames, headerAnchors, headerEnds, null, candidateYears),
+                    candidateYears)) {
+                return true;
+            }
         }
         return false;
     }
@@ -2816,7 +3775,8 @@ public class PdfTableLocator {
      * somewhere ahead, yet only one of them the anchor's own leading narration.
      */
     private boolean firstHopIsPitchConsistentOrDirect(List<List<PositionedText>> rows, int rowIndex,
-            List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds) {
+            List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds,
+            Map<Integer, PageDateEvidence> yearsByPage) {
         List<PositionedText> current = rows.get(rowIndex);
         int nextIndex = rowIndex + 1;
         while (nextIndex < rows.size() && rows.get(nextIndex).isEmpty()) nextIndex++;
@@ -2828,7 +3788,11 @@ public class PdfTableLocator {
         // synthetic fixture, whose second real transaction sits at its own, unrelated pitch) must
         // never be used as a reference here -- only a genuine chain of narration awaiting the SAME
         // anchor gives a meaningful pitch to compare against.
-        if (hasDateValue(bucketRow(next, headerNames, headerAnchors, headerEnds, null))) return true;
+        PageDateEvidence nextCandidateYears = yearsByPage.getOrDefault(next.get(0).pageIndex(), PageDateEvidence.NONE);
+        if (hasDateValue(bucketRow(next, headerNames, headerAnchors, headerEnds, null, nextCandidateYears),
+                nextCandidateYears)) {
+            return true;
+        }
         int nextNextIndex = nextIndex + 1;
         while (nextNextIndex < rows.size() && rows.get(nextNextIndex).isEmpty()) nextNextIndex++;
         if (nextNextIndex >= rows.size()) return true; // no reference pitch available
@@ -2902,7 +3866,8 @@ public class PdfTableLocator {
         int explained = 0;
         for (List<PositionedText> row : sample) {
             int rawCells = nonBlankCount(row);
-            Map<String, String> bucketed = bucketRow(row, header.names(), header.anchors(), header.ends(), null);
+            Map<String, String> bucketed = bucketRow(row, header.names(), header.anchors(), header.ends(), null,
+                    PageDateEvidence.NONE);
             if (bucketed.size() < rawCells) continue; // collision -- two raw values shared one column
             String dateValue = bucketed.get(dateColumnName);
             if (dateValue == null || CsvParser.parseDate(dateValue.trim()) == null) continue;
@@ -3204,6 +4169,127 @@ public class PdfTableLocator {
         List<PositionedText> headerRow = new ArrayList<>();
         for (List<PositionedText> column : columns) headerRow.add(asOneCell(column, lastLineY(block)));
         return headerRow;
+    }
+
+    /**
+     * INTERIOR_TIER_COLUMNS. {@link #mergeHeaderLines}'s sibling for the one case that method
+     * cannot represent at all: a header block whose column GROUPS wrap to unequal depths, so a
+     * whole tier's worth of columns exists on a middle line and nowhere else in the block.
+     *
+     * <p>Confirmed on two real savings-account statements (a third-party-generated SBI one and a
+     * real Standard Chartered one). Both print a three-line header where the outer columns
+     * ("Date"/"Ref No."/"Type" on the SBI one) wrap across the TOP and BOTTOM lines, skipping the
+     * middle one entirely, while a second column group ("Particulars"/"Debit(Rs)"/"Credit(Rs)"/
+     * "Balance(Rs)") prints ONLY on that middle line and nowhere else. {@code mergeHeaderLines}
+     * seeds its columns from the block's first line and requires every later line's cell to join
+     * one of them, refusing the whole merge otherwise (see that method's own doc comment for why
+     * that refusal is right in general) -- so the middle line's four cells, none of which sit
+     * within {@link #HEADER_WRAP_MAX_COLUMN_JOIN} of the top line's three, aborted the merge
+     * outright. Both documents located a table with 2-3 garbled columns instead of 6-7 and staged
+     * zero transaction rows.
+     *
+     * <p>Only ever called on a line that does NOT already score as a header alone -- the exact
+     * restriction {@link #wrappedHeaderAt}'s own doc comment describes as load-bearing for {@code
+     * mergeHeaderLines}, kept here for the same reason: a document whose header is recognized
+     * today never reaches this method, so nothing already working can regress through it.
+     *
+     * <p><b>Why this does not reopen the FD/RD cross-contamination this class already tried and
+     * reverted once</b> (see {@code mergeHeaderLines}'s own doc comment: admitting an unmatched
+     * cell as a new column, unconditionally, let an unrelated fixed-deposit schedule's own second
+     * tier bleed into a recurring-deposit table's header on the same real HDFC statement). That
+     * experiment had no content gate at all -- any unmatched cell became a column. This one admits
+     * a whole LINE's unmatched cells only when {@link #isPureVocabularyTier} accepts the line as a
+     * whole: every one of its non-blank cells, individually, normalizes to a word this class
+     * already recognizes as a column name ({@link #HEADER_HINTS} or {@link #DATE_HINTS}) -- not
+     * "looks table-shaped" the way {@link #carriesNoDataValue} does, but "is column-name
+     * vocabulary, cell for cell". "Particulars"/"Debit(Rs)"/"Credit(Rs)"/"Balance(Rs)" all pass
+     * that individually; the FD schedule's real intruder, "Withdrawable***", does not (it is not
+     * "withdrawal" or "withdrawals" under {@link #matchesAnyHint}'s exact-word matching) and so a
+     * line containing it still refuses the merge outright, exactly as today.
+     */
+    private List<PositionedText> mergeHeaderLinesAdmittingInteriorTierColumns(List<List<PositionedText>> block) {
+        List<List<PositionedText>> columns = new ArrayList<>();
+        for (PositionedText t : block.get(0)) {
+            if (t.text().isBlank()) continue;
+            List<PositionedText> column = new ArrayList<>();
+            column.add(t);
+            columns.add(column);
+        }
+        if (columns.isEmpty()) return null;
+
+        for (int line = 1; line < block.size(); line++) {
+            List<PositionedText> currentLine = block.get(line);
+            // Joined against the column set as it stood BEFORE this line, and any cell this line
+            // itself cannot join is collected rather than resolved immediately -- so two cells
+            // printed side by side on the SAME physical line can never both land in a column this
+            // line itself just created (which would erase the very distinction a wrapped-header
+            // block exists to preserve: one column per printed label).
+            List<PositionedText> unresolved = new ArrayList<>();
+            for (PositionedText t : currentLine) {
+                if (t.text().isBlank()) continue;
+                int target = columnFor(t, columns);
+                if (target < 0) {
+                    unresolved.add(t);
+                    continue;
+                }
+                columns.get(target).add(t);
+            }
+            if (!unresolved.isEmpty()) {
+                if (!isPureVocabularyTier(currentLine)) {
+                    PositionedText first = unresolved.get(0);
+                    explainWrap(block.get(0), () -> "NO_MERGE: lower cell \"" + first.text().trim() + "\" at x="
+                            + first.x() + " joins no column above it (nearest is more than "
+                            + HEADER_WRAP_MAX_COLUMN_JOIN + "pt away), and its own line is not"
+                            + " entirely recognized column-name vocabulary, so it is not admitted as"
+                            + " a new interior-tier column");
+                    return null;
+                }
+                for (PositionedText t : unresolved) {
+                    List<PositionedText> column = new ArrayList<>();
+                    column.add(t);
+                    columns.add(column);
+                }
+            }
+            columns.sort((a, b) -> Float.compare(anchorOf(a), anchorOf(b)));
+        }
+
+        List<PositionedText> headerRow = new ArrayList<>();
+        for (List<PositionedText> column : columns) headerRow.add(asOneCell(column, lastLineY(block)));
+        return headerRow;
+    }
+
+    /**
+     * True when every non-blank cell in {@code line}, INDIVIDUALLY, normalizes to a word {@link
+     * #HEADER_HINTS} or {@link #DATE_HINTS} already recognizes -- the content gate {@link
+     * #mergeHeaderLinesAdmittingInteriorTierColumns} uses to decide whether an unmatched line may
+     * contribute brand new columns rather than refuse the merge. Deliberately stricter than {@link
+     * #looksLikeHeaderRow}'s own density check (which only requires a THIRD of a row's cells to be
+     * recognized, to tolerate a genuine column name sitting beside genuine prose): a line being
+     * admitted here isn't being scored as a header on its own, it is being trusted to silently
+     * widen another line's column count, so every cell on it has to earn that trust individually.
+     *
+     * <p>Requires at least {@link #HEADER_WRAP_STRICT_MIN_LOWER_CELLS} non-blank cells, the same
+     * floor {@link #refinesRatherThanRedefines}'s own gate 1 uses and for the identical reason: one
+     * recognized word sitting alone on a line is ordinarily a stray label, not a second heading
+     * band -- gate 1's own doc comment records the one narrow exception to that (a lone cell that
+     * RENAMES an existing column rather than trying to introduce a whole new one), which does not
+     * apply here since this method exists specifically to admit new columns.
+     */
+    private boolean isPureVocabularyTier(List<PositionedText> line) {
+        int nonBlank = 0;
+        for (PositionedText t : line) {
+            if (t.text().isBlank()) continue;
+            nonBlank++;
+            if (!isRecognizedHeaderWord(t.text())) return false;
+        }
+        return nonBlank >= HEADER_WRAP_STRICT_MIN_LOWER_CELLS;
+    }
+
+    /** True when {@code cellText}'s normalized form exactly names a recognized column -- either a
+     *  {@link #HEADER_HINTS} word or a {@link #DATE_HINTS} one. The single-cell content gate
+     *  shared by {@link #isPureVocabularyTier} and {@link #refinesRatherThanRedefines}'s gate 1. */
+    private boolean isRecognizedHeaderWord(String cellText) {
+        return matchesAnyHint(cellText, HEADER_HINTS) || matchesAnyHint(cellText, DATE_HINTS);
     }
 
     private int columnFor(PositionedText cell, List<List<PositionedText>> columns) {
@@ -3641,11 +4727,286 @@ public class PdfTableLocator {
         return signature;
     }
 
+    /**
+     * A text column's measured horizontal extent, sampled from real data rows rather than derived
+     * from the header LABEL's own position -- see {@link #measureTextColumnSpans} for how it is
+     * built and {@code bucketRow}'s {@code COLUMN_SPAN_PLACEMENT} block for how it is used.
+     *
+     * <h2>The defect this exists to fix</h2>
+     *
+     * {@code nearestColumn} draws a column's boundary at the midpoint between two header LABELS'
+     * left edges. Real statements routinely centre a short label over a much wider data column, so
+     * that midpoint falls INSIDE the wide column rather than between the two columns' actual data --
+     * every token past it silently joins the neighbour. Verified against four real documents:
+     * on Sanjay HDFC / Mann HDFC / HDFC sav / HDFC 3 month, the narration label sits at x=144.18 and
+     * the reference label at x=283.53 (boundary 213.85), but narration data runs left-aligned from
+     * 72.03 to ~275 -- everything past 213.85 (~135 lines on Mann HDFC alone) was appended to the
+     * reference cell instead. Union Bank fails the OPPOSITE way: a centred "Remarks" label draws the
+     * boundary at 171.60, but remark values start at 157.20, so EVERY remark joined the transaction-id
+     * cell before it. Retuning the anchor doesn't fix this -- moving it to the data's own left edge
+     * only shifts Sanjay HDFC's boundary to 177.8, and the same tokens are still stolen -- because the
+     * bug is using a LABEL position to decide a DATA boundary at all. Containment in a measured span
+     * sidesteps the question rather than tuning it: a run either falls inside a column's own real
+     * data extent or it doesn't.
+     *
+     * <h2>Why this took three attempts</h2>
+     *
+     * Attempt 1 (containment as bucketRow's INITIAL placement) was clean against the real 29-document
+     * corpus but silently displaced a document-backed OFFSET_COLUMN_ANCHORS correction the committed
+     * trace suite depends on -- {@code TraceCorpusHealthTest} caught it, the corpus sweep didn't.
+     * Attempt 2 (containment LAST, composing with every existing redirect) fixed that, but still
+     * mis-placed on a real ICICI credit-card statement's small, three-row table. Both attempts
+     * establish the same rule: a clean real-corpus sweep is NOT sufficient evidence for a change to
+     * this method -- the committed traces exercise shapes the corpus does not, and both regressions
+     * showed only as improvements in the corpus diff. This attempt keeps attempt 2's ordering (guard
+     * 4 below) and adds a measurement algorithm anchored on each row's own DATE cell (found by
+     * content -- {@code CsvParser.parseDate}/{@code resolveYearlessDate} -- never by position), so a
+     * column's span is never built from a cell whose page position happens to coincide with an
+     * unrelated header's anchor, the way a lone off-table token can when spans are clustered without
+     * that anchor.
+     *
+     * <h2>The guards, each answering one measured failure</h2>
+     *
+     * <ol>
+     *   <li><b>Text columns only</b> -- a column is a measurement/placement candidate only when it is
+     *       neither {@link #isDateColumn} nor {@link #isAmountColumn}. An amount/balance column's own
+     *       right-alignment already has correct, dedicated handling (RIGHT_ALIGNED_AMOUNTS); without
+     *       this guard, containment competed with it and two real HDFC exports lost their opening AND
+     *       closing balance, failing BALANCE_CHAIN.</li>
+     *   <li><b>Anchored on the date column, never redirected INTO it</b> -- the row's own date cell
+     *       (found by content) is what lets this method find where the text region even begins;
+     *       without excluding the date column itself as a target, a serial-number column's measured
+     *       span swallowed the NEXT transaction's own date on a real ICICI credit-card statement,
+     *       folding two rows into one.</li>
+     *   <li><b>Positional, strictly increasing, never forced</b> -- a row missing one of the expected
+     *       text columns' data contributes only to however many it actually has, in left-to-right
+     *       order. A row with MORE cells than expected text columns (a narration PDFBox split into
+     *       several runs, the common real shape) has the FIRST text column absorb the overflow, with
+     *       every later column still getting exactly one cell, anchored from the right -- not "the
+     *       first N cells go to the first N columns," which sends narration's own trailing run into
+     *       the NEXT column instead and contaminates that column's measured span with narration's own
+     *       positions. Caught by a synthetic regression test before it ever reached a real document.
+     *       An earlier design required every column to have SOME data in the sample before measuring
+     *       any of them, and declined outright on exactly the small, ragged tables this exists for.</li>
+     *   <li><b>Last, and only for a run nothing else already redirected</b> -- {@code bucketRow}'s
+     *       existing OFFSET_COLUMN_ANCHORS redirects (a date cell already filled, an amount cell
+     *       overshooting into text, text overshooting into an amount) each rest on real document
+     *       evidence of their own; containment must never second-guess a redirect that already fired,
+     *       only step in when nothing else did.</li>
+     *   <li><b>A minimum sample before a span is trusted at all</b> -- see {@link
+     *       #COLUMN_SPAN_MIN_SAMPLE}'s own doc comment.</li>
+     * </ol>
+     */
+    private record ColumnSpan(float left, float right) {
+        boolean contains(float x) {
+            return x >= left && x <= right;
+        }
+    }
+
+    // How many of a header's own upcoming rows measureTextColumnSpans samples before giving up on
+    // finding enough real data -- same order of magnitude as HEADER_QUALITY_SAMPLE_SIZE, for the
+    // same reason: large enough that one unusual row can't define a column's whole span, small
+    // enough that this never scans meaningfully into the document.
+    private static final int COLUMN_SPAN_SAMPLE_SIZE = 12;
+
+    // Never trust a column's measured span from fewer than this many contributing rows. A span
+    // built from one or two data points is a coincidence, not a measured range -- the real document
+    // that forced this is a small, three-transaction ICICI credit-card table surrounded by summary
+    // panel prose, where too little real data was the whole problem, not too little filtering.
+    private static final int COLUMN_SPAN_MIN_SAMPLE = 3;
+
+    /**
+     * Measures each TEXT header column's real horizontal extent from {@code sample}, anchored on
+     * each row's own date cell -- see {@link ColumnSpan}'s own doc comment for the full design and
+     * the four guards this implements. Returns an array index-aligned with {@code headerNames};
+     * {@code null} at any index whose column could not be measured with enough confidence to act on
+     * (not a date/amount column to begin with, or fewer than {@link #COLUMN_SPAN_MIN_SAMPLE}
+     * contributing rows).
+     */
+    private ColumnSpan[] measureTextColumnSpans(List<String> headerNames, List<List<PositionedText>> sample,
+                                                 Map<Integer, PageDateEvidence> yearsByPage) {
+        int columnCount = headerNames.size();
+        ColumnSpan[] spans = new ColumnSpan[columnCount];
+        int dateHeaderIndex = -1;
+        for (int i = 0; i < columnCount; i++) {
+            if (isDateColumn(headerNames.get(i))) { dateHeaderIndex = i; break; }
+        }
+        if (dateHeaderIndex < 0) return spans; // no reliable anchor column at all -- nothing to measure against
+
+        List<Integer> textHeaderIndices = new ArrayList<>();
+        for (int i = dateHeaderIndex + 1; i < columnCount; i++) {
+            if (!isDateColumn(headerNames.get(i)) && !isAmountColumn(headerNames.get(i))) {
+                textHeaderIndices.add(i);
+            } else {
+                break; // the first amount column ends the text run this method ever measures
+            }
+        }
+        if (textHeaderIndices.isEmpty()) return spans;
+
+        float[] minLeft = new float[columnCount];
+        float[] maxRight = new float[columnCount];
+        int[] contributingRows = new int[columnCount];
+        Arrays.fill(minLeft, Float.MAX_VALUE);
+        Arrays.fill(maxRight, -Float.MAX_VALUE);
+
+        for (List<PositionedText> row : sample) {
+            if (row.isEmpty()) continue;
+            PageDateEvidence pageYears = yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
+            List<PositionedText> cells = row.stream()
+                    .filter(t -> !isBlankCell(t.text()))
+                    .sorted(Comparator.comparing(PositionedText::x))
+                    .toList();
+            if (cells.isEmpty()) continue;
+
+            int dateCellIndex = -1;
+            for (int i = 0; i < cells.size(); i++) {
+                String text = cells.get(i).text().trim();
+                if (CsvParser.parseDate(text) != null || resolveYearlessDate(text, pageYears) != null) {
+                    dateCellIndex = i;
+                    break;
+                }
+            }
+            if (dateCellIndex < 0) continue; // no reliable anchor on this row -- skip it, don't guess
+
+            int amountCellIndex = -1;
+            for (int i = dateCellIndex + 1; i < cells.size(); i++) {
+                String text = cells.get(i).text().trim();
+                // A decimal point, not just a parseable number, is what actually distinguishes an
+                // amount cell from a reference/cheque number here -- a real reference number is
+                // routinely PURE DIGITS (so parseNumeric alone accepts it too), and without this a
+                // reference cell gets mistaken for the row's own amount boundary, truncating the
+                // text region before the reference cell it should have anchored on -- the run this
+                // whole method exists to place correctly then gets folded into the FIRST text
+                // column's own span instead of measured on its own. Same "a decimal point is what a
+                // real amount always has, a bare digit run is more likely an identifier" reasoning
+                // bucketRow's own existing OFFSET_COLUMN_ANCHORS redirects already rely on.
+                if (text.contains(".") && CsvParser.parseNumeric(text) != null) {
+                    amountCellIndex = i;
+                    break;
+                }
+            }
+            int textRegionEnd = amountCellIndex >= 0 ? amountCellIndex : cells.size();
+            List<PositionedText> textCells = cells.subList(dateCellIndex + 1, textRegionEnd);
+            if (textCells.isEmpty()) continue;
+
+            // Guard 5 counts CONTRIBUTING ROWS, not contributing cells -- the overflow branch below
+            // can assign several of THIS ROW's own cells to the same (first) column, and counting
+            // each cell separately would let one row alone satisfy COLUMN_SPAN_MIN_SAMPLE for that
+            // column, defeating the guard's whole point. Tracked per row, applied once after.
+            boolean[] touchedThisRow = new boolean[columnCount];
+            if (textCells.size() <= textHeaderIndices.size()) {
+                // Guard 3: a row missing one of the expected text columns' data (a genuinely blank
+                // cell this row's product doesn't populate) contributes only to however many text
+                // columns it actually has, left to right -- never force-matched to the wrong one.
+                for (int i = 0; i < textCells.size(); i++) {
+                    int headerIndex = textHeaderIndices.get(i);
+                    accumulateColumnSpanSample(headerIndex, textCells.get(i), minLeft, maxRight);
+                    touchedThisRow[headerIndex] = true;
+                }
+            } else {
+                // MORE cells than expected text columns -- a cell PDFBox split into several runs (a
+                // long narration is the common real shape). The FIRST text column absorbs the
+                // overflow; every LATER column still gets exactly one cell, anchored from the
+                // RIGHT, so a multi-run narration can never be mistaken for a later column's own
+                // data. Getting this direction right matters: assigning the first N cells to the
+                // first N columns instead sends narration's own TRAILING run to the next column,
+                // contaminating that column's measured span with narration's own positions --
+                // caught by a synthetic regression test before it ever reached a real document.
+                int overflow = textCells.size() - textHeaderIndices.size();
+                int firstColumn = textHeaderIndices.get(0);
+                for (int i = 0; i <= overflow; i++) {
+                    accumulateColumnSpanSample(firstColumn, textCells.get(i), minLeft, maxRight);
+                }
+                touchedThisRow[firstColumn] = true;
+                for (int j = 1; j < textHeaderIndices.size(); j++) {
+                    int headerIndex = textHeaderIndices.get(j);
+                    accumulateColumnSpanSample(headerIndex, textCells.get(overflow + j), minLeft, maxRight);
+                    touchedThisRow[headerIndex] = true;
+                }
+            }
+            for (int headerIndex : textHeaderIndices) {
+                if (touchedThisRow[headerIndex]) contributingRows[headerIndex]++;
+            }
+        }
+
+        for (int headerIndex : textHeaderIndices) {
+            if (contributingRows[headerIndex] >= COLUMN_SPAN_MIN_SAMPLE) {
+                spans[headerIndex] = new ColumnSpan(minLeft[headerIndex], maxRight[headerIndex]);
+            }
+        }
+        return spans;
+    }
+
+    private void accumulateColumnSpanSample(int headerIndex, PositionedText cell, float[] minLeft,
+                                             float[] maxRight) {
+        minLeft[headerIndex] = Math.min(minLeft[headerIndex], cell.x());
+        maxRight[headerIndex] = Math.max(maxRight[headerIndex], cell.endX());
+    }
+
     private Map<String, String> bucketRow(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
-                                           List<Float> headerEnds, DocumentContext ctx) {
+                                           List<Float> headerEnds, DocumentContext ctx, PageDateEvidence candidateYears) {
+        return bucketRow(row, headerNames, headerAnchors, headerEnds, ctx, candidateYears, null);
+    }
+
+    /** Same as the six-argument overload, plus {@code textColumnSpans} -- see {@link ColumnSpan}'s
+     *  own doc comment. {@code null} for every call site except {@code locateAll}'s own real,
+     *  committed-header usage: a speculative header-quality probe must judge a candidate exactly as
+     *  plain nearestColumn would (measuring spans from an UNPROVEN header risks judging it by a
+     *  correction it would only need once accepted), and the headerless path already reaches the
+     *  correct column by construction (see {@link ColumnStats}), so it has no use for this at all. */
+    private Map<String, String> bucketRow(List<PositionedText> row, List<String> headerNames, List<Float> headerAnchors,
+                                           List<Float> headerEnds, DocumentContext ctx, PageDateEvidence candidateYears,
+                                           ColumnSpan[] textColumnSpans) {
         Map<String, String> result = new LinkedHashMap<>();
+        float tableRightEdge = rightEdgeOfTable(headerAnchors, headerEnds);
         for (PositionedText t : row) {
+            // A run printed entirely to the RIGHT of every column this table has is not this
+            // table's data. Every other rule in this method redirects a run BETWEEN columns; none
+            // of them can express "this belongs to no column at all", and nearestColumn has no
+            // maximum-distance cap (see DESCRIPTION_COLUMN_LABELS' own doc comment, which already
+            // names that as the hazard behind a different real defect), so such a run is silently
+            // appended to whichever column happens to be least far away -- always the rightmost one.
+            //
+            // Verified against a real IndusInd credit-card statement, which prints a summary panel
+            // in the right margin at the same heights as the ledger. Its transaction table's
+            // rightmost column ends at x=417.9 and its amounts are right-aligned to end at 422.6
+            // (so they START at 386-395, well inside the column), while the margin panel's own runs
+            // begin at x=455.8 and beyond -- a clean 38pt of white space between the two, with no
+            // horizontal overlap at all. One panel label landed in the amount cell of a real
+            // transaction, making it "<amount> CR Statement Date"; that string fails
+            // CsvParser.parseNumeric, so TransactionNormalizer dropped the entire row and the
+            // document still classified PARSED_COMPLETE. Silent single-row data loss, invisible
+            // in every summary.
+            //
+            // Deliberately one-sided and overlap-free rather than a distance tolerance: only a run
+            // that starts beyond the right edge of EVERY column is excluded, so anything that so
+            // much as touches a column's span is kept and left to the redirect rules below. The
+            // left margin is not treated the same way on purpose -- an unnamed leading column is a
+            // real shape in this corpus (an unlabelled "S No.") and is handled by recovering the
+            // column, not by discarding its values.
+            //
+            // Restricted further, to runs that do not parse as a number, because the unrestricted
+            // form regressed a real Kotak savings statement: its Balance column's header is narrower
+            // than the values printed under it, so every right-aligned balance legitimately begins
+            // past the rightmost header END. Excluding those silently replaced the document's
+            // closing balance with an earlier row's and turned STATEMENT_TOTALS from VERIFIED to
+            // FAILED while the row count stayed identical -- a wrong number with no missing row to
+            // point at it. A numeric run out there is exactly that case and must be kept for the
+            // redirect rules below to place; a run that is not a number at all cannot be the value
+            // of any amount or balance column, which is the only kind of column that legitimately
+            // overflows its header this way. That is the whole margin-panel case: prose labels, not
+            // figures.
+            if (tableRightEdge > 0 && t.x() > tableRightEdge
+                    && CsvParser.parseNumeric(t.text().trim()) == null) {
+                if (ctx != null) ctx.record("MARGIN_PANEL_TEXT_EXCLUDED");
+                continue;
+            }
             int nearest = nearestColumn(t.x(), headerAnchors);
+            // COLUMN_SPAN_PLACEMENT guard 4: captured before any redirect below can touch `nearest`,
+            // so that block can tell "still exactly where plain nearestColumn put it" apart from
+            // "something else already moved it" -- see ColumnSpan's own doc comment for why
+            // containment must never second-guess a redirect that already fired.
+            final int originalNearest = nearest;
             // RIGHT_ALIGNED_AMOUNTS. Every rule below places a run by its LEFT edge, which is the
             // right question for left-aligned text and the wrong one for a number. Financial
             // documents right-align amount columns, so within one column the right edge is fixed
@@ -3671,7 +5032,39 @@ public class PdfTableLocator {
             // since those are left-aligned and the right edge means nothing there. Requires a real
             // measured width, so hand-built fixtures and traces recorded before widths existed
             // (width 0, endX == x) keep exactly their previous behaviour.
-            if (t.width() > 0 && headerEnds != null && CsvParser.parseNumeric(t.text().trim()) != null) {
+            // Also fires for a bare "-" -- the empty-cell placeholder glyph CsvParser.parseNumeric
+            // already treats as "no value" (see its own `s.equals("-")` check) rather than a real
+            // number, which is exactly why this block used to skip it: parseNumeric("-") is null,
+            // so the run never reached the right-edge check at all and stayed wherever its LEFT
+            // edge (nearestColumn's default) put it.
+            //
+            // Verified against a real Indian Overseas Bank savings statement (see
+            // EmptyCellDashPlaceholderPdfTableLocatorTest for the anonymized fixture -- coordinates
+            // only, no document content reproduced here per the Synthetic Fixture Policy) with
+            // adjacent Debit(Rs)/Credit(Rs)/Balance(Rs) columns (header anchors/ends x=398.4/437.9,
+            // 455.6/497.8, 507.3/556.8). This bank right-aligns its empty-cell "-" exactly like a
+            // real amount -- e.g. one row's empty Credit(Rs) cell prints "-" at x=495.8/endX=498.8,
+            // dead center on Credit's own header end (497.8), NOT anywhere near Credit's header
+            // anchor (455.6, 40.2pt away). By LEFT edge that "-" is only 11.5pt from Balance(Rs)'s
+            // anchor (507.3) vs 40.2pt from its own Credit anchor, so plain nearestColumn bucketed
+            // it into Balance(Rs) -- landing right before that row's real balance run (itself
+            // correctly placed in Balance by this same right-edge rule) and gluing onto its front,
+            // e.g. "- 12,345.67". That string is no longer the empty-cell marker
+            // CsvParser.parseNumeric recognizes on its own -- it is a real number STRING with a
+            // leading "-" it does not special-case, so BigDecimal parses a POSITIVE running balance
+            // as negative, failing BALANCE_CHAIN verification even though the transaction's own
+            // amount and direction (Debit(Rs)) were untouched and correct. The mirror case (an
+            // empty Debit(Rs) glued onto a real Credit(Rs) value the same way) is fixed by the same
+            // change, symmetrically: an empty Debit(Rs)'s "-" prints at x=436.9/endX=439.9, dead
+            // center on Debit's own header end (437.9) but by left edge nearer to Credit's anchor
+            // (455.6, 18.7pt) than its own (398.4, 38.5pt).
+            //
+            // Scoped to the LITERAL placeholder glyph, not "any non-numeric text" -- t.text() must
+            // trim to exactly "-", so this can never redirect real narration or reference text that
+            // merely happens to sit near an amount column's right edge.
+            boolean isEmptyCellDashPlaceholder = t.text().trim().equals("-");
+            if (t.width() > 0 && headerEnds != null
+                    && (CsvParser.parseNumeric(t.text().trim()) != null || isEmptyCellDashPlaceholder)) {
                 int byRightEdge = nearestColumn(t.endX(), headerEnds);
                 if (byRightEdge != nearest && isAmountColumn(headerNames.get(byRightEdge))) {
                     nearest = byRightEdge;
@@ -3693,7 +5086,17 @@ public class PdfTableLocator {
             // unlike a date, an amount or description column can legitimately receive more than
             // one text run on the same row (PDFBox splitting one multi-word cell into several
             // runs), so a general rule would risk breaking that instead.
-            if (existing != null && isDateColumn(columnName) && CsvParser.parseDate(existing.trim()) != null
+            //
+            // The existing-value check also accepts a YEARLESS date (resolveYearlessDate against
+            // this row's own candidateYears) -- without it, a real Standard Chartered savings
+            // statement whose date column holds a bare "May 01" never triggered this redirect at
+            // all: CsvParser.parseDate("May 01") is null (no year), so the column read as "not yet
+            // holding a real date" even after hasDateValue (a few lines up the call chain) had
+            // already recognized it as one, and the narration that follows kept overwriting it
+            // instead of advancing to Description.
+            if (existing != null && isDateColumn(columnName)
+                    && (CsvParser.parseDate(existing.trim()) != null
+                            || resolveYearlessDate(existing.trim(), candidateYears) != null)
                     && nearest + 1 < headerNames.size()) {
                 nearest = nearest + 1;
                 columnName = headerNames.get(nearest);
@@ -3769,6 +5172,34 @@ public class PdfTableLocator {
                     columnName = headerNames.get(nearest);
                     existing = result.get(columnName);
                     if (ctx != null) ctx.record("OFFSET_COLUMN_ANCHORS");
+                }
+            }
+            // COLUMN_SPAN_PLACEMENT. Guard 4: last, and only for a run nothing above already
+            // redirected -- see ColumnSpan's own doc comment for the full design, the defect this
+            // fixes, and why this specific ordering. Guards 1+2 are enforced structurally:
+            // measureTextColumnSpans never populates a span for a date or amount column, so neither
+            // can ever be a redirect target here.
+            if (textColumnSpans != null && nearest == originalNearest
+                    && !isDateColumn(columnName) && !isAmountColumn(columnName)) {
+                ColumnSpan ownSpan = textColumnSpans[nearest];
+                if (ownSpan == null || !ownSpan.contains(t.x())) {
+                    int redirect = -1;
+                    for (int i = 0; i < headerNames.size(); i++) {
+                        if (i == nearest) continue;
+                        ColumnSpan candidate = textColumnSpans[i];
+                        if (candidate != null && candidate.contains(t.x())) {
+                            // More than one measured span claims this position -- decline rather
+                            // than guess between them; nearestColumn's original placement stands.
+                            if (redirect >= 0) { redirect = -1; break; }
+                            redirect = i;
+                        }
+                    }
+                    if (redirect >= 0) {
+                        nearest = redirect;
+                        columnName = headerNames.get(redirect);
+                        existing = result.get(columnName);
+                        if (ctx != null) ctx.record("COLUMN_SPAN_PLACEMENT");
+                    }
                 }
             }
             // Two text runs landing in the same column on the same row (e.g. a multi-word
@@ -3883,6 +5314,56 @@ public class PdfTableLocator {
         return matchesAnyHint(columnName, AMOUNT_COLUMN_HINTS);
     }
 
+    /** True when {@code bucketed} and {@code openAnchor} each carry their own non-blank, genuinely
+     *  numeric value in the table's Balance column -- see SAME_DAY_CONTINUATION_TRANSACTION's own
+     *  doc comment (this method's only caller) for why that is unambiguous evidence of two
+     *  different transactions rather than one continuing the other. Exact-matched against
+     *  "balance" specifically (not {@link #isAmountColumn}'s broader hint set), the same match
+     *  {@code headerReconstructionUncertain} and other single-column lookups in this class already
+     *  use for the one column a running-balance layout can never repeat within one transaction.
+     *
+     *  <p>Two guards, both found regression-testing this against the full real corpus rather than
+     *  reasoned out in advance:
+     *
+     *  <p>First, the table must actually HAVE a date column at all. A real AU credit-card
+     *  statement prints a short interest/EMI breakdown panel as its own two-column Amount/Balance
+     *  table with no date of any kind -- rows there are independent breakdown entries, not
+     *  transactions in a ledger, and "shares the open anchor's day" is not even a meaningful claim
+     *  to make about them. Without this guard, every one of that panel's rows collided with the
+     *  one before it (each states its own "Balance" figure) and was promoted into a bogus new row.
+     *
+     *  <p>Second, both values must actually look like currency -- parseable AND carrying a decimal
+     *  point. A real Bank of Baroda statement's page footer (page number, masked support-line
+     *  digits, a repeated masked account number) sits below the last transaction on the page, and
+     *  {@link #PAGE_FOOTER} does not recognize every shape a real footer takes (this one reads
+     *  "Page N | M", not "Page N of M"); its stray digit groups land in the Balance column's x-range
+     *  purely by coincidence and, unlike this table's every genuine balance, carry no decimal point
+     *  at all. Requiring one is not a guess at what "genuine" looks like here: it is true of every
+     *  real balance value on both documents this branch exists for (HSBC DB.pdf, this same BOB
+     *  statement's own real transactions) and false of the footer noise that triggered this guard.
+     *  {@link CsvParser#parseNumeric} is also required so a decimal point alone (an ellipsis, an
+     *  abbreviation like "No.") cannot satisfy this on its own.
+     *
+     *  <p>Returns false with no balance column found -- a layout with no balance column at all
+     *  gives this check nothing to work with, which leaves every document without one exactly as
+     *  this class already handles it. */
+    private boolean closesADifferentTransactionThanTheOpenAnchor(Map<String, String> bucketed,
+                                                                    Map<String, String> openAnchor,
+                                                                    List<String> headerNames) {
+        if (headerNames == null) return false;
+        if (headerNames.stream().noneMatch(this::isDateColumn)) return false;
+        String balanceColumn = headerNames.stream()
+                .filter(h -> CsvParser.normalizeHeaderCell(h).equals("balance"))
+                .findFirst().orElse(null);
+        if (balanceColumn == null) return false;
+        return looksLikeAGenuineBalanceValue(bucketed.get(balanceColumn))
+                && looksLikeAGenuineBalanceValue(openAnchor.get(balanceColumn));
+    }
+
+    private boolean looksLikeAGenuineBalanceValue(String value) {
+        return value != null && value.contains(".") && CsvParser.parseNumeric(value) != null;
+    }
+
     // Word-boundary regex, not matchesAnyHint's per-word exact match and not a plain substring
     // check: a real header cell like "Chq./Ref.No." is one punctuation-joined token with no
     // whitespace, so matchesAnyHint's word-splitting (which only strips LEADING/TRAILING
@@ -3919,6 +5400,31 @@ public class PdfTableLocator {
             if (!isAmountColumn(headerNames.get(i)) && !isDateColumn(headerNames.get(i))) return i;
         }
         return -1;
+    }
+
+    /** The x beyond which nothing belongs to this table any more -- the rightmost column's own
+     *  right edge -- or 0 when that cannot be established, which disables the check entirely.
+     *
+     *  <p>Returns 0 unless the header ends carry REAL measured widths, proven by at least one
+     *  column ending strictly right of where it starts. Without that proof {@code headerEnds}
+     *  degenerates to a copy of {@code headerAnchors} (hand-built fixtures and traces recorded
+     *  before run widths existed), and the rightmost ANCHOR is a boundary that sits in the middle
+     *  of the last column's own data -- every right-aligned amount in it starts to the right of its
+     *  own anchor, so treating that as the table edge would discard exactly the values this method
+     *  exists to place. The same "requires a real measured width, older fixtures keep their previous
+     *  behaviour" condition the RIGHT_ALIGNED_AMOUNTS rule above already applies, for the same
+     *  reason. */
+    private static float rightEdgeOfTable(List<Float> headerAnchors, List<Float> headerEnds) {
+        if (headerEnds == null || headerAnchors == null || headerEnds.size() != headerAnchors.size()) return 0f;
+        float widestEnd = 0f;
+        float widestAnchor = 0f;
+        boolean anyRealWidth = false;
+        for (int i = 0; i < headerEnds.size(); i++) {
+            widestEnd = Math.max(widestEnd, headerEnds.get(i));
+            widestAnchor = Math.max(widestAnchor, headerAnchors.get(i));
+            if (headerEnds.get(i) > headerAnchors.get(i)) anyRealWidth = true;
+        }
+        return anyRealWidth && widestEnd > widestAnchor ? widestEnd : 0f;
     }
 
     private int nearestColumn(float x, List<Float> anchors) {
@@ -4061,14 +5567,32 @@ public class PdfTableLocator {
      *  BigDecimal but is not a currency amount. Without this guard, a metadata line naming both an
      *  account-opening date and an account number would misclassify as a transaction row. */
     private boolean isTransactionShapedRow(List<PositionedText> row) {
+        return isTransactionShapedRow(row, PageDateEvidence.NONE);
+    }
+
+    /** Same contract as {@link #isTransactionShapedRow(List)}, plus {@code candidateYears} -- see
+     *  {@link #resolveYearlessDate}. Kept as a genuine overload rather than changing the
+     *  single-argument signature everywhere: this file has several call sites for the plain form
+     *  (the pageLegendBlockActive resume check and the dropped-candidate evidence recorder among
+     *  them), and only the INFERRED_HEADERLESS_LAYOUT call sites have year context worth passing.
+     *  An empty candidate set makes {@link #resolveYearlessDate} always return null, so the plain
+     *  overload's behaviour for every untouched call site is unchanged. */
+    private boolean isTransactionShapedRow(List<PositionedText> row, PageDateEvidence candidateYears) {
         boolean hasDate = false;
         boolean hasAmount = false;
         for (PositionedText cell : row) {
             String text = cell.text().trim();
-            if (!hasDate && CsvParser.parseDate(text) != null) hasDate = true;
+            if (!hasDate && (CsvParser.parseDate(text) != null
+                    || resolveYearlessDate(text, candidateYears) != null)) hasDate = true;
             if (!hasAmount && text.contains(".") && CsvParser.parseNumeric(text) != null) hasAmount = true;
         }
         return hasDate && hasAmount;
+    }
+
+    /** Test-only accessor -- see {@link #isTransactionShapedRow(List, PageDateEvidence)}. A bare
+     *  year set is the no-interval case, so the span tie-break cannot fire. */
+    boolean isTransactionShapedRowForTest(List<PositionedText> row, Set<Integer> candidateYears) {
+        return isTransactionShapedRow(row, new PageDateEvidence(candidateYears, null, null));
     }
 
     // The only two structural facts isTransactionShapedRow's own gate can attest to -- fixed
@@ -4095,10 +5619,249 @@ public class PdfTableLocator {
     // credit-card statement prints its transaction dates in, relying on the statement period
     // printed once elsewhere for the year. Matched against real month abbreviations specifically
     // (not just "digits then letters") to stay narrow: CsvParser.DATE_FORMATS has no yearless
-    // pattern, and is not getting one here either -- see looksLikeFinancialActivityCandidate's own
-    // doc comment for why this stays local to evidence, never reaching date parsing itself.
+    // pattern, and never will -- see looksLikeFinancialActivityCandidate's own doc comment for why
+    // this shape stays out of general date parsing. resolveYearlessDate is the one place this DOES
+    // get resolved to a real LocalDate, evidence-gated on a candidateYears set every caller has to
+    // supply explicitly -- never by loosening CsvParser itself. Two capturing groups (day, month
+    // abbreviation) so resolveYearlessDate can pull both back out without re-parsing the string a
+    // second way.
     private static final Pattern WEAK_DAY_MONTH = Pattern.compile(
-            "(?i)^\\d{1,2}[\\s-]?(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)$");
+            "(?i)^(\\d{1,2})[\\s-]?(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)$");
+
+    // The same shape, month first -- "May 01"/"MAY-01"/"MAY01" -- a real Standard Chartered
+    // savings statement's own table rows, relying on the account-summary block's own "STATEMENT
+    // DATE : 01 May 2026 To 31 May 2026" line (a full, year-bearing date CsvParser.parseDate
+    // already resolves) for the year, exactly the way WEAK_DAY_MONTH's HSBC statement relies on
+    // its header. A separate pattern rather than a reordered capture on WEAK_DAY_MONTH -- both are
+    // narrow, evidence-shaped patterns matched against a real document's own printed order, and
+    // reordering one into "try either group order" would accept a shape neither real document
+    // actually prints, which is exactly the fabrication resolveYearlessDate's own doc comment says
+    // this capability refuses to do.
+    private static final Pattern WEAK_MONTH_DAY = Pattern.compile(
+            "(?i)^(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)[\\s-]?(\\d{1,2})$");
+
+    // KNOWN HAZARD, measured and currently dormant. A corpus survey found two real shapes this
+    // pattern matches that are month+YEAR rather than month+day: a date split across two physical
+    // lines on one credit-card statement (day above, month and two-digit year below), and a
+    // loan-expiry column on another. Neither misresolves today, and the reason is worth stating
+    // because it is load-bearing: the pages carrying them supply NO candidate year at all, so
+    // resolveYearlessDate returns null before the shape matters. Anything that widens what counts
+    // as year evidence therefore has to re-check those two documents rather than assume them
+    // unaffected -- collectDates below does widen it, and was verified against the whole corpus
+    // for exactly this reason. Left as a documented hazard rather than a speculative narrowing:
+    // this file's discipline is to change a pattern when a real document forces it, and no real
+    // document does yet.
+
+    // Small, explicit map rather than Month.valueOf(String) -- java.time's Month enum only parses
+    // full English names ("JUNE"), not the three-letter abbreviations WEAK_DAY_MONTH matches
+    // ("JUN"), and a TextStyle-based lookup pulls in a Locale-dependent parser this file has
+    // deliberately avoided everywhere else (see DATE_FORMAT's own Locale.ENGLISH pin in
+    // StatementTitleDateRangeExtractor for why: locale-implicit parsing is exactly the kind of bug
+    // class this project keeps re-discovering).
+    private static final Map<String, Integer> MONTH_ABBREVIATIONS = Map.ofEntries(
+            Map.entry("JAN", 1), Map.entry("FEB", 2), Map.entry("MAR", 3), Map.entry("APR", 4),
+            Map.entry("MAY", 5), Map.entry("JUN", 6), Map.entry("JUL", 7), Map.entry("AUG", 8),
+            Map.entry("SEP", 9), Map.entry("OCT", 10), Map.entry("NOV", 11), Map.entry("DEC", 12));
+
+    /**
+     * The full, year-bearing dates ONE page prints: the calendar years they name, and the closed
+     * interval they span. Two facts rather than one because resolving a yearless date needs both
+     * -- the years say which resolutions are even possible, and the interval says which of them
+     * the document's own printed dates actually bracket. See {@link #resolveYearlessDate}.
+     *
+     * <p>{@code earliest} and {@code latest} are null when no interval is available -- either the
+     * page printed no full date at all ({@link #NONE}), or the caller supplied years without the
+     * dates they came from. {@link PageDateEvidence#spans} is false for every date in that case,
+     * which leaves {@link #resolveYearlessDate} on its pre-existing single-candidate rule. A page
+     * that prints exactly one full date has both bounds set to that date, and {@code spans} then
+     * admits only it.
+     */
+    record PageDateEvidence(Set<Integer> years, LocalDate earliest, LocalDate latest) {
+
+        /** A page whose own text supplies no full date at all -- no year is possible, so no
+         *  yearless date on it can be resolved. */
+        static final PageDateEvidence NONE = new PageDateEvidence(Set.of(), null, null);
+
+        static PageDateEvidence of(Collection<LocalDate> dates) {
+            if (dates.isEmpty()) return NONE;
+            Set<Integer> years = new HashSet<>();
+            LocalDate earliest = null;
+            LocalDate latest = null;
+            for (LocalDate date : dates) {
+                years.add(date.getYear());
+                if (earliest == null || date.isBefore(earliest)) earliest = date;
+                if (latest == null || date.isAfter(latest)) latest = date;
+            }
+            return new PageDateEvidence(Set.copyOf(years), earliest, latest);
+        }
+
+        /** Whether {@code date} falls inside the closed interval this page's own printed dates
+         *  span. False for a page with no dates at all -- there is nothing to bracket it with. */
+        boolean spans(LocalDate date) {
+            return earliest != null && !date.isBefore(earliest) && !date.isAfter(latest);
+        }
+    }
+
+    /**
+     * How many leading whitespace-separated tokens of one cell {@link #collectDates} will consider
+     * as the START of an embedded date, and how many consecutive tokens one such attempt may join.
+     *
+     * <p>Both are cost bounds, not correctness bounds. A date printed inside a longer run appears
+     * near the start of the fragment that carries it on every real document this was verified
+     * against; scanning an entire 40-token narration cell for a date would multiply this file's
+     * per-row parse cost across every page of every statement to find nothing. Three tokens is the
+     * widest any format in {@link CsvParser}'s own list occupies once split on whitespace ("dd MMM
+     * yyyy").
+     */
+    private static final int EMBEDDED_DATE_TOKEN_SCAN_LIMIT = 12;
+    private static final int EMBEDDED_DATE_MAX_TOKENS = 3;
+
+    /**
+     * Every full, year-bearing date {@code text} names -- the whole string first, and if that
+     * fails, short windows of consecutive tokens inside it.
+     *
+     * <p>The window scan exists because a real HSBC credit-card statement prints its billing
+     * period as one text run carrying the period's two dates alongside other tokens. Asking {@link
+     * CsvParser#parseDate} about the whole run fails, so the EARLIER of that period's two years
+     * never became available -- and a transaction whose own printed date is yearless then had
+     * exactly one candidate year, the later one, which {@link #resolveYearlessDate} correctly
+     * treated as unambiguous and wrongly resolved to a date a year in the future.
+     *
+     * <p>This introduces NO new date shape. Every candidate is still decided by {@code
+     * CsvParser.parseDate} exactly as before; only the substrings it is asked about changed. That
+     * distinction is the whole point -- see {@link #WEAK_DAY_MONTH}'s doc comment for why a
+     * yearless shape stays local to this capability rather than being added to {@code CsvParser},
+     * and note that this change does the opposite of loosening that parser.
+     *
+     * <p>A window is only attempted when its first token starts with a digit: every format in
+     * {@code CsvParser}'s list begins with a day or a year. That guard is what keeps this
+     * affordable to run over every cell of every row.
+     */
+    private static void collectDates(String text, Collection<LocalDate> into) {
+        LocalDate whole = CsvParser.parseDate(text);
+        if (whole != null) {
+            into.add(whole);
+            return;
+        }
+        String[] tokens = text.split("\\s+");
+        int scanned = Math.min(tokens.length, EMBEDDED_DATE_TOKEN_SCAN_LIMIT);
+        for (int start = 0; start < scanned; start++) {
+            if (tokens[start].isEmpty() || !Character.isDigit(tokens[start].charAt(0))) continue;
+            StringBuilder window = new StringBuilder(tokens[start]);
+            for (int joined = 1; joined <= EMBEDDED_DATE_MAX_TOKENS; joined++) {
+                LocalDate parsed = CsvParser.parseDate(window.toString());
+                if (parsed != null) {
+                    into.add(parsed);
+                    break;
+                }
+                int next = start + joined;
+                if (next >= tokens.length) break;
+                window.append(' ').append(tokens[next]);
+            }
+        }
+    }
+
+    /**
+     * Page index to the full, year-bearing dates that page prints ({@link CsvParser#parseDate}
+     * already succeeds on these -- this does not introduce a new date shape, only collects what is
+     * already recognized; see {@link #collectDates} for the one subtlety). Scoped per page, not
+     * per document: a statement whose transaction table spans a year boundary must not let one
+     * page's year silently leak onto another page's yearless dates.
+     *
+     * <p>Computed once per document, from every physical row {@link #inferHeaderlessSection}
+     * already has in hand -- not just the transaction-shaped candidates, since the full dates that
+     * supply year context (a statement period, a payment due date) live in the surrounding
+     * account-summary rows this capability's candidate filter deliberately excludes.
+     */
+    private Map<Integer, PageDateEvidence> yearsByPage(List<List<PositionedText>> rows) {
+        Map<Integer, List<LocalDate>> datesByPage = new HashMap<>();
+        for (List<PositionedText> row : rows) {
+            for (PositionedText cell : row) {
+                collectDates(cell.text().trim(),
+                        datesByPage.computeIfAbsent(cell.pageIndex(), k -> new ArrayList<>()));
+            }
+        }
+        Map<Integer, PageDateEvidence> result = new HashMap<>();
+        datesByPage.forEach((page, dates) -> result.put(page, PageDateEvidence.of(dates)));
+        return result;
+    }
+
+    /**
+     * Resolves a {@link #WEAK_DAY_MONTH}- or {@link #WEAK_MONTH_DAY}-shaped string ("30JUN" or
+     * "May 01", no year) to the one calendar date it unambiguously names, using {@code
+     * candidateYears} -- typically the years already seen among other full dates on the same page
+     * (see {@link #yearsByPage}). Motivated by two real documents printing their transaction dates
+     * exactly these two shapes, each relying on the statement period printed elsewhere for the
+     * year -- see each pattern's own doc comment for which.
+     *
+     * <p>Never guesses: returns {@code null} when zero candidate years produce a valid calendar
+     * date (e.g. "29FEB" against a non-leap year) or when two or more candidate years each
+     * produce a DIFFERENT valid date (genuinely ambiguous -- a statement spanning a year boundary
+     * could see both "31DEC" and "01JAN" become resolvable against either year without this
+     * check). Matches this file's "fail-safe over fabrication" discipline established throughout
+     * the headerless-layout capability: see this capability's own top-level doc comment above
+     * {@link #HEADERLESS_COLUMN_CLUSTER_TOLERANCE}.
+     *
+     * <p>Deliberately separate from {@link CsvParser#parseDate}, not an addition to it -- see
+     * {@link #WEAK_DAY_MONTH}'s own doc comment for why a yearless pattern stays local to this
+     * evidence-gated capability rather than becoming a general date shape every caller of {@code
+     * CsvParser} would then also accept.
+     */
+    private LocalDate resolveYearlessDate(String text, PageDateEvidence candidateYears) {
+        String trimmed = text.trim();
+        int day;
+        Integer month;
+        Matcher dayFirst = WEAK_DAY_MONTH.matcher(trimmed);
+        if (dayFirst.matches()) {
+            day = Integer.parseInt(dayFirst.group(1));
+            month = MONTH_ABBREVIATIONS.get(dayFirst.group(2).toUpperCase(Locale.ENGLISH));
+        } else {
+            Matcher monthFirst = WEAK_MONTH_DAY.matcher(trimmed);
+            if (!monthFirst.matches()) return null;
+            month = MONTH_ABBREVIATIONS.get(monthFirst.group(1).toUpperCase(Locale.ENGLISH));
+            day = Integer.parseInt(monthFirst.group(2));
+        }
+        if (month == null) return null;
+
+        Set<LocalDate> resolved = new HashSet<>();
+        for (int year : candidateYears.years()) {
+            try {
+                resolved.add(LocalDate.of(year, month, day));
+            } catch (DateTimeException notARealCalendarDate) {
+                // e.g. 29 Feb against a non-leap year -- excluded, not coerced.
+            }
+        }
+        if (resolved.size() == 1) return resolved.iterator().next();
+        if (resolved.isEmpty()) return null;
+
+        // Two or more candidate years each name a real calendar date, so the year set alone cannot
+        // decide. Fall back to the other half of the same evidence: the interval the page's own
+        // printed dates span. A statement that crosses a year boundary prints both years, and a
+        // yearless "24DEC" on it is a real date in exactly one of them -- the one the billing
+        // period it appears in actually contains. Resolving only when EXACTLY ONE candidate is
+        // bracketed keeps the fail-safe posture this method's doc comment describes: a page whose
+        // own dates bracket both candidates (or neither) is still genuinely ambiguous, and still
+        // returns null rather than picking a favourite.
+        List<LocalDate> bracketed = resolved.stream().filter(candidateYears::spans).toList();
+        return bracketed.size() == 1 ? bracketed.get(0) : null;
+    }
+
+    /** Test-only accessor -- see {@link #resolveYearlessDate}. Takes a bare year set, which is the
+     *  no-interval case: the span tie-break cannot fire, so this exercises the year-set rule alone.
+     *  Pass a {@link PageDateEvidence} to the overload below to exercise the tie-break. */
+    LocalDate resolveYearlessDateForTest(String text, Set<Integer> candidateYears) {
+        return resolveYearlessDate(text, new PageDateEvidence(candidateYears, null, null));
+    }
+
+    /** Test-only accessor -- see {@link #resolveYearlessDate}. */
+    LocalDate resolveYearlessDateForTest(String text, PageDateEvidence evidence) {
+        return resolveYearlessDate(text, evidence);
+    }
+
+    /** Test-only accessor -- see {@link #yearsByPage}. */
+    Map<Integer, PageDateEvidence> yearsByPageForTest(List<List<PositionedText>> rows) {
+        return yearsByPage(rows);
+    }
 
     /**
      * A deliberately SEPARATE, more permissive question from {@link #isTransactionShapedRow}:
@@ -4312,8 +6075,16 @@ public class PdfTableLocator {
      *  columns, returned in ascending clusterKey order. Each returned {@link ColumnStats} is built
      *  entirely from the cells that landed in its own cluster -- there is no separate re-matching
      *  step, so a cell can never be counted against a different column here than the one that
-     *  defined its own cluster. */
-    private List<ColumnStats> clusterIntoColumns(List<List<PositionedText>> transactionRows) {
+     *  defined its own cluster.
+     *
+     *  <p>{@code yearsByPage} lets a cell's date-ness be recognised even when it's {@link
+     *  #WEAK_DAY_MONTH}-shaped rather than a full {@link CsvParser#parseDate}-able date -- without
+     *  this, a real date column built entirely from yearless cells would score a
+     *  {@link ColumnStats#dateFraction()} of zero and never be recognised as the date column at
+     *  all, even after {@link #isTransactionShapedRow}'s own admission gate already resolved the
+     *  same cells via {@link #resolveYearlessDate}. */
+    private List<ColumnStats> clusterIntoColumns(List<List<PositionedText>> transactionRows,
+            Map<Integer, PageDateEvidence> yearsByPage) {
         List<PositionedText> informative = new ArrayList<>();
         for (List<PositionedText> row : transactionRows) {
             for (PositionedText cell : row) {
@@ -4352,7 +6123,10 @@ public class PdfTableLocator {
                     repRight = Math.max(repRight, cell.endX());
                     if (text.contains(".")) amountLikeCount++;
                 }
-                if (CsvParser.parseDate(text) != null) dateCount++;
+                PageDateEvidence pageYears = yearsByPage.getOrDefault(cell.pageIndex(), PageDateEvidence.NONE);
+                if (CsvParser.parseDate(text) != null || resolveYearlessDate(text, pageYears) != null) {
+                    dateCount++;
+                }
                 wordSum += text.split("\\s+").length;
             }
             if (!anyNumeric) repRight = repLeft;
@@ -4509,14 +6283,47 @@ public class PdfTableLocator {
      *  removes the row from {@code result}, the list that becomes {@link LocatedSection#rows()} --
      *  so this is the one point that actually corresponds to "this row will not reach the user," and
      *  the one point where recording that fact is honest. */
+    /**
+     * Returns {@code row} unchanged unless one of its cells is {@link #WEAK_DAY_MONTH}-shaped and
+     * resolves unambiguously via {@link #resolveYearlessDate} -- in which case that ONE cell is
+     * replaced with an equivalent {@link PositionedText} (same x/y/page/width, so bucketing-by-
+     * position is unaffected) whose text is the resolved date formatted "dd MMM yyyy", a shape
+     * {@link CsvParser#parseDate} already accepts (see its own {@code DATE_FORMATS} list). Without
+     * this substitution, {@link #isTransactionShapedRow}'s admission gate would accept the row but
+     * the RAW yearless text would still reach {@code TransactionNormalizer} downstream via {@link
+     * #bucketRow}'s stored value, which parses dates through the exact same {@link
+     * CsvParser#parseDate} call and would reject it there instead -- moving the failure one layer
+     * down rather than fixing it.
+     */
+    private List<PositionedText> substituteYearlessDates(List<PositionedText> row, PageDateEvidence pageYears) {
+        List<PositionedText> result = null;
+        for (int i = 0; i < row.size(); i++) {
+            PositionedText cell = row.get(i);
+            LocalDate resolved = resolveYearlessDate(cell.text().trim(), pageYears);
+            if (resolved != null) {
+                if (result == null) result = new ArrayList<>(row);
+                String formatted = resolved.format(
+                        DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.ENGLISH));
+                result.set(i, new PositionedText(formatted, cell.x(), cell.y(), cell.pageIndex(),
+                        cell.width(), cell.height(), cell.confidence(), cell.source()));
+            }
+        }
+        return result != null ? result : row;
+    }
+
     private HeaderlessBucketResult bucketHeaderlessRowsWithContinuation(List<List<PositionedText>> allRows,
-            List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds, DocumentContext ctx) {
+            List<String> headerNames, List<Float> headerAnchors, List<Float> headerEnds, DocumentContext ctx,
+            Map<Integer, PageDateEvidence> yearsByPage) {
         List<Map<String, String>> result = new ArrayList<>();
         List<String> auxiliaryText = new ArrayList<>();
         List<DroppedCandidateRow> droppedTransactionCandidates = new ArrayList<>();
         Map<String, String> currentAnchor = null;
         int continuationCount = 0;
         String previousTransactionLine = null;
+        int lastPageIndex = -1;
+        for (List<PositionedText> r : allRows) {
+            if (!r.isEmpty()) lastPageIndex = Math.max(lastPageIndex, r.get(0).pageIndex());
+        }
         for (List<PositionedText> row : allRows) {
             String rowLine = lineOf(row);
             if (PAGE_FOOTER.matcher(rowLine).find()) continue;
@@ -4530,25 +6337,37 @@ public class PdfTableLocator {
             // was added to TRAILING_CONTENT_TRIGGERS, because this loop never consulted that list.
             // A permanent break, same as every trigger's meaning in the header-based path -- none of
             // these markers is a per-page, resumable thing the way PAGE_FOOTER is.
-            String trailingTrigger = trailingContentTriggerCapability(rowLine);
+            int rowPageIndex = row.isEmpty() ? -1 : row.get(0).pageIndex();
+            String trailingTrigger = trailingContentTriggerCapability(rowLine, rowPageIndex, lastPageIndex);
             if (trailingTrigger != null) {
                 recordTrailingContentTrigger(ctx, trailingTrigger);
                 break;
             }
-            if (isTransactionShapedRow(row)) {
+            PageDateEvidence rowYears = row.isEmpty() ? PageDateEvidence.NONE
+                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
+            // Substituted before bucketRow specifically -- see substituteYearlessDates's own doc
+            // comment for why the ADMISSION check (isTransactionShapedRow) and the STORED value
+            // both need to see the resolved date, not just the former: isTransactionShapedRow
+            // passing on the raw "30JUN" text is not enough, because bucketRow would otherwise
+            // store that same raw text under the Date column, and TransactionNormalizer downstream
+            // parses it through the exact same CsvParser.parseDate call that rejected it here.
+            List<PositionedText> resolvedRow = substituteYearlessDates(row, rowYears);
+            if (isTransactionShapedRow(resolvedRow, rowYears)) {
                 if (rowLine.equals(previousTransactionLine)) {
                     recordIfTransactionShaped(row, "REPEATED_PHYSICAL_ROW_REMOVED", droppedTransactionCandidates);
                     if (ctx != null) ctx.record("PHYSICAL_ROW_DEDUP_EVIDENCE");
                     continue;
                 }
-                Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
+                Map<String, String> bucketed = bucketRow(resolvedRow, headerNames, headerAnchors, headerEnds, ctx,
+                        rowYears);
                 if (bucketed.isEmpty()) continue;
                 result.add(bucketed);
                 currentAnchor = bucketed;
                 continuationCount = 0;
                 previousTransactionLine = rowLine;
             } else if (currentAnchor != null && continuationCount < MAX_BLOCK_CONTINUATION_ROWS) {
-                Map<String, String> bucketed = bucketRow(row, headerNames, headerAnchors, headerEnds, ctx);
+                Map<String, String> bucketed = bucketRow(resolvedRow, headerNames, headerAnchors, headerEnds, ctx,
+                        rowYears);
                 if (bucketed.isEmpty()) continue;
                 mergeInto(currentAnchor, bucketed, headerNames);
                 continuationCount++;
@@ -4562,14 +6381,375 @@ public class PdfTableLocator {
         return new HeaderlessBucketResult(result, auxiliaryText, droppedTransactionCandidates);
     }
 
+    /** {@link #HEADERLESS_MIN_TRANSACTION_ROWS}'s own escape hatch: a candidate pool too small to
+     *  trust on row count alone can still be trusted when the document's own printed balance
+     *  summary proves it. Real HSBC evidence: a genuinely headerless statement with exactly ONE
+     *  real transaction (one short of the floor) prints both "OPENING BALANCE" and "NET
+     *  OUTSTANDING BALANCE" as ordinary same-line label/value pairs, and that one transaction is
+     *  itself a CR payment that exactly and only accounts for the difference between the two
+     *  printed figures. Same "the printed data proves itself, not an invented threshold" reasoning
+     *  {@link #resolveDebitCreditByBalanceChain} already uses for header-based tables, just against
+     *  explicit summary labels instead of a printed running-balance column (this document's
+     *  transaction line carries no balance column of its own to chain against).
+     *
+     *  <p>Exact match only, no tolerance -- same discipline every other reconciliation check in
+     *  this codebase uses (see {@link com.finora.imports.BalanceSequenceResolver}'s own "no forced
+     *  guess" philosophy). A near-miss proves nothing; it is not treated as corroboration.
+     *
+     *  <p>Narrow by design: only the two exact label phrases HSBC prints are recognized, not a
+     *  general "any balance summary" pattern -- see {@link #findLabeledRow}. A second real
+     *  HSBC document (10 real transactions, mostly unmarked debits) confirmed the same two labels
+     *  and the same exact-reconciliation arithmetic hold beyond the original one-transaction case.
+     *  Returns false (never guesses) whenever either label is absent, any candidate's own amount
+     *  cannot be found at all, or the arithmetic doesn't land exactly -- the caller's existing
+     *  floor rejection is always the safe default. Calls {@link #findLabeledRow} independently of
+     *  {@link #tryCorroboratedFallback}'s own call for the SAME two labels on the SAME {@code
+     *  rows} -- a deliberately redundant second scan rather than threading the resolved value
+     *  through, so the two can never read a different row for the same label: {@link
+     *  #findLabeledRow} is a pure function of its arguments, so two calls on identical input
+     *  always agree. */
+    private boolean corroboratedByPrintedBalanceReconciliation(
+            List<List<PositionedText>> candidates, List<List<PositionedText>> rows, DocumentContext ctx) {
+        if (candidates.isEmpty()) return false;
+        LabeledRow opening = findLabeledRow(rows, "opening balance");
+        LabeledRow closing = findLabeledRow(rows, "net outstanding balance");
+        if (opening == null || closing == null) return false;
+
+        BigDecimal projected = opening.amount();
+        for (List<PositionedText> candidate : candidates) {
+            BigDecimal signed = signedTransactionAmount(candidate);
+            if (signed == null) return false;
+            projected = projected.add(signed);
+        }
+        if (projected.compareTo(closing.amount()) != 0) return false;
+        if (ctx != null) ctx.record("HEADERLESS_BALANCE_RECONCILIATION_CORROBORATED");
+        return true;
+    }
+
+    /** Test-only accessor -- see {@link #corroboratedByPrintedBalanceReconciliation}. */
+    boolean corroboratedByPrintedBalanceReconciliationForTest(
+            List<List<PositionedText>> candidates, List<List<PositionedText>> rows) {
+        return corroboratedByPrintedBalanceReconciliation(candidates, rows, null);
+    }
+
+    /** Recomputes the transaction-shaped candidate pool (same as
+     *  {@link #inferHeaderlessSectionViaClustering}'s own, but the clustering path's `candidates`
+     *  local isn't visible here), narrowed to rows strictly BETWEEN the document's own "OPENING
+     *  BALANCE" and "NET OUTSTANDING BALANCE" labels (see {@link #findLabeledRow}). Real HSBC
+     *  evidence across two documents shows the coincidental date+amount noise that defeats the
+     *  clustering path (the statement generation date, the billing period, the closing-balance
+     *  line itself) always sits OUTSIDE that bracket -- before OPENING BALANCE, or ON the NET
+     *  OUTSTANDING BALANCE row itself, which this exclusive range already excludes as its own
+     *  boundary. Every genuine transaction row across both evidencing documents sits strictly
+     *  inside it. This positional exclusion is what makes it safe for {@link
+     *  #signedTransactionAmount} to default an unmarked row to a purchase (DR) below -- a second
+     *  real HSBC document shows most real debit rows print no DR marker at all, only credits are
+     *  marked, so requiring an explicit marker (this fallback's original, stricter design) missed
+     *  every one of them. Without a locatable, unambiguous bracket, no candidate is trusted at
+     *  all -- {@link #corroboratedByPrintedBalanceReconciliation}'s own null checks would reject
+     *  the document anyway once neither label resolves to a row, so declining earlier here changes
+     *  nothing about the outcome. Null when no candidates exist, or when the ones that do exist
+     *  don't reconcile against the document's own printed balance summary -- same "never guess"
+     *  contract as every other point in this class that can return null.
+     *
+     *  <p>The slice handed here is anchored on {@code firstStagedHeaderRowIndex} -- the first
+     *  header whose section actually survived closing, not the first row merely recognized as
+     *  header-shaped -- so a misdetected payment-summary panel that {@link #closeCurrentSection}
+     *  suppresses ({@link #looksLikePaymentSummaryPanel}) no longer truncates the region searched
+     *  here. See that field's own doc comment. */
+    private LocatedSection tryCorroboratedFallback(List<List<PositionedText>> rows, DocumentContext ctx) {
+        Map<Integer, PageDateEvidence> yearsByPage = yearsByPage(rows);
+        LabeledRow opening = findLabeledRow(rows, "opening balance");
+        LabeledRow closing = findLabeledRow(rows, "net outstanding balance");
+        boolean bracketed = opening != null && closing != null && closing.index() > opening.index();
+        List<List<PositionedText>> signedCandidates = new ArrayList<>();
+        // Every OTHER row's own flattened line -- becomes this section's auxiliaryText below, the
+        // same "everything that wasn't a staged row" contract bucketHeaderlessRowsWithContinuation
+        // already keeps for the ordinary clustering path. Without this, real HSBC evidence shows
+        // the recovered section carries no account identity or product signal at all (its own
+        // "OPENING BALANCE"/"Available Credit Limit"/cardholder-name text sits in these
+        // surrounding rows, not in the transaction row itself) -- PdfMetadataExtractor and
+        // ProductDiscovery both need this text to do their own jobs on this section.
+        List<String> auxiliaryText = new ArrayList<>();
+        for (int i = 0; i < rows.size(); i++) {
+            List<PositionedText> row = rows.get(i);
+            boolean withinLedger = bracketed && i > opening.index() && i < closing.index();
+            if (!withinLedger) {
+                String line = lineOf(row);
+                if (!line.isBlank()) auxiliaryText.add(line);
+                continue;
+            }
+            PageDateEvidence rowYears = row.isEmpty() ? PageDateEvidence.NONE
+                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
+            List<PositionedText> resolved = substituteYearlessDates(row, rowYears);
+            if (isTransactionShapedRow(resolved, rowYears) && signedTransactionAmount(resolved) != null) {
+                signedCandidates.add(resolved);
+            } else {
+                String line = lineOf(row);
+                if (!line.isBlank()) auxiliaryText.add(line);
+            }
+        }
+        signedCandidates = dedupeAdjacentIdenticalRows(signedCandidates);
+        if (signedCandidates.isEmpty()) return null;
+        if (!corroboratedByPrintedBalanceReconciliation(signedCandidates, rows, ctx)) return null;
+        return buildSectionFromSignedCandidates(signedCandidates, auxiliaryText, ctx);
+    }
+
+    /** Builds a section directly from candidates a printed balance reconciliation has already
+     *  vouched for -- no statistical column inference at all. A vouched-for candidate's own shape
+     *  states its Date/Debit/Credit/Description cells directly (the one amount cell per {@link
+     *  #soleAmountCell}, the first date-parseable cell, the row's own CR/DR marker per {@link
+     *  #rowMarkerCredit}, everything else joined as narration) -- the same "read what the document
+     *  already states" discipline every other extractor in this file uses; there is nothing left to
+     *  infer once a row has been individually vouched for.
+     *
+     *  <p>Both the amount and the sign are read through the SAME two helpers {@link
+     *  #signedTransactionAmount} used to get this candidate corroborated, so what is staged can
+     *  never disagree with what the reconciliation arithmetic actually checked. Two earlier
+     *  versions of this method got that wrong in opposite directions and both are worth remembering:
+     *  one matched "CR"/"DR" itself, first-cell-wins, while {@code signedTransactionAmount} matched
+     *  independently last-cell-wins, so a row carrying two marker-shaped cells could stage the
+     *  opposite sign from the one that was validated; the other then tested {@link
+     *  CsvParser#hasTrailingDrCrMarker} AHEAD of the amount, which -- because {@link
+     *  CsvParser#parseNumeric} strips a trailing marker itself -- swallowed a glued "&lt;value&gt; CR"
+     *  single run as if it were a bare marker and left the row with no amount, discarding the whole
+     *  section. Reading both facts once, up front, from shared helpers is what makes those two
+     *  classes of bug unrepresentable rather than merely fixed.
+     *
+     *  <p>Returns null (never a partial section) if a candidate turns out not to present exactly
+     *  one amount cell, or carries no date, once individually inspected -- should not happen given
+     *  {@link #tryCorroboratedFallback}'s own admission gate, but this method makes no assumption
+     *  about how its candidates were selected. */
+    private LocatedSection buildSectionFromSignedCandidates(
+            List<List<PositionedText>> signedCandidates, List<String> auxiliaryText, DocumentContext ctx) {
+        List<Map<String, String>> staged = new ArrayList<>();
+        for (List<PositionedText> candidate : signedCandidates) {
+            PositionedText amountCell = soleAmountCell(candidate);
+            if (amountCell == null) return null;
+            BigDecimal amount = CsvParser.parseNumeric(amountCell.text().trim());
+            if (amount == null) return null;
+            Boolean credit = rowMarkerCredit(candidate);
+            String date = null;
+            StringBuilder description = new StringBuilder();
+            for (PositionedText cell : candidate) {
+                // Identity, not a text re-test: the one amount cell is already decided above, so
+                // the loop below can never re-classify it and can never disagree with the value
+                // actually staged.
+                if (cell == amountCell) continue;
+                String text = cell.text().trim();
+                if (text.isEmpty()) continue;
+                if (date == null && CsvParser.parseDate(text) != null) {
+                    date = text;
+                } else if (CsvParser.hasTrailingDrCrMarker(text)) {
+                    // A standalone marker cell, already read by rowMarkerCredit above -- kept out
+                    // of the narration rather than staged twice. Safe here, unlike inside the
+                    // amount decision, because the amount cell is excluded by identity above:
+                    // parseNumeric strips a glued marker, so testing this predicate ahead of the
+                    // amount would otherwise have swallowed a "<value> CR" single run and left the
+                    // row with no amount at all -- see soleAmountCell's own doc comment.
+                    continue;
+                } else {
+                    if (description.length() > 0) description.append(' ');
+                    description.append(text);
+                }
+            }
+            if (date == null) return null;
+            // The value is staged WITHOUT any marker suffix, in a Debit or Credit column -- the
+            // same two-column shape inferHeaderlessSectionViaClustering's own bucketed rows already
+            // use, so this path stages what the rest of this class already stages. Staging a single
+            // "Amount" column with a synthesized "<value> DR" suffix (this method's earlier design)
+            // was wrong for a reason beyond style: TransactionNormalizer records the DR_CR_SUFFIX
+            // capability purely from the staged string's shape, so that design reported a marker
+            // this parser had written itself as evidence of what the bank printed -- in the one
+            // signal this codebase treats as ground truth for exactly that question. It was wrong
+            // on BOTH real documents, in two different ways: on the second, most genuine debit rows
+            // carry no marker at all, so the suffix was pure fabrication; and even on the first,
+            // whose one transaction DOES print "CR", that marker is its own separate PositionedText
+            // run, so the SUFFIX (as opposed to the marker) was still manufactured here by joining
+            // two runs that the document never printed as one cell. Measured: switching to columns
+            // drops DR_CR_SUFFIX from both documents and changes nothing else in the 29-document
+            // corpus. A column carries the same direction with nothing invented.
+            // The raw cell text is kept verbatim when it carries no glued marker (the real case on
+            // both evidencing documents, preserving the document's own thousands separators); only
+            // the glued "<value> CR" form is normalized, since its marker must not survive into a
+            // column whose name already states the direction.
+            String rawAmount = amountCell.text().trim();
+            String value = CsvParser.hasTrailingDrCrMarker(rawAmount)
+                    ? amount.abs().toPlainString()
+                    : rawAmount;
+            boolean isCredit = credit != null && credit;
+            Map<String, String> bucketed = new LinkedHashMap<>();
+            bucketed.put("Date", date);
+            bucketed.put("Description", description.toString());
+            // Both keys always present, one blank: TransactionNormalizer's own credit-column check
+            // reads a NON-BLANK value in the credit column as the income signal (see its
+            // firstNonZeroAmount/CREDIT_HINTS handling), which presumes a Debit/Credit layout
+            // prints both columns on every row.
+            bucketed.put("Debit", isCredit ? "" : value);
+            bucketed.put("Credit", isCredit ? value : "");
+            staged.add(bucketed);
+        }
+        if (staged.isEmpty()) return null;
+        if (ctx != null) ctx.record("INFERRED_HEADERLESS_LAYOUT");
+        return new LocatedSection(auxiliaryText, staged, ExtractionEvidence.NONE);
+    }
+
+    /** A row index paired with the amount found on that same row -- see {@link #findLabeledRow}. */
+    private record LabeledRow(int index, BigDecimal amount) {}
+
+    /** Locates the row carrying a cell whose trimmed text matches {@code label}
+     *  case-insensitively, together with the parseable amount on that SAME row -- an ordinary
+     *  "Label ... Value" line, not the label-above-value grid {@link StatementSummaryExtractor}
+     *  matches. One combined lookup used both to bracket the ledger region ({@link
+     *  #tryCorroboratedFallback}) and to read the reconciliation amount ({@link
+     *  #corroboratedByPrintedBalanceReconciliation}) -- a single pure function of {@code (rows,
+     *  label)} so the row a positional bracket is built from and the row a reconciliation amount
+     *  is read from can never silently diverge, the way two independently-matching helpers could.
+     *  Null (never a guess) when the label isn't found, is found on more than one row with
+     *  DIFFERENT amounts (ambiguous -- which one is real?), or the matching row carries no
+     *  parseable amount at all. When the label is found on more than one row with the SAME
+     *  amount, the first occurrence's row index is used -- the value is unambiguous even when its
+     *  exact physical position isn't. */
+    private static LabeledRow findLabeledRow(List<List<PositionedText>> rows, String label) {
+        int foundIndex = -1;
+        BigDecimal foundAmount = null;
+        for (int i = 0; i < rows.size(); i++) {
+            boolean labelPresent = false;
+            BigDecimal amount = null;
+            for (PositionedText cell : rows.get(i)) {
+                String text = cell.text().trim();
+                if (text.equalsIgnoreCase(label)) labelPresent = true;
+                if (amount == null && text.contains(".") && CsvParser.parseNumeric(text) != null) {
+                    amount = CsvParser.parseNumeric(text);
+                }
+            }
+            if (labelPresent && amount != null) {
+                if (foundAmount != null && foundAmount.compareTo(amount) != 0) return null;
+                if (foundIndex < 0) foundIndex = i;
+                foundAmount = amount;
+            }
+        }
+        return foundIndex < 0 ? null : new LabeledRow(foundIndex, foundAmount);
+    }
+
+    /** True/false for a row's own credit/debit marker when EXACTLY one cell in the row carries
+     *  one; null when no cell does, or when more than one does (ambiguous -- never guesses which
+     *  is authoritative). Shared by {@link #signedTransactionAmount} and {@link
+     *  #buildSectionFromSignedCandidates} so the two can never disagree about a row's sign -- see
+     *  {@link #buildSectionFromSignedCandidates}'s own doc comment for the real inconsistency this
+     *  replaced. Reuses {@link CsvParser#hasTrailingDrCrMarker}/{@link
+     *  CsvParser#detectSignFromRawAmount} (bare or parenthesized, either case, case-insensitive)
+     *  rather than an exact "CR"/"DR" cell-text match, so a glued or parenthesized marker (e.g. a
+     *  Union Bank-style "50000.00(Cr)") is recognized the same way every other marker check in
+     *  this codebase already is -- deliberately not {@code detectSignFromRawAmount}'s own leading
+     *  "+" signal, which exists for a different bank's different convention and would false-fire
+     *  on any unrelated cell starting with "+" (a phone number, for instance) if applied to every
+     *  cell in a row rather than a single already-known amount column. */
+    private static Boolean rowMarkerCredit(List<PositionedText> row) {
+        Boolean credit = null;
+        int markerCells = 0;
+        for (PositionedText cell : row) {
+            String text = cell.text().trim();
+            if (CsvParser.hasTrailingDrCrMarker(text)) {
+                markerCells++;
+                credit = CsvParser.detectSignFromRawAmount(text);
+            }
+        }
+        return markerCells == 1 ? credit : null;
+    }
+
+    /** A transaction candidate's own contribution to a credit-card outstanding balance, signed by
+     *  its printed CR/DR marker -- the OPPOSITE convention from {@link CsvParser#parseNumeric}'s
+     *  own Dr/Cr handling, which exists for a bank account's own balance (Dr = negative, Cr =
+     *  positive). A credit-card payment (CR) REDUCES what is owed; a purchase (DR) increases it --
+     *  so this negates parseNumeric's own sign rather than reusing it directly. When {@link
+     *  #rowMarkerCredit} finds exactly one marker cell, it decides the sign (HSBC evidence: the
+     *  amount and its CR/DR marker are two separate {@link PositionedText} runs, never one
+     *  combined token). When no marker cell is found at all (or more than one, ambiguously), defaults to
+     *  DR (a purchase) -- a second real HSBC document shows most genuine debit rows print no
+     *  marker; only credits (payments, refunds, EMI-conversion reversals) are marked. Safe only
+     *  because the caller ({@link #tryCorroboratedFallback}) already restricts candidates to the
+     *  document's own OPENING BALANCE .. NET OUTSTANDING BALANCE bracket, and because {@link
+     *  #corroboratedByPrintedBalanceReconciliation}'s exact-arithmetic check is a second,
+     *  independent guard that still refuses to corroborate if this default is ever wrong for a
+     *  given row. Null, never a guess, when no amount cell is found at all. */
+    private static BigDecimal signedTransactionAmount(List<PositionedText> row) {
+        PositionedText amountCell = soleAmountCell(row);
+        if (amountCell == null) return null;
+        BigDecimal amount = CsvParser.parseNumeric(amountCell.text().trim());
+        if (amount == null) return null;
+        Boolean credit = rowMarkerCredit(row);
+        boolean isCredit = credit != null && credit;
+        BigDecimal magnitude = amount.abs();
+        return isCredit ? magnitude.negate() : magnitude;
+    }
+
+    /** The ONE amount cell on {@code row} -- null when zero cells qualify, and equally null when
+     *  two or more do. Declining on an ambiguous row rather than taking the first match is the
+     *  point: an earlier version of this path picked the leftmost decimal-shaped cell, so a
+     *  decimal-shaped narration token (a reference code, a rate) or a second amount/running-balance
+     *  column sitting left of the true amount would have been staged as the amount, and because the
+     *  reconciliation arithmetic and the final staging both consulted the SAME leftmost-wins rule,
+     *  they stayed mutually consistent and {@link #corroboratedByPrintedBalanceReconciliation}'s
+     *  exact-match check could not detect it. Measured against both real HSBC documents: inside the
+     *  OPENING BALANCE .. NET OUTSTANDING BALANCE bracket every genuine candidate row carries
+     *  exactly one qualifying cell (7 and 21 bracketed rows respectively, none with two or more),
+     *  so declining costs nothing real -- while rows with two-to-four qualifying cells DO exist on
+     *  both documents, in the account-summary and payment-summary panels OUTSIDE that bracket.
+     *
+     *  <p>Qualification is exactly {@link #isTransactionShapedRow}'s own decimal-and-parseable
+     *  rule, deliberately with NO Dr/Cr exclusion and NO date exclusion layered on top, because
+     *  measurement showed both would be wrong: {@link CsvParser#parseNumeric} strips a trailing
+     *  Dr/Cr marker itself before parsing, so a GLUED single run of the "&lt;value&gt; CR" form is
+     *  simultaneously a valid amount and a {@link CsvParser#hasTrailingDrCrMarker} match --
+     *  excluding on the marker would discard the real amount and reintroduce the very defect this
+     *  method exists to prevent. A marker-only cell needs no exclusion either: it carries no "." and
+     *  parseNumeric rejects it. A dotted date is likewise already rejected by parseNumeric. The rule
+     *  is therefore: numeric-parse success wins; never reject a cell on a marker or date predicate
+     *  before asking whether parseNumeric accepted it. */
+    private static PositionedText soleAmountCell(List<PositionedText> row) {
+        PositionedText found = null;
+        for (PositionedText cell : row) {
+            String text = cell.text().trim();
+            if (text.contains(".") && CsvParser.parseNumeric(text) != null) {
+                if (found != null) return null;
+                found = cell;
+            }
+        }
+        return found;
+    }
+
     /** Entry point for the whole INFERRED_HEADERLESS_LAYOUT capability -- see its top-level doc
      *  comment above {@link #HEADERLESS_COLUMN_CLUSTER_TOLERANCE}. Returns null, never partially,
      *  when the document doesn't fit this shape well enough to trust; the caller's contract on null
      *  is "leave sections exactly as they were" -- today's zero-section outcome. */
     private LocatedSection inferHeaderlessSection(List<List<PositionedText>> rows, DocumentContext ctx) {
+        LocatedSection viaClustering = inferHeaderlessSectionViaClustering(rows, ctx);
+        if (viaClustering != null) return viaClustering;
+        // Last resort, tried only once the normal statistical-clustering path above has already
+        // failed for any reason -- see corroboratedByPrintedBalanceReconciliation's own doc
+        // comment for the real HSBC evidence this exists for. Deliberately NOT folded into the
+        // clustering path's own candidate pool: real HSBC evidence shows the SAME pre-header
+        // region that contains one genuine transaction also contains coincidental date+amount
+        // noise (the statement generation date, the billing period, the closing-balance line
+        // itself) that clears HEADERLESS_MIN_TRANSACTION_ROWS on raw count but shares no
+        // consistent column geometry with the real transaction -- clustering fails regardless of
+        // which floor gated it in. A candidate inside the OPENING BALANCE .. NET OUTSTANDING
+        // BALANCE bracket (see tryCorroboratedFallback) needs no statistical inference to
+        // identify its own Date/Amount/Description cells; its own shape states them directly.
+        return tryCorroboratedFallback(rows, ctx);
+    }
+
+    private LocatedSection inferHeaderlessSectionViaClustering(List<List<PositionedText>> rows, DocumentContext ctx) {
+        // Computed once, from every physical row (not just the transaction-shaped candidates
+        // below) -- see yearsByPage's own doc comment for why the full dates that supply year
+        // context live in the surrounding account-summary rows this candidate filter excludes.
+        Map<Integer, PageDateEvidence> yearsByPage = yearsByPage(rows);
         List<List<PositionedText>> candidates = new ArrayList<>();
         for (List<PositionedText> row : rows) {
-            if (isTransactionShapedRow(row)) candidates.add(row);
+            PageDateEvidence rowYears = row.isEmpty() ? PageDateEvidence.NONE
+                    : yearsByPage.getOrDefault(row.get(0).pageIndex(), PageDateEvidence.NONE);
+            if (isTransactionShapedRow(row, rowYears)) candidates.add(row);
         }
         candidates = dedupeAdjacentIdenticalRows(candidates);
         if (candidates.size() < HEADERLESS_MIN_TRANSACTION_ROWS) {
@@ -4577,7 +6757,7 @@ public class PdfTableLocator {
             return null;
         }
 
-        List<ColumnStats> columns = clusterIntoColumns(candidates);
+        List<ColumnStats> columns = clusterIntoColumns(candidates, yearsByPage);
         int totalRows = candidates.size();
 
         // Date / Value Date: the leftmost 1-2 columns whose non-blank cells are mostly
@@ -4684,7 +6864,7 @@ public class PdfTableLocator {
             headerEnds.add(columns.get(i).repRight());
         }
 
-        HeaderlessBucketResult bucketResult = bucketHeaderlessRowsWithContinuation(rows, headerNames, headerAnchors, headerEnds, ctx);
+        HeaderlessBucketResult bucketResult = bucketHeaderlessRowsWithContinuation(rows, headerNames, headerAnchors, headerEnds, ctx, yearsByPage);
         if (bucketResult.rows().isEmpty()) {
             if (ctx != null) ctx.recordDiagnostic("HEADERLESS_FINAL_BUCKETING_EMPTY");
             return null;

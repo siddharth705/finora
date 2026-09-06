@@ -208,7 +208,7 @@ class AuthServiceAppleLoginTest {
 
         verify(emailVerificationTokenRepository).save(any());
         verify(emailProvider).sendEmailVerificationEmail(eq("jane@example.com"), anyString());
-        verify(auditService).record(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId), any());
+        verify(auditService).recordEvenOnRollback(eq(userId), eq("EMAIL_SENT"), eq("User"), eq(userId), any());
         verify(refreshTokenService, never()).issue(any());
         verify(auditService, never()).record(any(), eq("USER_LOGIN_APPLE"), any(), any(), any());
     }

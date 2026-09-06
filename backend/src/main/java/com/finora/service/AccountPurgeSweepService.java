@@ -8,12 +8,14 @@ import com.finora.goals.GoalRepository;
 import com.finora.imports.analysis.StatementAnalysisSessionRepository;
 import com.finora.integrations.google.GmailConnectionRepository;
 import com.finora.integrations.google.GmailConnectionService;
+import com.finora.notification.repository.NotificationRepository;
 import com.finora.repository.AccountReactivationTokenRepository;
 import com.finora.repository.EmailVerificationTokenRepository;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.BudgetRepository;
 import com.finora.repository.CategoryRepository;
 import com.finora.repository.CategoryRuleRepository;
+import com.finora.repository.FeedbackEntryRepository;
 import com.finora.repository.ImportJobRepository;
 import com.finora.repository.ImportSessionRepository;
 import com.finora.repository.MerchantAliasRepository;
@@ -35,6 +37,7 @@ import com.finora.repository.RelationshipRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.StatementImportRepository.StatementMetadata;
 import com.finora.repository.SubscriptionRepository;
+import com.finora.repository.SupportTicketRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.repository.UserRepository;
 import com.finora.repository.UserSettingsRepository;
@@ -165,6 +168,9 @@ public class AccountPurgeSweepService {
     private final StatementImportRepository statementImportRepository;
     private final StatementImportService statementImportService;
     private final StatementAnalysisSessionRepository statementAnalysisSessionRepository;
+    private final NotificationRepository notificationRepository;
+    private final SupportTicketRepository supportTicketRepository;
+    private final FeedbackEntryRepository feedbackEntryRepository;
     private final AuditService auditService;
     private final PasswordEncoder passwordEncoder;
     private final TransactionTemplate transactionTemplate;
@@ -204,6 +210,9 @@ public class AccountPurgeSweepService {
                                      StatementImportRepository statementImportRepository,
                                      StatementImportService statementImportService,
                                      StatementAnalysisSessionRepository statementAnalysisSessionRepository,
+                                     NotificationRepository notificationRepository,
+                                     SupportTicketRepository supportTicketRepository,
+                                     FeedbackEntryRepository feedbackEntryRepository,
                                      AuditService auditService,
                                      PasswordEncoder passwordEncoder,
                                      TransactionTemplate transactionTemplate) {
@@ -242,6 +251,9 @@ public class AccountPurgeSweepService {
         this.statementImportRepository = statementImportRepository;
         this.statementImportService = statementImportService;
         this.statementAnalysisSessionRepository = statementAnalysisSessionRepository;
+        this.notificationRepository = notificationRepository;
+        this.supportTicketRepository = supportTicketRepository;
+        this.feedbackEntryRepository = feedbackEntryRepository;
         this.auditService = auditService;
         this.passwordEncoder = passwordEncoder;
         this.transactionTemplate = transactionTemplate;
@@ -385,6 +397,19 @@ public class AccountPurgeSweepService {
             emailVerificationTokenRepository.deleteByUserId(userId);
             refreshTokenRepository.deleteByUserId(userId);
             userSettingsRepository.deleteByUserId(userId);
+            // V125 is a new user-linked table this sweep didn't know about yet, same as D-28's
+            // subscriptions/payments/wallet_ledger before it -- V137 gives it its own ON DELETE
+            // CASCADE too, but that alone never fires: this method anonymizes users, it never
+            // issues a raw DELETE FROM users for the CASCADE to trigger off of.
+            notificationRepository.deleteByUserId(userId);
+
+            // Same trap, same fix: V145/V148 each carry their own ON DELETE CASCADE on user_id, and
+            // each one's migration comment says explicitly that it never fires here, for the reason
+            // stated above -- this method anonymizes users, it never issues DELETE FROM users.
+            // Deleting the ticket also cascades support_ticket_attachments and
+            // support_ticket_internal_notes off ticket_id, so neither child table needs its own call.
+            supportTicketRepository.deleteByUserId(userId);
+            feedbackEntryRepository.deleteByUserId(userId);
 
             // Evidence outlives the account (no FK, by design -- see this class's own doc on why),
             // but two of its columns aren't evidence, they're personal. See

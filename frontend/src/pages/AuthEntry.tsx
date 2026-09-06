@@ -97,15 +97,28 @@ export default function AuthEntry() {
     : { badge: 'Your finances, finally in one place', headline: <>Take control of your money with <span className="text-primary">Fynora</span></>, description: 'Import statements, track spending, set budgets and get AI-powered insights to build a better financial future.' };
 
   return (
-    <div className="min-h-screen bg-bg flex flex-col items-center justify-center p-4 lg:p-8 gap-6">
-      <div className="w-full max-w-6xl grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
+    <div className="relative overflow-hidden min-h-screen bg-bg flex flex-col items-center justify-center p-4 lg:p-8 gap-6">
+      {/* Auth redesign Phase 3: two soft, slow-drifting brand-toned circles behind the content --
+          purely decorative (aria-hidden, no pointer events), reusing the .float-slow/.float-slower
+          keyframes already defined for the marketing page rather than inventing new ones. Sits at
+          the page level (not inside the card) so it drifts behind both the marketing panel and the
+          form, same as the mobile equivalent (AuthAmbientBackground). */}
+      <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
+        <div className="absolute -top-24 -left-24 w-96 h-96 rounded-full bg-primary-light blur-3xl opacity-40 float-slow" />
+        <div className="absolute -bottom-24 -right-24 w-96 h-96 rounded-full bg-primary-light blur-3xl opacity-30 float-slower" />
+      </div>
+
+      <div className="relative w-full max-w-6xl grid lg:grid-cols-2 gap-10 lg:gap-16 items-center">
         <MarketingPanel {...marketingCopy} />
 
-        <div className="bg-card rounded-xl2 p-8 w-full shadow-soft border border-border">
+        <div
+          className="auth-reveal bg-card rounded-xl2 p-8 w-full shadow-soft border border-border"
+          style={{ animationDelay: '80ms' }}
+        >
           <div className="flex items-center gap-2 mb-6 lg:hidden">
             <Link to="/" className="flex items-center gap-2 w-fit">
               <BrandMark size={28} variant="auto" className="rounded-lg" />
-              <span className="font-extrabold tracking-wide text-ink">FYNORA</span>
+              <span className="font-display font-extrabold tracking-wide text-ink">FYNORA</span>
             </Link>
           </div>
 

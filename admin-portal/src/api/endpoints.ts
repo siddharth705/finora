@@ -1,8 +1,14 @@
 import { api, rawApi, type ApiEnvelope } from './client';
+import { downloadBlob } from '../lib/download';
 import type {
 
-  AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CoverageDto,
+  HeldImportRow, HeldImportDetail, HeldImportSummary,
+  HeldStatementRow, HeldStatementQuery, HeldStatementDetail, HeldStatementRerunResult,
+  HeldStatementTelemetrySummary,
+  SupportTicketRow, SupportTicketQuery, SupportTicketDetail, SupportTicketNote,
+  FeedbackRow, FeedbackQuery, FeedbackBreakdown,
   CreateAccountRequest, CreateBankRequest, CreateMerchantTemplateRequest, CreateRelationshipRequest,
   CreateRuleRequest, CreateUserRequest, FeatureFlagDto, GmailMerchantParserStatDto, LearningGrowthPoint, LearningPlatformStatsDto, LearningSummaryDto,
   LearningTimelineEntry,
@@ -21,6 +27,7 @@ import type {
   StatementAnalysisDetailDto,
   StatementAnalysisSummaryDto,
   LearningQueueEvent, LearningQueueSummary,
+  NotificationAdminRow, NotificationAdminDetail, NotificationAdminSummary,
   MerchantReviewItem,
   LayoutSummary,
   UnknownHeaderSummary,
@@ -37,6 +44,24 @@ import type {
 // account under one email and one mobile number, so login and password reset have to say which
 // one they mean. Not an authorization signal -- what an account may do is decided by its roles.
 const PORTAL_SCOPE = 'ADMIN';
+
+/**
+ * Re-reads a blob-typed error response as the JSON envelope it actually is, so the message
+ * survives. Ported from frontend/src/api/endpoints.ts's identical helper -- responseType: 'blob'
+ * applies to error responses too, so on a 4xx/5xx `error.response.data` is a Blob rather than the
+ * parsed envelope, and client.ts's own interceptor finds no `.message` on it to surface.
+ */
+async function withBlobErrorMessage(err: unknown): Promise<unknown> {
+  const response = (err as { response?: { data?: unknown } })?.response;
+  if (!(response?.data instanceof Blob)) return err;
+  try {
+    const parsed = JSON.parse(await response.data.text());
+    response.data = { message: parsed?.message, errorCode: parsed?.errorCode };
+  } catch {
+    response.data = { message: 'The download failed and the server did not explain why.' };
+  }
+  return err;
+}
 
 
 // Auth reuses the exact same /auth/* endpoints the user app calls -- there is only one backend,
@@ -286,14 +311,6 @@ export const adminSubscriptionsApi = {
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
 };
 
-// D-28 PR4-C. REFERRAL_MANAGEMENT_VIEW/_MANAGE-gated (V101), same split as adminSubscriptionsApi.
-export const adminReferralsApi = {
-  list: (page: number, size: number) =>
-    api.get<PagedResponse<AdminReferralSummaryDto>>('/admin/referrals', { params: { page, size } }).then((r) => r.data),
-  creditReward: (referralId: string, amount: number, reason: string) =>
-    api.post(`/admin/referrals/${referralId}/credit`, { amount, reason }),
-};
-
 export const adminSystemApi = {
   health: () => api.get<SystemHealthDto>('/admin/system/health').then((r) => r.data),
   // Admin Portal Phase 7 -- the closest honest equivalent to a background-job monitor this
@@ -330,6 +347,87 @@ export const adminLearningQueueApi = {
     api.post<{ retried: number }>('/admin/learning-queue/retry-all').then((r) => r.data),
   resolve: (eventId: string, reason?: string) =>
     api.post<LearningQueueEvent>(`/admin/learning-queue/${eventId}/resolve`, { reason }).then((r) => r.data),
+};
+
+/** The admin notification dashboard (Task 12). Read-only: a paged list of the `notifications`
+ *  outbox filtered by status, sent/failed counts by channel, and one detail lookup that includes
+ *  the provider attempt log -- no retry, resend, or any other mutating call, because the backend
+ *  exposes none. */
+export const adminNotificationApi = {
+  list: (params: { status?: string; page?: number; size?: number }) =>
+    api.get<PagedResponse<NotificationAdminRow>>('/admin/notifications', { params }).then((r) => r.data),
+  summary: () => api.get<NotificationAdminSummary>('/admin/notifications/summary').then((r) => r.data),
+  get: (id: string) =>
+    api.get<NotificationAdminDetail>(`/admin/notifications/${id}`).then((r) => r.data),
+};
+
+/** The held-imports triage queue. `get` is the audited call -- it returns the raw parser error,
+ *  and the backend writes a HELD_IMPORT_VIEWED entry for every one. Whether a job can be
+ *  reprocessed is the server's answer (409 with a reason), never re-derived here. */
+export const adminHeldImportApi = {
+  list: (params: { page?: number; size?: number }) =>
+    api.get<PagedResponse<HeldImportRow>>('/admin/held-imports', { params }).then((r) => r.data),
+  summary: () => api.get<HeldImportSummary>('/admin/held-imports/summary').then((r) => r.data),
+  get: (jobId: string) =>
+    api.get<HeldImportDetail>(`/admin/held-imports/${jobId}`).then((r) => r.data),
+  reprocess: (jobId: string) =>
+    api.post<HeldImportRow>(`/admin/held-imports/${jobId}/reprocess`).then((r) => r.data),
+  reprocessAll: () =>
+    api.post<{ reprocessed: number }>('/admin/held-imports/reprocess-all').then((r) => r.data),
+  resolve: (jobId: string, reason: string) =>
+    api.post<HeldImportRow>(`/admin/held-imports/${jobId}/resolve`, { reason }).then((r) => r.data),
+  // Same pattern as adminHeldStatementApi.download -- a plain <a href> can't carry the Bearer
+  // token, so this rides the authenticated axios instance and triggers the browser download
+  // client-side. Uses the statement's real fileName (available from the already-loaded detail),
+  // unlike the trust-review sibling's hardcoded ".pdf" -- CSV imports can be held too.
+  download: async (jobId: string, fileName: string) => {
+    try {
+      const res = await api.get(`/admin/held-imports/${jobId}/document`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, fileName);
+    } catch (err) {
+      throw await withBlobErrorMessage(err);
+    }
+  },
+};
+
+/** The trust-review queue -- statements the pipeline held back because the extraction's own
+ *  evidence contradicted it, not because parsing failed. Every filter is optional; the server
+ *  narrows within the open queue and never returns a resolved hold regardless of which filters
+ *  are passed. */
+export const adminHeldStatementApi = {
+  list: (params: HeldStatementQuery) =>
+    api.get<PagedResponse<HeldStatementRow>>('/admin/held-statements', { params }).then((r) => r.data),
+  get: (heldId: string) =>
+    api.get<HeldStatementDetail>(`/admin/held-statements/${heldId}`).then((r) => r.data),
+  approve: (heldId: string, note?: string, falsePositive?: boolean) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/approve`, { note, falsePositive })
+      .then((r) => r.data),
+  reject: (heldId: string, reason?: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/reject`, { reason }).then((r) => r.data),
+  assign: (heldId: string, engineerId?: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/assign`, { engineerId }).then((r) => r.data),
+  investigate: (heldId: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/investigate`).then((r) => r.data),
+  notes: (heldId: string, notes: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/notes`, { notes }).then((r) => r.data),
+  saveFindings: (heldId: string, rootCause?: string, fixReference?: string) =>
+    api.post<HeldStatementRow>(`/admin/held-statements/${heldId}/findings`, { rootCause, fixReference })
+      .then((r) => r.data),
+  rerunParser: (heldId: string) =>
+    api.post<HeldStatementRerunResult>(`/admin/held-statements/${heldId}/rerun-parser`).then((r) => r.data),
+  telemetry: () =>
+    api.get<HeldStatementTelemetrySummary>('/admin/held-statements/telemetry').then((r) => r.data),
+  // A plain <a href> can't carry the Bearer token, so this goes through the same authenticated
+  // axios instance as everything else and triggers the browser download client-side instead --
+  // same pattern as the user frontend's statementImportsApi.downloadFile.
+  download: async (heldId: string) => {
+    try {
+      const res = await api.get(`/admin/held-statements/${heldId}/document`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, `${heldId}.pdf`);
+    } catch (err) {
+      throw await withBlobErrorMessage(err);
+    }
+  },
 };
 
 /** The Merchant Review Center (WI4). Listing crosses users; every action is scoped to the owner,
@@ -615,4 +713,53 @@ export const adminLayoutsApi = {
    *  layout reuse is ever worth building — including when the answer is no. */
   evidence: () =>
     api.get<LayoutEvidenceReport>('/admin/imports/layouts/evidence').then((r) => r.data),
+};
+
+/**
+ * Support, Help & Feedback v1, Phase 9. Detail and attachment download go through the SAME
+ * non-admin-rooted routes (`/support/tickets/...`, not `/admin/support/tickets/...`) the ticket's
+ * own owner uses -- SupportTicketController.detail's own doc explains why there is one route with
+ * an internal admin check rather than a duplicate admin route. Every other action (list, status,
+ * notes, claim/unclaim) is genuinely admin-only and lives under `/admin/support/tickets`.
+ */
+export const adminSupportTicketApi = {
+  list: (params: SupportTicketQuery) =>
+    api.get<PagedResponse<SupportTicketRow>>('/admin/support/tickets', { params }).then((r) => r.data),
+  get: (id: string) =>
+    api.get<SupportTicketDetail>(`/support/tickets/${id}`).then((r) => r.data),
+  updateStatus: (id: string, status: SupportTicketRow['status']) =>
+    api.patch<SupportTicketRow>(`/admin/support/tickets/${id}`, { status }).then((r) => r.data),
+  notes: (id: string) =>
+    api.get<SupportTicketNote[]>(`/admin/support/tickets/${id}/notes`).then((r) => r.data),
+  addNote: (id: string, note: string) =>
+    api.post<SupportTicketNote>(`/admin/support/tickets/${id}/notes`, { note }).then((r) => r.data),
+  // Claiming an already-claimed ticket succeeds (a takeover), not a conflict -- see
+  // AdminSupportTicketController's own doc comment for why the confirm step this page shows
+  // before calling claim() is what keeps a takeover from being silent to the admin it displaces.
+  claim: (id: string) =>
+    api.post<SupportTicketRow>(`/admin/support/tickets/${id}/claim`).then((r) => r.data),
+  unclaim: (id: string) =>
+    api.delete<SupportTicketRow>(`/admin/support/tickets/${id}/claim`).then((r) => r.data),
+  // Same pattern as adminHeldStatementApi.download -- a plain <a href> can't carry the Bearer
+  // token, so this rides the authenticated axios instance and triggers the browser download
+  // client-side.
+  downloadAttachment: async (ticketId: string, attachmentId: string, filename: string) => {
+    try {
+      const res = await api.get(`/support/tickets/${ticketId}/attachments/${attachmentId}`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, filename);
+    } catch (err) {
+      throw await withBlobErrorMessage(err);
+    }
+  },
+};
+
+/** The feedback list and its counts panel (proposal §3.4 / Phase 9: "Counts... by Type, Context,
+ *  Source. No trend analysis. No AI clustering. No dashboards."). breakdown() takes no filter
+ *  params at all -- it is always a count across the whole table, independent of whatever
+ *  type/context filter the list view has active (see the backend's own doc comment). */
+export const adminFeedbackApi = {
+  list: (params: FeedbackQuery) =>
+    api.get<PagedResponse<FeedbackRow>>('/admin/feedback', { params }).then((r) => r.data),
+  breakdown: () =>
+    api.get<FeedbackBreakdown>('/admin/feedback/breakdown').then((r) => r.data),
 };

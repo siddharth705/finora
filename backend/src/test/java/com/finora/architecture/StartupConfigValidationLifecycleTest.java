@@ -3,8 +3,6 @@ package com.finora.architecture;
 import com.finora.architecture.registry.GuardianRule;
 import com.tngtech.archunit.core.domain.JavaClass;
 import com.tngtech.archunit.core.domain.JavaClasses;
-import com.tngtech.archunit.core.importer.ClassFileImporter;
-import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.SmartInitializingSingleton;
 import org.springframework.boot.ApplicationRunner;
@@ -66,9 +64,7 @@ class StartupConfigValidationLifecycleTest {
             verification = GuardianRule.Verification.MANUAL_FALSIFICATION)
     @Test
     void aStartupConfigValidatorMustRunBeforeTheWebServerBinds() {
-        JavaClasses classes = new ClassFileImporter()
-                .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
-                .importPackages("com.finora");
+        JavaClasses classes = ProductionClasses.INSTANCE;
 
         List<String> offenders = new ArrayList<>();
         List<String> validators = new ArrayList<>();

@@ -204,15 +204,26 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
         expected.put("axis-credit-card-statement", new int[]{1, 110});
         expected.put("bob-repeated-account-banner", new int[]{1, 58});
         expected.put("bob-savings-ledger-validation", new int[]{1, 58});
-        expected.put("canara-savings-ledger-validation", new int[]{1, 60});
+        // 61, not 60: SAME_DAY_CONTINUATION_TRANSACTION now recognizes this trace's dateless
+        // "Closing Balance" marker (it restates the last transaction's own balance, same shape as
+        // the "Opening Balance" row already at row 0) as its own row instead of being silently
+        // absorbed into the last real transaction's description text.
+        expected.put("canara-savings-ledger-validation", new int[]{1, 61});
         expected.put("central-bank-savings-ledger-validation", new int[]{1, 223}); // was {1, 224}
         expected.put("hdfc-composite-deposit-schedules", new int[]{4, 102});
         // {2, 6} before looksLikePaymentSummaryPanel: same panel shape, 2 rows dropped.
         expected.put("hdfc-credit-card-ledger-validation", new int[]{1, 4});
-        expected.put("hdfc-savings-ledger-validation", new int[]{1, 331});
+        // 331 -> 266: WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP merges this export's third and
+        // later wrapped narration lines back into their own transactions instead of leaving
+        // them as standalone dateless rows. Section count is unchanged, and so is the
+        // normalized transaction count -- see SplitHeaderRunsPdfTableLocatorTest
+        // .theRowsThemselvesAreUnchangedInNumber for the full justification.
+        expected.put("hdfc-savings-ledger-validation", new int[]{1, 266});
         // 569 -> 568: STATEMENT_SUMMARY_BLOCK_CLOSED removes a phantom trailing-summary row this
         // trace's own trace used to form -- see SplitHeaderRunsPdfTableLocatorTest's own comment.
-        expected.put("hdfc-savings-multi-page-ledger", new int[]{1, 568});
+        // 568 -> 397: WRAPPED_DESCRIPTION_BEYOND_COUNT_CAP, same mechanism and same
+        // justification as hdfc-savings-ledger-validation above.
+        expected.put("hdfc-savings-multi-page-ledger", new int[]{1, 397});
         // 9 -> 8: STATEMENT_SUMMARY_BLOCK_CLOSED removes a phantom trailing-summary row, same shape
         // as hdfc-savings-multi-page-ledger above.
         expected.put("hdfc-savings-single-page-ledger", new int[]{1, 8});
@@ -321,13 +332,34 @@ class WrappedHeaderOnAScoringLinePdfTableLocatorTest {
 
     @Test
     void gate1_oneStrayTokenBelowAHeaderIsNotASecondBand() {
-        // Identical to the baseline except the lower band has ONE cell. It is 2.44pt from its
-        // anchor, adds no column, and would still improve the whole-cell count ("Value Date") --
-        // so only the cell-count floor can refuse it. A footnote, a unit annotation and a narration
-        // fragment all look exactly like this, and the corpus has several.
+        // Identical to the baseline except the lower band has ONE cell -- and that cell's own
+        // text is NOT itself recognized column-name vocabulary (see the test immediately below
+        // for the one narrow exception this floor now has). It is 2.44pt from its anchor and
+        // would still improve the whole-cell count if joined ("Value Note" -- still not a
+        // recognized name, but the merge doesn't even get that far) -- so only the cell-count
+        // floor can refuse it. A footnote, a unit annotation and a narration fragment all look
+        // exactly like this, and the corpus has several.
+        assertThat(headerOf(layout(List.of(
+                new PositionedText("Note", 93.44f, 111.64f, 0, 21f)))))
+                .containsExactly("Date", "Value", "Branch", "Cheque", "Description",
+                        "Debit", "Credit", "Balance");
+    }
+
+    /**
+     * The one narrow exception to Gate 1's floor: a lone lower cell whose ENTIRE text exactly
+     * equals a recognized column-name word is admitted anyway -- see {@code
+     * refinesRatherThanRedefines}'s own Gate 1 doc comment for the real Standard Chartered
+     * savings statement this exists for (a bare "Date" wrapping under "Value", nowhere else on
+     * the statement naming that column, which most rows' own date depends on for the row-anchor
+     * gate to recognize them at all). Still gated by 2 (within STRICT_COLUMN_JOIN) and 4 (a net
+     * improvement in whole-cell hint matches) exactly like every other admission this class makes
+     * -- this is narrower than "any one recognized word", not a general loosening of the floor.
+     */
+    @Test
+    void gate1Exception_aSingleCellThatIsItselfRecognizedVocabularyIsAdmitted() {
         assertThat(headerOf(layout(List.of(
                 new PositionedText("Date", 93.44f, 111.64f, 0, 21f)))))
-                .containsExactly("Date", "Value", "Branch", "Cheque", "Description",
+                .containsExactly("Date", "Value Date", "Branch", "Cheque", "Description",
                         "Debit", "Credit", "Balance");
     }
 

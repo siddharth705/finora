@@ -473,9 +473,15 @@ class V118CategoryDedupMigrationIT {
     }
 
     /**
-     * The 25 names {@code AuthService.DEFAULT_CATEGORIES} seeds at registration, with the
-     * icon/color V118's backfill is expected to write onto each of them. Kept in the same order as
-     * that map so a drift between the two is obvious when reading them side by side.
+     * The 25 names {@code AuthService.DEFAULT_CATEGORIES} seeded at registration <b>as of
+     * V118</b>, with the icon/color V118's backfill is expected to write onto each of them. Kept
+     * in the same order as that map so a drift between the two is obvious when reading them side
+     * by side.
+     *
+     * <p>That map has since grown a 26th entry (added by V123, renamed "Personal Transfer" by V124). It is deliberately absent
+     * here and must stay absent: this fixture describes the schema V118 itself backfills, and this
+     * test migrates only as far as V118, so a category introduced five migrations later does not
+     * exist yet at the point these assertions run.
      */
     private static final String[][] DEFAULT_CATEGORIES = {
             {"Salary", "arrow-down-circle", "green"},

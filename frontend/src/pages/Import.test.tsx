@@ -3,11 +3,49 @@ import { render, screen, waitFor, fireEvent, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+// Phase 4b's wizard-step AnimatePresence, mocked out the same way Button.tsx/IconButton.tsx's own
+// tests treat framer-motion: an implementation detail, not something worth exercising for real.
+// Without this, AnimatePresence's real mode="wait" exit-then-enter sequencing depends on jsdom's
+// requestAnimationFrame timing, which a synchronous getByRole() right after a step-changing click
+// (e.g. pickAndUploadPdf -> "Confirm Import") outruns -- the outgoing step's content is still
+// mid-exit and the incoming step hasn't mounted yet. AnimatePresence here is a plain passthrough
+// (every child renders immediately, none held back for an exit animation) and motion.div is a
+// plain div, so step swaps in tests are synchronous like everything else on this page.
+vi.mock('framer-motion', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('framer-motion')>();
+  const React = await import('react');
+  // Defined once at mock-module-eval time, not inside the Proxy's `get` trap -- a `get` trap that
+  // built a fresh forwardRef(...) component on every property access gave `motion.div` a new
+  // component identity on every single render (JSX evaluates `motion.div` as a property read each
+  // render), so React tore down and remounted the whole step subtree every render, wiping the file
+  // input's pending change before Import.tsx's onChange handler ever saw it.
+  const MockedMotionDiv = React.forwardRef((props: any, ref: any) => {
+    const { initial, animate, exit, transition, ...domProps } = props;
+    return React.createElement('div', { ref, ...domProps });
+  });
+  return {
+    ...actual,
+    AnimatePresence: ({ children }: { children?: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+    // `actual.motion` is itself a Proxy that manufactures `motion.button`/`.svg`/etc. (and
+    // `.create`) lazily on access -- spreading it into a plain object silently drops every one of
+    // those except whichever happened to already be accessed, which broke Button.tsx/IconButton.tsx
+    // (imported transitively by design-system/index.ts) the moment this mock is active. Wrapping
+    // it in a Proxy instead intercepts only `div` and forwards everything else to the real thing.
+    motion: new Proxy(actual.motion, {
+      get(target, prop, receiver) {
+        if (prop === 'div') return MockedMotionDiv;
+        return Reflect.get(target, prop, receiver);
+      },
+    }),
+  };
+});
+
 import Import from './Import';
 import { AuthProvider } from '../context/AuthContext';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { Account, StagedAccountSection } from '../types';
-import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
+import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, NO_ACTIVITY_IN_PERIOD, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
 import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import type { DetectedAccountInfo } from '../types';
 
@@ -233,6 +271,48 @@ describe('Import — file-type routing', () => {
     expect(screen.queryByTestId('pdf-password-panel')).not.toBeInTheDocument();
   });
 
+  it('flashes a Completed checkmark before advancing to the review step', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    // The step doesn't jump straight from "uploading" to "review" -- there's a real, brief
+    // Completed state in between (UPLOAD_COMPLETE_DWELL_MS in Import.tsx), not just a fast-enough
+    // transition that happens to never get caught mid-flight.
+    expect(await screen.findByTestId('upload-completed')).toBeInTheDocument();
+    // Still the same dropzone container -- only its inner content morphed -- so the drag-and-drop
+    // prompt it showed a moment ago is what's gone, not the container itself.
+    expect(screen.queryByText(/click to upload/i)).not.toBeInTheDocument();
+
+    // ...and then it actually does move on to the review step, on its own, with no further
+    // interaction.
+    expect(await screen.findByRole('button', { name: /confirm import/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('upload-completed')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix: pendingPdf used to clear the instant stagePdf resolved, which made showUploadPicker
+   * (`!pendingPdf`) true for the whole Completed dwell -- swapping the password panel out for the
+   * dropzone, a different element further down the page, with "Continue previous import"/the retry
+   * banner able to render ABOVE it. The checkmark appeared in a box the user wasn't looking at,
+   * with unrelated content flashing in alongside it. The fix keeps pendingPdf (and this panel)
+   * mounted through the dwell so the PDF path's checkmark appears where its own progress bar just
+   * was, exactly like the dropzone already does for a CSV.
+   */
+  it('shows the Completed checkmark inside the PDF password panel, not the dropzone', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByTestId('upload-completed')).toBeInTheDocument();
+    expect(screen.getByTestId('pdf-password-panel')).toBeInTheDocument();
+    expect(screen.queryByTestId('statement-dropzone')).not.toBeInTheDocument();
+
+    expect(await screen.findByRole('button', { name: /confirm import/i })).toBeInTheDocument();
+  });
+
   it('rejects an unsupported file type dropped onto the dropzone, without calling either staging endpoint', async () => {
     renderImport();
 
@@ -294,6 +374,94 @@ describe('Import — file-type routing', () => {
     // catch block that never computes an ErrorCode-derived actionRequired value at all.
     expect(banner.closest('p')?.className).toContain('text-danger');
     expect(banner.closest('p')?.className).not.toContain('text-warning');
+  });
+});
+
+describe('Import — discarding the current review to force a fresh parse', () => {
+  beforeEach(() => {
+    vi.mocked(importApi.stageCsv).mockReset().mockResolvedValue(stagingResultWith({ sessionId: 'sess-9' }));
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('discards the staged session and returns to the upload step, after confirmation', async () => {
+    vi.mocked(importApi.discardSession).mockReset().mockResolvedValue(undefined as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText(/which account is this statement for/i);
+
+    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    expect(await screen.findByText('Discard this import and start over?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+
+    expect(importApi.discardSession).toHaveBeenCalledWith('sess-9');
+    expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
+  });
+
+  it('does not discard without confirmation, and stays on the review screen', async () => {
+    vi.mocked(importApi.discardSession).mockReset();
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText(/which account is this statement for/i);
+
+    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    await screen.findByText('Discard this import and start over?');
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(importApi.discardSession).not.toHaveBeenCalled();
+    expect(screen.getByText(/which account is this statement for/i)).toBeInTheDocument();
+  });
+
+  it('stays on the review screen and shows an error if discarding fails', async () => {
+    vi.mocked(importApi.discardSession).mockReset().mockRejectedValue(new Error('network'));
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText(/which account is this statement for/i);
+
+    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    await screen.findByText('Discard this import and start over?');
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+
+    expect(await screen.findByText(/could not discard/i)).toBeInTheDocument();
+    expect(screen.getByText(/which account is this statement for/i)).toBeInTheDocument();
+  });
+
+  /**
+   * Gap found in a pre-commit review: the discard control was only added to the single-account
+   * review screen. A composite statement (e.g. a bank combining a savings account and a
+   * recurring-deposit schedule in one PDF -- exactly the shape that motivated part of this
+   * investigation) lands on the multi-account review screen instead, which had no discard control
+   * at all even though `sessionId` is populated there too and the backend fix protects it equally.
+   */
+  it('also discards a multi-account session and returns to the upload step', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'sess-multi-9',
+      multiAccount: true,
+      staging: null,
+      sections: [
+        { detectedAccount, rows: [], totalParsed: 0, flaggedDuplicates: 0, unparseableRows: [] },
+        { detectedAccount, rows: [], totalParsed: 0, flaggedDuplicates: 0, unparseableRows: [] },
+      ],
+    } as never);
+    vi.mocked(importApi.discardSession).mockReset().mockResolvedValue(undefined as never);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+
+    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    expect(await screen.findByText('Discard this import and start over?')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+
+    expect(importApi.discardSession).toHaveBeenCalledWith('sess-multi-9');
+    expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
   });
 });
 
@@ -414,6 +582,7 @@ describe('Import — failure UX contract', () => {
   it.each([
     ['no transaction table found', NO_HEADER_DETECTED],
     ['a table was found but nothing staged', NO_TRANSACTIONS_FOUND],
+    ['the statement itself states zero activity', NO_ACTIVITY_IN_PERIOD],
     ['a scanned/image-only PDF', SCANNED_OCR_REQUIRED],
     ['a corrupt/truncated PDF', CORRUPT_PDF],
   ])('shows the contract message, not the server message, for %s', async (_label, code) => {
@@ -444,6 +613,25 @@ describe('Import — failure UX contract', () => {
     )).closest('p');
     expect(actionRequiredBanner?.className).toContain('text-warning');
     expect(actionRequiredBanner?.className).not.toContain('text-danger');
+  });
+
+  /**
+   * The whole point of NO_ACTIVITY_IN_PERIOD: the backend sends userActionRequired=true for it
+   * specifically so this reads as calm/informational, not a red failure -- see ErrorCode.java's
+   * own comment on that choice. A regression here would silently undo the one observable effect
+   * this code change was built to have.
+   */
+  it('colors the banner warning, not danger, for NO_ACTIVITY_IN_PERIOD', async () => {
+    vi.mocked(importApi.stagePdf).mockReset().mockRejectedValue(rejectWithCode(NO_ACTIVITY_IN_PERIOD, true));
+    const user = userEvent.setup();
+    renderImport();
+    await pickAndUploadPdf(user);
+
+    const banner = (await screen.findByText(
+      IMPORT_FAILURE_MESSAGES[NO_ACTIVITY_IN_PERIOD]
+    )).closest('p');
+    expect(banner?.className).toContain('text-warning');
+    expect(banner?.className).not.toContain('text-danger');
   });
 
   it('colors the banner danger, not warning, for CORRUPT_PDF', async () => {
@@ -694,7 +882,7 @@ describe('Import — duplicate review gates the import', () => {
     existingImportedAt: '2026-07-11T09:00:00Z',
     matchCount: 1,
     confidence: 'EXACT' as const,
-    reason: 'Same date, amount and description as a transaction already in your ledger.',
+    reason: 'Same date and amount, and a matching description, as a transaction already in your ledger.',
   };
 
   function stagedRow(description: string, duplicate: boolean) {
@@ -777,6 +965,79 @@ describe('Import — duplicate review gates the import', () => {
 
     await waitFor(() => expect(confirmButton()).toBeEnabled());
     expect(screen.queryByTestId('duplicate-review')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Phase 4a: `confirming` moved from the button's `disabled` prop into its `loading` prop (a
+   * separate change from the validation-gate conditions, which stayed in `disabled`). Regression
+   * test for that split -- without it, the button could stay clickable while confirmImport() is
+   * still in flight.
+   */
+  it('disables Confirm Import and shows a spinner while the confirm request is in flight', async () => {
+    stageRows([stagedRow('BLINKIT GROCERIES 9982', false)]);
+    let resolveConfirm: (r: Awaited<ReturnType<typeof importApi.confirm>>) => void;
+    vi.mocked(importApi.confirm).mockReset().mockReturnValue(
+      new Promise((resolve) => { resolveConfirm = resolve; })
+    );
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+
+    await user.click(confirmButton());
+    expect(confirmButton()).toBeDisabled();
+
+    resolveConfirm!({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [], account: null,
+      totalCredits: 0, totalDebits: 486, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
+    } as never);
+    expect(await screen.findByText(/import complete/i)).toBeInTheDocument();
+  });
+
+  /**
+   * Phase 4b regression test. Collapsing the summary step's two early `return`s into one
+   * AnimatePresence tree removed the structural guarantee that the discard-confirmation dialog
+   * could never render alongside the summary screen -- every step now shares one render tree, and
+   * that dialog sits outside it as persistent chrome. Without `disabled={confirming}` on the link,
+   * a user who has second thoughts and clicks "Discard and start over" while their confirm is
+   * already in flight ends up with the discard dialog stacked on top of the success screen that
+   * confirm just produced -- and answering it fires discardSession() against a session the backend
+   * has already finalized. Caught by adversarial review, not by the suite as it stood.
+   */
+  it('blocks "Discard and start over" while the confirm request is in flight', async () => {
+    stageRows([stagedRow('BLINKIT GROCERIES 9982', false)]);
+    let resolveConfirm: (r: Awaited<ReturnType<typeof importApi.confirm>>) => void;
+    vi.mocked(importApi.confirm).mockReset().mockReturnValue(
+      new Promise((resolve) => { resolveConfirm = resolve; })
+    );
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+
+    const discardLink = screen.getByRole('button', { name: /discard and start over/i });
+    expect(discardLink).toBeEnabled();
+
+    await user.click(confirmButton());
+    expect(discardLink).toBeDisabled();
+    // The click a real user would make anyway -- it must not open the dialog.
+    await user.click(discardLink);
+    expect(screen.queryByText('Discard this import and start over?')).not.toBeInTheDocument();
+
+    resolveConfirm!({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [], account: null,
+      totalCredits: 0, totalDebits: 486, statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null, importDurationMs: 12, source: 'PDF',
+    } as never);
+
+    // The summary screen arrives clean -- no discard dialog stacked on top of it.
+    expect(await screen.findByText(/import complete/i)).toBeInTheDocument();
+    expect(screen.queryByText('Discard this import and start over?')).not.toBeInTheDocument();
   });
 
   /**
@@ -900,7 +1161,7 @@ describe('Import — multi-account statements get the same duplicate review', ()
     existingImportedAt: '2026-07-11T09:00:00Z',
     matchCount: 1,
     confidence: 'EXACT' as const,
-    reason: 'Same date, amount and description as a transaction already in your ledger.',
+    reason: 'Same date and amount, and a matching description, as a transaction already in your ledger.',
   };
 
   function stagedRow(description: string, duplicate: boolean) {
@@ -1020,6 +1281,42 @@ describe('Import — multi-account statements get the same duplicate review', ()
 
     await waitFor(() => expect(confirmAll()).toBeEnabled());
     expect(screen.queryByTestId('duplicate-review')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Phase 4b regression test, multi-account half. Its single-account twin lives in the "duplicate
+   * review gates the import" suite; this one exists because mutation-testing the guard showed it
+   * was held in place by nothing -- deleting `disabled={confirming}` from the multi-account link
+   * left all 89 tests green, while the same deletion on the single-account link correctly failed.
+   * Same failure both guards prevent: the discard dialog opening over the summary screen mid-
+   * confirm, where answering it would discard a session the backend has already finalized.
+   */
+  it('blocks "Discard and start over" while the multi-account confirm is in flight', async () => {
+    stageSections(savingsAndCard());
+    let resolveConfirm: (r: Awaited<ReturnType<typeof importApi.confirmMulti>>) => void;
+    vi.mocked(importApi.confirmMulti).mockReset().mockReturnValue(
+      new Promise((resolve) => { resolveConfirm = resolve; })
+    );
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText(/this statement covers 2 accounts/i);
+
+    // Both sections' flagged rows have to be answered before the confirm gate opens at all.
+    await user.click(within(card(0)).getByRole('button', { name: 'Import anyway' }));
+    await user.click(within(card(1)).getByRole('button', { name: 'Skip this row' }));
+
+    const discardLink = screen.getByRole('button', { name: /discard and start over/i });
+    expect(discardLink).toBeEnabled();
+
+    await user.click(confirmAll());
+    expect(discardLink).toBeDisabled();
+    await user.click(discardLink);
+    expect(screen.queryByText('Discard this import and start over?')).not.toBeInTheDocument();
+
+    resolveConfirm!({ perAccount: [] } as never);
+    await waitFor(() => expect(importApi.confirmMulti).toHaveBeenCalledTimes(1));
   });
 
   /**
@@ -1577,6 +1874,27 @@ describe('Import — queued imports', () => {
   });
 
   /**
+   * The bug found during live testing (2026-09-05): a held job settles in the same polling tick
+   * that would show it, so ImportProgress used to unmount itself before the "additional checks"
+   * message could ever paint -- the screen just reverted to the blank dropzone with no
+   * explanation. Only FAILED was ever exempted from the reset; the two HELD_* statuses were not.
+   */
+  it('keeps the progress panel on screen (not the blank dropzone) when a job is held for review', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'HELD_FOR_REVIEW' }));
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    expect(await screen.findByText('Running additional checks')).toBeInTheDocument();
+    expect(await screen.findByText(/We'll notify you once it's ready/)).toBeInTheDocument();
+    // Actually still there, not just rendered once before an immediate unmount.
+    expect(screen.getByTestId('import-progress')).toBeInTheDocument();
+    expect(screen.queryByTestId('statement-file-input')).not.toBeInTheDocument();
+  });
+
+  /**
    * The other half of the same review finding: `ImportStageRecorder` deliberately tolerates its
    * own write failing without breaking the import ("a measurement gap, not an outage"), so a
    * FAILED job can genuinely reach the client with an empty stage list. Before the fix,
@@ -1656,6 +1974,79 @@ describe('Import — continuing an unfinished import', () => {
     // server-side from the original upload.
     expect(importApi.stageCsv).not.toHaveBeenCalled();
     expect(importApi.stagePdf).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Phase 4a (animation-polish roadmap): resumeSession() awaits importApi.getSession() before
+   * setStep('review') ever fires, but the "Continue Import" button had no in-flight feedback at
+   * all -- no spinner, no disabled state, nothing -- so clicking it looked like a dead button for
+   * however long that fetch took. Regression test for the fix: a resumingSessionId state now
+   * drives the button's `loading` prop.
+   */
+  it('disables Continue Import and shows a spinner while its own session fetch is in flight', async () => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([unfinishedSession()]);
+    let resolveGetSession: (r: ReturnType<typeof stagingResultWith>) => void;
+    vi.mocked(importApi.getSession).mockReset().mockReturnValue(
+      new Promise((resolve) => { resolveGetSession = resolve; })
+    );
+    const user = userEvent.setup();
+    renderImport();
+
+    await screen.findByText('hdfc-july.pdf');
+    const continueButton = screen.getByRole('button', { name: /continue import/i });
+    expect(continueButton).not.toBeDisabled();
+
+    await user.click(continueButton);
+    expect(continueButton).toBeDisabled();
+
+    resolveGetSession!(stagingResultWith({ sessionId: 'sess-1' }));
+    await screen.findByText(/which account is this statement for/i);
+  });
+
+  /**
+   * Regression test for a bug an adversarial review caught in the fix above: the first version
+   * tracked "which session is resuming" as a single id, not a set. Every row's Continue Import
+   * button is independently clickable with nothing gating a second click while the first row's
+   * fetch is still in flight -- so clicking a second unfinished session's button silently cleared
+   * the first row's spinner (the shared value got overwritten), and whichever fetch's `finally`
+   * ran last wiped out the other's loading state even while its own request was still pending.
+   */
+  it('tracks two concurrent resumes independently, so neither row\'s spinner clears the other\'s', async () => {
+    vi.mocked(importApi.listSessions).mockReset().mockResolvedValue([
+      unfinishedSession({ id: 'sess-a', fileName: 'a.csv' }),
+      unfinishedSession({ id: 'sess-b', fileName: 'b.csv' }),
+    ]);
+    let rejectA: (e: unknown) => void;
+    let resolveB: (r: ReturnType<typeof stagingResultWith>) => void;
+    vi.mocked(importApi.getSession).mockReset().mockImplementation((id: unknown) => {
+      if (id === 'sess-a') return new Promise((_resolve, reject) => { rejectA = reject; });
+      return new Promise((resolve) => { resolveB = resolve; });
+    });
+    const user = userEvent.setup();
+    renderImport();
+
+    await screen.findByText('a.csv');
+    const [continueA, continueB] = screen.getAllByRole('button', { name: /continue import/i });
+
+    await user.click(continueA);
+    expect(continueA).toBeDisabled();
+    expect(continueB).not.toBeDisabled();
+
+    await user.click(continueB);
+    // The bug: this click used to clear session A's loading state too.
+    expect(continueA).toBeDisabled();
+    expect(continueB).toBeDisabled();
+
+    // A fails (kept as a rejection, not a resolve, so both rows stay mounted and B's state stays
+    // observable -- a successful resume navigates the whole page to the review step).
+    rejectA!(new Error('expired'));
+    await screen.findByText(/no longer available/i);
+    // The bug: A's finally used to unconditionally clear the shared id, wiping out B's spinner too
+    // even though B's own fetch was still pending.
+    expect(continueB).toBeDisabled();
+
+    resolveB!(stagingResultWith({ sessionId: 'sess-b' }));
+    await screen.findByText(/which account is this statement for/i);
   });
 
   it('shows a clear message and refreshes the list when a session expired before it was resumed', async () => {
@@ -2086,7 +2477,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     expect(await screen.findByText('Statement Check')).toBeInTheDocument();
     expect(screen.getByText(/Sunil Verma/)).toBeInTheDocument();
@@ -2100,7 +2494,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
     await screen.findByText('Statement Check');
     await user.click(screen.getByRole('button', { name: 'Continue Import' }));
 
@@ -2116,7 +2513,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
     await screen.findByText('Statement Check');
     await user.click(screen.getByRole('button', { name: 'Upload Different Statement' }));
 
@@ -2130,7 +2530,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
@@ -2145,7 +2548,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
@@ -2162,7 +2568,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();

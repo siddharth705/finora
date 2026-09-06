@@ -114,10 +114,17 @@ public class DuplicateDetector {
                 first.getTxnType() == null ? null : first.getTxnType().name(),
                 first.getCreatedAt(),
                 matches.size(),
-                // One level, honestly named. The query requires date, amount AND description to be
-                // identical, so there is no weaker tier to report -- see DuplicateMatch's own doc.
+                // One level, honestly named. Date and amount must be identical and the description
+                // must match once case and surrounding spaces are folded away (A2, 2026-09-01), so
+                // there is still no weaker tier to report -- see DuplicateMatch's own doc.
                 "EXACT",
-                "Same date, amount and description as a transaction already in your ledger."));
+                // Says "matching" rather than "same" deliberately: this sentence is rendered on the
+                // review screen directly beside the existing transaction's description, which since
+                // A2 can differ from the staged row's in case or surrounding spaces. Claiming they
+                // are "the same" while showing the user two visibly different strings reads as a
+                // bug in the detector rather than the match it actually is.
+                "Same date and amount, and a matching description, as a transaction already in "
+                        + "your ledger."));
     }
 
     /** Counts, among a just-imported batch, how many rows reconciliation flagged as duplicates

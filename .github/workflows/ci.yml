@@ -101,8 +101,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # SHA-pinned, not tag-pinned like every actions/* step in this file: a tag can be force-moved
+      # by a compromised maintainer account, a commit SHA cannot. This is the one third-party
+      # (non-actions/*, non-github/*) action anywhere in this repo's workflows -- worth the extra
+      # scrutiny precisely because it's the exception, not the rule.
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v3
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # PR comments need `pull-requests: write`, which this workflow deliberately doesn't
@@ -140,7 +144,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -162,8 +166,12 @@ jobs:
     # smaller cost -- `concurrency` deliberately does not cancel runs on main, so every later push
     # queues behind the hung one and main stops reporting at all.
     #
-    # 20 is roughly 8x the current 2m37s, so it is a hang detector, not a performance budget: it
-    # should never fire because the suite got slower.
+    # 20 is a hang detector, not a performance budget: it should never fire because the suite got
+    # slower, only because something (most likely Testcontainers) is actually stuck. Left
+    # generous rather than re-tuned to whichever of the two paths below is currently faster --
+    # the PR path (unit-only) and the merge path (full suite, incl. Testcontainers) have
+    # different realistic runtimes, and a tight timeout sized to the fast one would false-positive
+    # on the slow one on every single push to main.
     timeout-minutes: 20
     steps:
       # fetch-depth: 0 because the PII check diffs a commit RANGE here rather than the index (see
@@ -304,6 +312,15 @@ jobs:
       - name: Ground-truth matcher (self-test)
         run: python3 scripts/test-ground-truth-match.py
 
+      # The in-repo refusal on corpus-run.py and run-corpus-ground-truth.py is the guard that
+      # stops a real corpus from ever being processed in place, and --allow-in-repo-synthetic-corpus
+      # is the one explicit way past it -- a regression here is exactly the shape of mistake that
+      # already happened once (see the 2026-08-08 incident referenced in
+      # docs/architecture/system-design/ground-truth-model-design.md), so it gets the same
+      # self-test discipline as the two steps above rather than being trusted to stay correct.
+      - name: In-repo corpus refusal (self-test)
+        run: python3 scripts/test-corpus-run.py
+
       - uses: actions/setup-java@v5
         with:
           java-version: '25'
@@ -318,14 +335,55 @@ jobs:
       # This claim used to be false. The 29 *IT classes never ran: surefire's default includes
       # don't match *IT.java (that's maven-failsafe's convention) and failsafe was never
       # configured, so the "Testcontainers tests" this comment promised had never executed once.
-      # backend/pom.xml now widens surefire's includes, and the suite really does run them --
-      # 1055 tests instead of 941, verified locally against a real daemon.
+      # backend/pom.xml widened surefire's includes to fix that, and for a while every push and PR
+      # ran unit and integration tests together in one `./mvnw test` -- see that fix's own comment
+      # for why doing it that way, rather than splitting into failsafe, was the deliberate choice
+      # at the time.
       #
-      # That claim is no longer trust-me: the Test summary step below publishes the unit/IT split
-      # to the run page and fails if the IT count is ever zero again.
-      - name: Run tests
+      # 2026-09-02: split back into two paths, once the backend job's own runtime made "every PR
+      # waits on the full Testcontainers suite" worth trading away. A PR runs `./mvnw test`
+      # (surefire, unit-only now -- backend/pom.xml's *IT include moved to failsafe); a push to
+      # main runs `./mvnw verify` (surefire + failsafe, the full suite, matching what merged code
+      # actually needs proven before it's live). Either way, the Test summary step below still
+      # fails if the *IT count is ever zero on a run that was supposed to include them -- see its
+      # own --unit-only handling, and backend/pom.xml's surefire-plugin comment for the full
+      # incident history this split is designed not to reopen.
+      - name: Run tests (PR - unit only, fast)
+        if: github.event_name == 'pull_request'
         working-directory: backend
         run: ./mvnw -B --no-transfer-progress test
+
+      - name: Run tests (merge to main - full suite, incl. integration tests)
+        if: github.event_name != 'pull_request'
+        working-directory: backend
+        run: ./mvnw -B --no-transfer-progress verify
+
+      # The one thing in the whole corpus-regression suite that is genuinely CI-gated end to end
+      # (probe -> match -> merge-blocking). The real 27-document corpus can never run here -- see
+      # the self-test steps above -- so this fixture is what actually protects the
+      # description-corruption defect class in CI; everything else stays a manual, local,
+      # pre-merge step documented in docs/architecture/system-design/corpus-regression-suite.md.
+      #
+      # Its PDF is never committed -- a raw PDF's bytes cannot be PII-scanned, so this repo's
+      # pre-commit policy refuses one outright. SyntheticFixtureGenerator regenerates it fresh here
+      # from its own reviewable Java source, the same "render in-memory, never commit the bytes"
+      # shape every other synthetic fixture in this codebase already uses.
+      - name: Regenerate the synthetic corpus regression fixture
+        working-directory: backend
+        run: |
+          # No -o here (unlike the local-workflow scripts' own build_classpath()): nothing earlier
+          # in this job invokes maven-dependency-plugin, so a fresh runner's cache never has it,
+          # and offline mode fails outright instead of fetching it once.
+          ./mvnw -q dependency:build-classpath -Dmdep.outputFile=target/corpus-classpath.txt -Dmdep.includeScope=test
+          test -s target/corpus-classpath.txt || { echo "classpath resolution produced an empty file"; exit 1; }
+          java -cp "target/test-classes:target/classes:$(cat target/corpus-classpath.txt)" \
+               com.finora.imports.analysis.SyntheticFixtureGenerator
+
+      - name: Synthetic corpus regression (mechanism-gated)
+        run: python3 scripts/run-corpus-ground-truth.py
+             backend/target/synthetic-corpus-regression
+             --ground-truth backend/target/synthetic-corpus-regression/ground-truth
+             --allow-in-repo-synthetic-corpus
 
       # Runs on a FAILING run too -- that is when knowing which classes failed, and whether the ITs
       # ran at all, is worth most. It reports rather than re-judges: a genuine test failure is
@@ -336,7 +394,7 @@ jobs:
       # case. See the Guardian step below for the incident that changed it.
       - name: Test summary
         if: ${{ !cancelled() }}
-        run: python3 scripts/summarize-surefire.py
+        run: python3 scripts/summarize-surefire.py ${{ github.event_name == 'pull_request' && '--unit-only' || '' }}
 
       # guardian-report.py was the last checker referenced only in documentation -- never in CI,
       # a hook, or a package script. That is precisely the anti-pattern the XML-comment step above
@@ -392,8 +450,13 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          # Matches the engines field in frontend/package.json (">=20.19.0").
-          node-version: '20'
+          # Matches the engines field in frontend/package.json (">=22.22.2") -- raised from Node 20
+          # alongside admin-portal's, both jsdom-dependent apps, when admin-portal's jsdom bump to
+          # 30.x turned out to need it (jsdom's own package.json declares
+          # "^22.22.2 || ^24.15.0 || >=26.0.0", dropping Node 20 outright: undici 8.10.0, which
+          # jsdom 30 pulls in, throws "webidl.util.markAsUncloneable is not a function" under
+          # Node 20 specifically -- confirmed via a real CI run, not just reading the engines field).
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
@@ -456,7 +519,8 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          # See the user frontend's setup-node step for why this moved off Node 20.
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: admin-portal/package-lock.json
 
@@ -492,7 +556,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: mobile/package-lock.json
 
@@ -609,7 +673,7 @@ jobs:
       # for a single-app job's own cache-dependency-path.
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: |
             frontend/package-lock.json
@@ -668,6 +732,12 @@ jobs:
           SPRING_PROFILES_ACTIVE: dev
           SERVER_PORT: 18086
           DB_PORT: 5433
+          # This step's whole job is to kill the backend the instant health goes UP, and it shares
+          # this job's Postgres with "Start the backend" below -- so it must never let
+          # BootstrapService commit a BOOTSTRAP_ADMIN row that a kill mid-boot could then leave with
+          # no installation key and no way to regenerate one. See application.yml's app.bootstrap
+          # comment for the CI failure mode this prevents.
+          FINORA_BOOTSTRAP_ENABLED: "false"
         run: |
           set -euo pipefail
           creds="$RUNNER_TEMP/classpath-check-credentials.json"
@@ -739,6 +809,9 @@ jobs:
           SPRING_PROFILES_ACTIVE: dev
           SERVER_PORT: 18088
           DB_PORT: 5433
+          # Same reason as "Production classpath check" above: shares this job's Postgres with the
+          # real E2E boot and must not create a BOOTSTRAP_ADMIN row on its behalf.
+          FINORA_BOOTSTRAP_ENABLED: "false"
         run: |
           set -euo pipefail
           GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/classpath-check-credentials.json" \

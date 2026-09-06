@@ -8,28 +8,28 @@ sections: 4
   accountNumberMasked: ••••9999
   accountHolderName: Xxxxxxx Xxxxxx Xxxxxx
   ifscCode: HDFC0XXXXXX
-  statementPeriod: null .. null
+  statementPeriod: 2026-06-01 .. 2026-06-30
   product: SAVINGS (92%, VALIDATED)
   mayCreateAutomatically: true
 
 [section 1]
   columns: [Xxxxxxxx Principal, Open/Xxxx Xxxxx Date]
   rows: 9
-  auxLines: 27
-  accountNumberMasked: ••••9999
+  auxLines: 17
+  accountNumberMasked: null
   accountHolderName: null
-  ifscCode: HDFC0XXXXXX
+  ifscCode: null
   statementPeriod: null .. null
-  product: UNKNOWN (34%, UNIDENTIFIED)
+  product: FIXED_DEPOSIT (70%, UNPROVEN)
   mayCreateAutomatically: false
 
 [section 2]
   columns: [Account No, Installment Amount(Xx), Deposit Start Date, Period Of Deposit(Mnth), ROI, Deposit Maturity Date, Maturity Amount(Xx)*]
   rows: 2
-  auxLines: 0
-  accountNumberMasked: null
+  auxLines: 10
+  accountNumberMasked: ••••9999
   accountHolderName: null
-  ifscCode: null
+  ifscCode: HDFC0XXXXXX
   statementPeriod: null .. null
   product: RECURRING_DEPOSIT (95%, VALIDATED)
   mayCreateAutomatically: true
@@ -45,4 +45,4 @@ sections: 4
   product: UNKNOWN (50%, UNIDENTIFIED)
   mayCreateAutomatically: false
 
-capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_ACCOUNT_BANNER, REPEATED_HEADER, RIGHT_ALIGNED_AMOUNTS, TRANSACTION_TABLE_CLOSED, WRAPPED_DESCRIPTION, WRAPPED_HEADER]
+capabilities: [COMPOSITE_STATEMENT, LEADING_NARRATION_CONTINUATION, OFFSET_COLUMN_ANCHORS, PAGE_BOUNDARY_ISOLATION, REPEATED_ACCOUNT_BANNER, REPEATED_HEADER, RIGHT_ALIGNED_AMOUNTS, TRAILING_IDENTITY_CARRIED_FORWARD, TRANSACTION_TABLE_CLOSED, WRAPPED_DESCRIPTION, WRAPPED_HEADER]

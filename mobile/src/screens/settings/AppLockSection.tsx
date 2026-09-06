@@ -21,15 +21,21 @@ export function AppLockSection() {
   const [loading, setLoading] = useState(true);
   const [supported, setSupported] = useState(false);
   const [enabled, setEnabledState] = useState(false);
+  // Bug found in review (Track D/D1/D6): distinct from `supported` -- this tracks whether the
+  // CURRENT on/off state could actually be read, not whether the hardware exists at all. A
+  // transient SecureStore failure leaves this false, and the switch is not shown until it clears,
+  // rather than guessing an ON or OFF state the user never actually chose.
+  const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.all([appLock.isSupported(), appLock.isEnabled()]).then(([supp, en]) => {
+    void Promise.all([appLock.isSupported(), appLock.isEnabledConfirmed()]).then(([supp, { enabled: en, confirmed: conf }]) => {
       if (cancelled) return;
       setSupported(supp);
       setEnabledState(en);
+      setConfirmed(conf);
       setLoading(false);
     });
     return () => {
@@ -45,15 +51,17 @@ export function AppLockSection() {
       setBusy(true);
       await appLock.setEnabled(false);
       setEnabledState(false);
+      setConfirmed(true);
       setBusy(false);
       return;
     }
     setBusy(true);
     try {
-      const confirmed = await appLock.authenticate('Confirm to enable App Lock');
-      if (confirmed) {
+      const didAuthenticate = await appLock.authenticate('Confirm to enable App Lock');
+      if (didAuthenticate) {
         await appLock.setEnabled(true);
         setEnabledState(true);
+        setConfirmed(true);
       } else {
         setError('Could not confirm — App Lock was not enabled.');
       }
@@ -77,6 +85,19 @@ export function AppLockSection() {
           <Text style={[styles.rowTitle, { color: c.ink }]}>App Lock</Text>
           <Text style={[styles.rowMeta, { color: c.mutedInk }]}>
             Set up a fingerprint, face, or passcode on this device to use App Lock.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  if (!confirmed) {
+    return (
+      <View style={[styles.row, { borderBottomColor: c.border }]}>
+        <View style={styles.rowMain}>
+          <Text style={[styles.rowTitle, { color: c.ink }]}>App Lock</Text>
+          <Text style={[styles.rowMeta, { color: c.danger }]}>
+            Couldn&apos;t check whether App Lock is on. Try reopening Settings.
           </Text>
         </View>
       </View>

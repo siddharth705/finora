@@ -100,7 +100,10 @@ class DuplicateEvidenceIT extends AbstractIntegrationTest {
         assertThat(match.existingDescription()).isEqualTo("SWIGGY ORDER 4471");
         assertThat(match.existingImportedAt()).isNotNull();
         assertThat(match.confidence()).isEqualTo("EXACT");
-        assertThat(match.reason()).contains("Same date, amount and description");
+        // Says "a matching description" rather than "same description" since A2 (2026-09-01):
+        // the description comparison folds case and surrounding spaces, so the existing row shown
+        // beside this sentence can differ visibly from the staged one. See DuplicateDetector.
+        assertThat(match.reason()).contains("Same date and amount, and a matching description");
     }
 
     /** A row that repeats nothing carries no evidence and no flag — the absence has to be

@@ -1,0 +1,263 @@
+import { ActivityIndicator, Image, Linking, Platform, Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import { useQuery } from '@tanstack/react-query';
+import * as Clipboard from 'expo-clipboard';
+import Ionicons from '@expo/vector-icons/Ionicons';
+import { Card } from '../components/Card';
+import { MetricTile } from '../components/AccountUI';
+import { referralsApi } from '../api/endpoints';
+import { useTransientFlag } from '../lib/useTransientFlag';
+import { radius, spacing, useTheme } from '../theme';
+
+const STEPS: { icon: keyof typeof Ionicons.glyphMap; label: string; caption: string }[] = [
+  { icon: 'share-social-outline', label: 'Share your code', caption: 'Send it to a friend' },
+  { icon: 'person-add-outline', label: 'They sign up', caption: 'Using your code' },
+  { icon: 'people-outline', label: 'You see it here', caption: 'In your count below' },
+];
+
+function shareMessage(code: string) {
+  return `Join me on Fynora! Use my referral code ${code} when you sign up.`;
+}
+
+const HERO_ILLUSTRATION = require('../../assets/illustrations/refer-earn-hero.png');
+const HERO_ASPECT_RATIO = 1300 / 620;
+
+/**
+ * Deep-links straight into WhatsApp/SMS/Mail rather than the generic OS share sheet -- these are
+ * fixed brand/system colors, not theme tokens, the same way a WhatsApp or Gmail icon stays its own
+ * color in every app that shows one, light or dark.
+ *
+ * No `canOpenURL` pre-check for any of these, WhatsApp included. `canOpenURL` only answers
+ * accurately for a scheme declared in iOS's `LSApplicationQueriesSchemes` (Info.plist) or
+ * Android's manifest `<queries>` -- neither is declared for `whatsapp:` in app.config.ts, so
+ * `canOpenURL('whatsapp://...')` returns false unconditionally, even with WhatsApp installed
+ * (this was tried first and was a real, confirmed bug: the WhatsApp button silently always fell
+ * through to the generic share sheet). `openURL` itself carries no such restriction on either
+ * platform -- it just rejects if nothing can handle the URL -- so attempting it directly and
+ * catching that rejection is both simpler and actually correct, with no native config to add or
+ * rebuild to ship it.
+ */
+const CHANNELS: {
+  key: string;
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+  url: (code: string) => string;
+}[] = [
+  { key: 'whatsapp', label: 'WhatsApp', icon: 'logo-whatsapp', color: '#25D366',
+    url: (code) => `whatsapp://send?text=${encodeURIComponent(shareMessage(code))}` },
+  { key: 'sms', label: 'Messages', icon: 'chatbubble-outline', color: '#0A84FF',
+    url: (code) => Platform.OS === 'ios'
+      ? `sms:&body=${encodeURIComponent(shareMessage(code))}`
+      : `sms:?body=${encodeURIComponent(shareMessage(code))}` },
+  { key: 'email', label: 'Email', icon: 'mail-outline', color: '#4C8BF5',
+    url: (code) => `mailto:?subject=${encodeURIComponent('Join me on Fynora')}&body=${encodeURIComponent(shareMessage(code))}` },
+];
+
+/**
+ * Refer & Earn (mobile) -- started as an MVP port of frontend/src/pages/Referrals.tsx (a code,
+ * copy/share, and a count), then given a hero illustration and reward-forward copy per a design
+ * reference Sid provided, who has since said he'll expand the functional scope to match. Until
+ * that lands: the hero banner and headline copy reflect the intended direction, but there is
+ * still no wallet balance, reward tier, milestone, or per-referral status list below it -- no
+ * backend data exists yet to honestly show any of those (see ReferralService's own doc comment
+ * for the scope this replaced). The 3-step strip stops at "you see it here", not at a reward,
+ * for the same reason.
+ *
+ * Mobile has no equivalent of the web's `?ref=` URL param, so there's nothing to build a share
+ * LINK out of -- the code itself is the thing to copy/share and hand to a friend, who types it
+ * into their own Register screen's "Referral code (optional)" field.
+ */
+export function ReferralsScreen() {
+  const c = useTheme();
+  const [copied, triggerCopied] = useTransientFlag();
+
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['referrals-mine'],
+    queryFn: () => referralsApi.mine(),
+  });
+
+  async function handleCopy() {
+    if (!data?.code) return;
+    await Clipboard.setStringAsync(data.code);
+    triggerCopied();
+  }
+
+  async function handleShare() {
+    if (!data?.code) return;
+    try {
+      await Share.share({ message: shareMessage(data.code) });
+    } catch {
+      // User dismissed the share sheet, or the OS rejected it -- nothing more useful to do than
+      // leave the code visible in the field above for a manual copy.
+    }
+  }
+
+  async function handleChannel(channel: (typeof CHANNELS)[number]) {
+    if (!data?.code) return;
+    try {
+      await Linking.openURL(channel.url(data.code));
+    } catch {
+      // No app installed to handle this URL (most commonly WhatsApp), or the OS rejected it --
+      // same fallback handleShare() itself already falls back to: leave the user with the OS
+      // share sheet rather than a dead tap.
+      await handleShare();
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <View style={[styles.centered, { backgroundColor: c.bg }]}>
+        <ActivityIndicator size="large" color={c.primary} />
+      </View>
+    );
+  }
+
+  if (isError || !data) {
+    return (
+      <View style={[styles.centered, { backgroundColor: c.bg }]}>
+        <Text style={[styles.message, { color: c.muted }]}>Couldn&apos;t load your referral code.</Text>
+        <Pressable onPress={() => void refetch()} accessibilityRole="button">
+          <Text style={[styles.retry, { color: c.primary }]}>Try again</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  return (
+    <ScrollView style={{ backgroundColor: c.bg }} contentContainerStyle={styles.content}>
+      {/* Header hidden (AppTabs.tsx) -- this large title is the screen's own, matching the
+          design reference's hero weight rather than the small native-header title used
+          elsewhere. */}
+      <Text style={[styles.screenTitle, { color: c.ink }]}>Refer &amp; Earn</Text>
+      <Text style={[styles.screenSubtitle, { color: c.muted }]}>
+        Help your friends take control of their finances — and get rewarded together.
+      </Text>
+
+      <Image
+        source={HERO_ILLUSTRATION}
+        style={{ width: '100%', aspectRatio: HERO_ASPECT_RATIO }}
+        resizeMode="contain"
+        accessibilityIgnoresInvertColors
+        accessible
+        accessibilityLabel="Two friends checking Fynora on their phones"
+      />
+
+      <Card>
+        <View style={styles.stepsRow}>
+          {STEPS.map((step, i) => (
+            <View key={step.label} style={styles.stepGroup}>
+              <View style={styles.step}>
+                <View style={[styles.stepIcon, { backgroundColor: c.bg, borderColor: c.border }]}>
+                  <Ionicons name={step.icon} size={16} color={c.primary} />
+                </View>
+                <Text style={[styles.stepLabel, { color: c.ink }]}>{step.label}</Text>
+                <Text style={[styles.stepCaption, { color: c.muted }]}>{step.caption}</Text>
+              </View>
+              {i < STEPS.length - 1 ? (
+                <Ionicons name="chevron-forward" size={14} color={c.border} style={styles.stepArrow} />
+              ) : null}
+            </View>
+          ))}
+        </View>
+      </Card>
+
+      <Card style={styles.codeCard}>
+        <Text style={[styles.cardLabel, { color: c.ink }]}>Your referral code</Text>
+
+        <View style={[styles.codeRow, { backgroundColor: c.bg, borderColor: c.border }]}>
+          <Text style={[styles.code, { color: c.ink }]} selectable accessibilityLabel={`Referral code ${data.code}`}>
+            {data.code}
+          </Text>
+          <Pressable
+            onPress={() => void handleCopy()}
+            style={[styles.iconButton, { backgroundColor: c.card, borderColor: c.border }]}
+            accessibilityRole="button"
+            accessibilityLabel={copied ? 'Copied' : 'Copy referral code'}
+          >
+            <Ionicons name={copied ? 'checkmark' : 'copy-outline'} size={16} color={copied ? c.success : c.ink} />
+          </Pressable>
+        </View>
+
+        <Pressable
+          onPress={() => void handleShare()}
+          style={[styles.shareButton, { backgroundColor: c.primary }]}
+          accessibilityRole="button"
+          accessibilityLabel="Share referral code"
+        >
+          <Ionicons name="share-social-outline" size={16} color={c.onPrimary} />
+          <Text style={[styles.shareButtonText, { color: c.onPrimary }]}>Share Invite</Text>
+        </Pressable>
+
+        <View style={styles.channelRow}>
+          {CHANNELS.map((channel) => (
+            <Pressable
+              key={channel.key}
+              onPress={() => void handleChannel(channel)}
+              style={styles.channel}
+              accessibilityRole="button"
+              accessibilityLabel={`Share via ${channel.label}`}
+            >
+              <View style={[styles.channelIcon, { backgroundColor: channel.color }]}>
+                <Ionicons name={channel.icon} size={20} color="#FFFFFF" />
+              </View>
+              <Text style={[styles.channelLabel, { color: c.muted }]}>{channel.label}</Text>
+            </Pressable>
+          ))}
+          <Pressable
+            onPress={() => void handleShare()}
+            style={styles.channel}
+            accessibilityRole="button"
+            accessibilityLabel="More share options"
+          >
+            <View style={[styles.channelIcon, { backgroundColor: c.bg, borderWidth: 1, borderColor: c.border }]}>
+              <Ionicons name="ellipsis-horizontal" size={20} color={c.ink} />
+            </View>
+            <Text style={[styles.channelLabel, { color: c.muted }]}>More</Text>
+          </Pressable>
+        </View>
+      </Card>
+
+      <MetricTile label="Friends Referred" value={String(data.referralCount)} />
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.lg, gap: spacing.sm },
+  message: { fontSize: 14, textAlign: 'center' },
+  retry: { fontSize: 13, fontWeight: '600' },
+  content: { padding: spacing.md, paddingBottom: spacing.xl, gap: spacing.md },
+
+  screenTitle: { fontSize: 28, fontWeight: '800', letterSpacing: -0.3 },
+  screenSubtitle: { fontSize: 14, marginTop: -4, lineHeight: 19 },
+
+  stepsRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between' },
+  stepGroup: { flexDirection: 'row', alignItems: 'flex-start', flex: 1 },
+  step: { flex: 1, alignItems: 'center', gap: 4 },
+  stepIcon: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  stepLabel: { fontSize: 11, fontWeight: '600', textAlign: 'center' },
+  stepCaption: { fontSize: 9.5, textAlign: 'center' },
+  stepArrow: { marginTop: 8 },
+
+  codeCard: { gap: spacing.sm },
+  cardLabel: { fontSize: 13, fontWeight: '600' },
+  codeRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    borderWidth: 1, borderRadius: radius.md, paddingLeft: spacing.md, paddingRight: spacing.xs, minHeight: 52,
+  },
+  code: { fontSize: 18, fontWeight: '700', fontFamily: 'monospace', letterSpacing: 1 },
+  iconButton: {
+    width: 40, height: 40, borderRadius: radius.md, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  shareButton: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    borderRadius: radius.md, minHeight: 48,
+  },
+  shareButtonText: { fontSize: 14, fontWeight: '600' },
+
+  channelRow: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: spacing.xs },
+  channel: { alignItems: 'center', gap: 6 },
+  channelIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  channelLabel: { fontSize: 10.5 },
+});

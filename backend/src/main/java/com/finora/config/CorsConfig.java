@@ -1,5 +1,6 @@
 package com.finora.config;
 
+import com.finora.support.ClientIdentity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -55,7 +56,15 @@ public class CorsConfig {
         // Latent rather than broken today, because no client sends it yet. It is the kind of thing
         // discovered when someone adds client-side tracing and loses an afternoon to a preflight
         // error that has nothing to do with their change.
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", CorrelationIdFilter.HEADER_NAME));
+        //
+        // The client-identity pair is the case that comment predicted, and it arrived the moment a
+        // client actually started sending a custom header. This app is deployed cross-origin
+        // (static frontend on Cloudflare, backend on Railway), so every request the web app makes
+        // is preflighted -- omitting these two would not have broken support ticket metadata, it
+        // would have failed EVERY request the browser sends, on a change that looks like it only
+        // touches support.
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", CorrelationIdFilter.HEADER_NAME,
+                ClientIdentity.PLATFORM_HEADER, ClientIdentity.VERSION_HEADER));
         // Exposed as well as allowed: allowedHeaders governs what the browser may SEND, exposed
         // governs what JavaScript may READ off the response. Correlating a client-side error report
         // with a server log needs the latter.

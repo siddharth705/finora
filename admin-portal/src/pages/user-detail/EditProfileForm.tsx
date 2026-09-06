@@ -1,8 +1,7 @@
 import { useId, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Phone } from 'lucide-react';
 import { adminUsersApi } from '../../api/endpoints';
-import type { AdminUpdateUserRequest, CreateAccountRequest } from '../../types';
+import type { AdminUpdateUserRequest } from '../../types';
 import { errorMessage } from './errorMessage';
 
 export function EditProfileForm({
@@ -76,7 +75,3 @@ export function EditProfileForm({
     </form>
   );
 }
-
-const BLANK_ACCOUNT: CreateAccountRequest = {
-  name: '', accountType: 'SAVINGS', balance: 0, bankId: '', accountHolderName: '', accountNumberMasked: '',
-};

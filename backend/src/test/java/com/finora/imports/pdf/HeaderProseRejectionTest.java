@@ -260,8 +260,13 @@ class HeaderProseRejectionTest {
                 .as("still 102 located rows across all four sections")
                 .isEqualTo(102);
 
+        // PdfPreviewGenerator.mergeOrphanedInvestmentFragments merges this document's own RD
+        // account summary and its separate installment schedule into one section before
+        // classification runs -- a correction to the RD account's own extraction, not something
+        // this class's own header-prose-rejection concern touches. locateAll's own raw output
+        // above stays 4, unaffected; only the generator-level, post-classification count moves.
         List<StagedAccountSection> generated = generate(CONTROL);
-        assertThat(generated).hasSize(4);
+        assertThat(generated).hasSize(3);
         int staged = generated.stream().mapToInt(s -> s.rows().size()).sum();
         assertThat(staged).as("still 75 staged transactions").isEqualTo(75);
     }
@@ -300,6 +305,27 @@ class HeaderProseRejectionTest {
         // join order) is verified by TraceFixtureRegressionTest, not this class; listed here only
         // so this inventory sweep accounts for it at all.
         put("bob-transaction-row-x-ordering", 1);
+        // Captured for PdfTableLocator.resolveYearlessDate (docs/superpowers/plans/
+        // 2026-09-01-hsbc-yearless-date-resolution.md) -- its own content is verified by
+        // YearlessDateResolutionTest and HsbcCreditCardYearlessDateRegressionTest, not this
+        // class; listed here only so this inventory sweep accounts for it at all.
+        put("hsbc-credit-card-yearless-dates", 1);
+        // Captured for PdfPreviewGenerator.inheritAccountNumberAcrossSections -- its own content
+        // is verified by AccountNumberInheritanceRegressionTest, not this class; listed here only
+        // so this inventory sweep accounts for it at all.
+        put("indusland-credit-card-account-number-inheritance", 2);
+        // Captured for AccountNumberTransactionHeaderExtractor -- its own content is verified by
+        // AccountNumberTransactionHeaderRegressionTest, not this class; listed here only so this
+        // inventory sweep accounts for it at all.
+        put("icici-credit-card-account-number-above-transactions", 1);
+        // Captured for PdfTableLocator.mergeHeaderLinesAdmittingInteriorTierColumns -- its own
+        // content is verified by InteriorTierWrappedHeaderRealCorpusRegressionTest, not this
+        // class; listed here only so this inventory sweep accounts for it at all.
+        put("iob-savings-interior-tier-header", 1);
+        // Captured for the single-cell exception to refinesRatherThanRedefines' Gate 1 -- its own
+        // content is verified by SingleCellHeaderRenameRealCorpusRegressionTest, not this class;
+        // listed here only so this inventory sweep accounts for it at all.
+        put("scb-savings-single-cell-header-rename", 1);
     }};
 
     @Test

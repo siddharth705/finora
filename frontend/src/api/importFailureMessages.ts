@@ -18,7 +18,14 @@
  * dictionary of import error codes, not two that can silently drift apart.
  */
 
-import { NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, SCANNED_OCR_REQUIRED, CORRUPT_PDF } from './errorCodes';
+import {
+  NO_HEADER_DETECTED,
+  NO_TRANSACTIONS_FOUND,
+  NO_ACTIVITY_IN_PERIOD,
+  SCANNED_OCR_REQUIRED,
+  CORRUPT_PDF,
+  TRUST_REVIEW_REJECTED,
+} from './errorCodes';
 
 export const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
   [NO_HEADER_DETECTED]:
@@ -28,12 +35,27 @@ export const IMPORT_FAILURE_MESSAGES: Record<string, string> = {
     'We found a table in this statement but could not read any transactions from it. Please ' +
     'double-check this is the transaction statement PDF from your bank -- some other exports use ' +
     'a similar layout.',
+  // Deliberately different in KIND from every other message in this table, not just wording: this
+  // is the one code here that is not describing something Finora failed to do. The statement's own
+  // printed summary says there was no activity, so there is nothing wrong with the file or with
+  // Finora's reading of it -- see errorCodes.ts's own comment. It stays in this table (rather than
+  // a separate "informational" dictionary) because the banner mechanics -- amber via
+  // userActionRequired, not red -- are shared with every other code here; only the copy differs.
+  [NO_ACTIVITY_IN_PERIOD]:
+    "This statement's own summary shows no transactions for the period it covers, so there's " +
+    'nothing to import from it.',
   [SCANNED_OCR_REQUIRED]:
     'This PDF appears to be a scanned image rather than text. Statements exported directly from ' +
     "your bank's website usually work best.",
   [CORRUPT_PDF]:
     'This file appears to be damaged or incomplete. Downloading it again from your bank usually ' +
     'fixes this.',
+  // Reuses the backend's own already-approved wording verbatim rather than authoring new copy --
+  // ErrorCode.java's own comment on this code says changing either half of that message "is a
+  // product call, not a tidy-up", so this entry only wires the existing decision through.
+  [TRUST_REVIEW_REJECTED]:
+    'We checked this statement and could not read it accurately enough to import it. Nothing ' +
+    'was added to your accounts.',
 };
 
 /**

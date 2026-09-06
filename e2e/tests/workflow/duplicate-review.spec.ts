@@ -60,7 +60,10 @@ test.describe('Phase 3 — duplicate review', () => {
       // Rendered as DD-MMM-YYYY (formatDateDDMMMYYYY), not the raw ISO value -- see DuplicateReview.tsx.
       await expect(panel).toContainText('07-Jun-2026');
       await expect(panel).toContainText('45');
-      await expect(panel).toContainText(/Same date, amount and description/);
+      // Reworded by #736 (DuplicateDetector): matching went case-insensitive on description, so
+      // "exact description match" stopped being true and the copy says so -- date+amount together,
+      // description called out separately as "matching" rather than folded into one "exact" claim.
+      await expect(panel).toContainText(/Same date and amount, and a matching description/);
       // When the existing one was imported -- the strongest signal for "did I already load this?"
       await expect(panel).toContainText(/· imported/);
 

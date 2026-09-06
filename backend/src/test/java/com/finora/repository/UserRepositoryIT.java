@@ -1,11 +1,13 @@
 package com.finora.repository;
 
 import com.finora.AbstractIntegrationTest;
+import com.finora.entity.Role;
 import com.finora.entity.User;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -73,5 +75,80 @@ class UserRepositoryIT extends AbstractIntegrationTest {
 
         save("user-repository-it-real-" + UUID.randomUUID() + "@example.com", User.DEFAULT_ROLE, User.STATUS_SUSPENDED);
         assertThat(userRepository.countByStatusAndEmailNot(User.STATUS_SUSPENDED, excludedEmail)).isEqualTo(baseline + 1);
+    }
+
+    /** Assigns a real seeded role (ADMIN/SUPER_ADMIN, both carrying real permissions via V16/
+     *  V31/V135/V144) to a fresh admin-scope user -- exercises the real permission graph rather
+     *  than a hand-built fixture, so a change to which roles carry a permission is caught here. */
+    private User saveAdminWithRole(RoleRepository roleRepository, String roleName) {
+        User user = new User();
+        user.setEmail("user-repository-it-perm-" + UUID.randomUUID() + "@example.com");
+        user.setPasswordHash("irrelevant-for-this-test");
+        user.setFullName("User Repository IT Permission Test User");
+        user.setAccountScope(User.SCOPE_ADMIN);
+        user.setStatus(User.STATUS_ACTIVE);
+        user.setPhoneVerified(true);
+        Role role = roleRepository.findByName(roleName).orElseThrow();
+        user.getRoles().add(role);
+        return userRepository.save(user);
+    }
+
+    @Test
+    @Transactional
+    void findByPermissionNameAndAccountScope_returnsAdminsWhoseRoleGrantsIt(
+            @Autowired RoleRepository roleRepository) {
+        User grantedByAdmin = saveAdminWithRole(roleRepository, "ADMIN");
+        User grantedBySuperAdmin = saveAdminWithRole(roleRepository, "SUPER_ADMIN");
+
+        List<User> recipients =
+                userRepository.findByPermissionNameAndAccountScope("IMPORT_TRIAGE_MANAGE", User.SCOPE_ADMIN);
+
+        assertThat(recipients).extracting(User::getId)
+                .contains(grantedByAdmin.getId(), grantedBySuperAdmin.getId());
+    }
+
+    @Test
+    @Transactional
+    void findByPermissionNameAndAccountScope_excludesAUserWithNoRoleGrantingIt(
+            @Autowired RoleRepository roleRepository) {
+        // A real admin account, but with no role assigned at all -- the RBAC-empty case, distinct
+        // from "assigned a role that doesn't happen to carry this permission" (there is no such
+        // role in the seeded set today, so the empty-roles case is the one worth pinning).
+        User unrelatedAdmin = new User();
+        unrelatedAdmin.setEmail("user-repository-it-perm-none-" + UUID.randomUUID() + "@example.com");
+        unrelatedAdmin.setPasswordHash("irrelevant-for-this-test");
+        unrelatedAdmin.setFullName("User Repository IT No-Permission Test User");
+        unrelatedAdmin.setAccountScope(User.SCOPE_ADMIN);
+        unrelatedAdmin.setStatus(User.STATUS_ACTIVE);
+        unrelatedAdmin.setPhoneVerified(true);
+        userRepository.save(unrelatedAdmin);
+
+        List<User> recipients =
+                userRepository.findByPermissionNameAndAccountScope("IMPORT_TRIAGE_MANAGE", User.SCOPE_ADMIN);
+
+        assertThat(recipients).extracting(User::getId).doesNotContain(unrelatedAdmin.getId());
+    }
+
+    @Test
+    @Transactional
+    void findByPermissionNameAndAccountScope_isScopedToTheGivenAccountScope(
+            @Autowired RoleRepository roleRepository) {
+        // A USER-scope account holding the same role name is not an admin-portal account and must
+        // never be resolved as an alert recipient, however its roles happen to be configured.
+        User userScopeAccount = new User();
+        userScopeAccount.setEmail("user-repository-it-perm-userscope-" + UUID.randomUUID() + "@example.com");
+        userScopeAccount.setPasswordHash("irrelevant-for-this-test");
+        userScopeAccount.setFullName("User Repository IT User-Scope Test User");
+        userScopeAccount.setAccountScope(User.SCOPE_USER);
+        userScopeAccount.setStatus(User.STATUS_ACTIVE);
+        userScopeAccount.setPhoneVerified(true);
+        Role role = roleRepository.findByName("ADMIN").orElseThrow();
+        userScopeAccount.getRoles().add(role);
+        userRepository.save(userScopeAccount);
+
+        List<User> recipients =
+                userRepository.findByPermissionNameAndAccountScope("IMPORT_TRIAGE_MANAGE", User.SCOPE_ADMIN);
+
+        assertThat(recipients).extracting(User::getId).doesNotContain(userScopeAccount.getId());
     }
 }

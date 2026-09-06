@@ -89,6 +89,57 @@ export interface Transaction {
   // match, or a low-confidence "Other" default) or a CSV import; true the moment a user
   // explicitly sets/corrects it — see Ledger.tsx's "Auto"/"Manual" badge.
   categoryManuallySet: boolean;
+  // WHO was on the other side — a separate question from WHAT the money was for, which is
+  // `categoryName`. Deliberately carries NO direction: "sent to" vs "received from" is `type`, and
+  // the two are composed at render time by lib/counterpartyLabel.ts. Never null — the column is
+  // NOT NULL with an UNKNOWN default.
+  //
+  // UNKNOWN is a real answer for roughly a fifth of rows, and is also what a row reads before the
+  // server's backfill has reached it. Both mean "nothing known about the counterparty" and both
+  // render as nothing at all.
+  counterpartyType: CounterpartyType;
+}
+
+// Mirrors the backend's com.finora.util.CounterpartyType.
+export type CounterpartyType =
+  | 'PERSON'
+  | 'BUSINESS'
+  | 'FINANCIAL_INSTITUTION'
+  | 'GOVERNMENT'
+  | 'UNKNOWN';
+
+/**
+ * Track C/C7. Mirrors the backend's `TransactionSourceDto` exactly. `available: false` is a real
+ * answer ("this wasn't imported from a bank statement row" -- a manual entry, a Gmail receipt, or
+ * one imported before row-position tracking existed), not an error -- every field but
+ * `sourceLabel`/`statementDeleted` is null in that case. `statementDeleted` distinguishes "never
+ * had a tracked row" from "it had one, but the statement import row was later deleted" -- the two
+ * are different facts and read very differently to a user, even though both leave `available`
+ * false and `sourceLabel` unchanged.
+ */
+export interface TransactionSource {
+  available: boolean;
+  sourceLabel: 'MANUAL' | 'CSV_IMPORT' | 'GMAIL_IMPORT';
+  statementDeleted: boolean;
+  statementImportId: string | null;
+  fileName: string | null;
+  rowPosition: number | null;
+  importedAt: string | null;
+  accountName: string | null;
+  statementPeriodStart: string | null;
+  statementPeriodEnd: string | null;
+}
+
+/**
+ * Mirrors the backend's `TransactionGroupingService.MerchantGroup`: every needs-review transaction
+ * sharing one merchant, so the user labels "Swiggy" once instead of five times. The server only
+ * ever emits groups of 2+ — singletons stay in the row-by-row `needsReview()` queue, and the two
+ * sets are disjoint (see `lib/reviewQueue.ts`).
+ */
+export interface MerchantGroup {
+  merchantId: string;
+  merchantName: string;
+  transactionIds: string[];
 }
 
 export interface DashboardSummary {
@@ -212,7 +263,7 @@ export interface StagedRow {
   // 'user_rule' / 'global_rule' are the new category_rules-table matches (RuleEngineService);
   // 'rule' stays the pre-existing static-keyword-table match (CategoryRules, util package) --
   // see CategorizationService.decisionSourceFor for the full mapping to the persisted enum.
-  categorySource: 'learned' | 'rule' | 'user_rule' | 'global_rule' | 'default' | 'file';
+  categorySource: 'learned' | 'rule' | 'user_rule' | 'global_rule' | 'structural_p2p' | 'default' | 'file';
   // Set only when categorySource is 'user_rule' or 'global_rule' -- the id of the category_rules
   // row that produced this suggestion. Echoed back unchanged in the confirm request so it lands
   // on Transaction.decisionRuleId (see Import.tsx's confirmImport).

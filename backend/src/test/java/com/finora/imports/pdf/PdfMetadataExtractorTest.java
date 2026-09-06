@@ -508,6 +508,79 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
     }
 
+    /** A real HDFC savings-account statement layout (HDFC 3 month.pdf, HDFC sav.pdf, Mann HDFC.pdf,
+     *  Sanjay HDFC.pdf all share this shape): the period is two separately colon-labeled fields on
+     *  one row -- "From : <date>" and "To : <date>" -- not one combined "Period" label. */
+    @Test
+    void extract_recognizesAStatementPeriod_statedAsSeparateFromAndToLabeledFields() {
+        var metadata = extractor.extract(List.of(
+                "From : 01/05/2026 To : 31/07/2026 Statement of account"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 5, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 31));
+    }
+
+    /** A real Manas_HDFC/Shivani_HDFC/Sanjay SBI statement shape: the field is labeled "Statement
+     *  From", not "Statement Period"/"Billing Period" -- STATEMENT_PERIOD_ANYWHERE's own label
+     *  alternation doesn't cover it. */
+    @Test
+    void extract_recognizesAStatementPeriod_labeledStatementFrom() {
+        var metadata = extractor.extract(List.of(
+                "Statement From : 01/06/2026 To 30/06/2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
+    }
+
+    /** A real BOB.pdf statement prints "Statement Period from <date> to <date>" -- the existing
+     *  STATEMENT_PERIOD_ANYWHERE label matches, but its separator only tolerates an optional
+     *  colon, not the word "from" that's actually there. */
+    @Test
+    void extract_recognizesAStatementPeriod_whenTheLabelIsFollowedByTheWordFrom() {
+        var metadata = extractor.extract(List.of(
+                "Statement Period from Jun 01, 2026 to Jun 30, 2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 1));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
+    }
+
+    /** A real CBI.pdf statement labels this field "Statement of Account" -- a different label
+     *  from every existing pattern's "...Period" vocabulary. */
+    @Test
+    void extract_recognizesAStatementPeriod_labeledStatementOfAccount() {
+        var metadata = extractor.extract(List.of(
+                "STATEMENT OF ACCOUNT from 10/05/2026 to 08/08/2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 5, 10));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 8));
+    }
+
+    /** Real canara.pdf and ICICI saving.pdf statements both state their period as plain prose --
+     *  "...for the period <date> to <date>" -- with no parentheses at all, so
+     *  STATEMENT_PERIOD_IN_SENTENCE (which requires parens) doesn't match. */
+    @Test
+    void extract_recognizesAStatementPeriod_statedAsProseWithNoParentheses() {
+        var metadata = extractor.extract(List.of(
+                "Statement for A/c XXXXXXXXX1455 for the period 02-Jul-2026 to 01-Aug-2026"));
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 7, 2));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 8, 1));
+    }
+
+    /** A real PNB ONE savings statement's own heading: "Statement of Account:<number> For
+     *  Period: <date> to <date>" -- the account number's own "Statement of Account:" label is
+     *  unrelated leading text; the real period label is "For Period:", found via unanchored
+     *  matching the same way STATEMENT_PERIOD_ANYWHERE already tolerates arbitrary text before
+     *  its own label. */
+    @Test
+    void extract_recognizesAStatementPeriod_labeledForPeriod() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Account:1000200030004000 For Period: 30-06-2026 to 31-07-2026")); // synthetic-ok
+
+        assertThat(metadata.statementPeriodStart()).isEqualTo(java.time.LocalDate.of(2026, 6, 30));
+        assertThat(metadata.statementPeriodEnd()).isEqualTo(java.time.LocalDate.of(2026, 7, 31));
+    }
+
     @Test
     void extract_doesNotMisreadATwoColumnSectionHeader_asABranchNameField() {
         // "Branch Address" here is a section header ("Branch Address" | "Statement Details" side
@@ -883,6 +956,23 @@ class PdfMetadataExtractorTest {
         assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 9, 15));
     }
 
+    /** Real ICICI Bank credit-card statement evidence: label and value both survive intact into
+     *  separate nearby lines ("PAYMENT DUE DATE" ... "July 29, 2026 Scan to Pay using"), well
+     *  within GRID_VALUE_SEARCH_WINDOW -- but DATE_LIKE only recognised "Day MonthName Year"
+     *  order, not ICICI's "MonthName Day, Year" order, so the value was never even located.
+     *  DATE_FORMATS already had a parser entry for exactly this shape ("MMMM d, yyyy", added "for
+     *  a real ICICI credit-card statement" per its own comment) -- it was simply unreachable
+     *  because DATE_LIKE never handed it the substring. */
+    @Test
+    void extract_findsPaymentDueDate_whenTheMonthNameComesBeforeTheDay() {
+        var metadata = extractor.extract(List.of(
+                "PAYMENT DUE DATE l To update mobile number, visit the nearest branch",
+                "l Click here to access your Credit Card One View Statement",
+                "July 29, 2026 Scan to Pay using"));
+
+        assertThat(metadata.paymentDueDate()).isEqualTo(java.time.LocalDate.of(2026, 7, 29));
+    }
+
     /** The same-line fallback must still yield to the genuine multi-line grid shape
      *  ({@link #extract_findsPaymentDueDate_inAMultiColumnGrid_skippingTheStatementPeriodRangeOnTheSameRow})
      *  when the label's own line has no date-shaped value at all -- proving the two fallbacks are
@@ -1207,5 +1297,43 @@ class PdfMetadataExtractorTest {
 
         assertThat(metadata.accountHolderName()).isNull();
         assertThat(metadata.branchName()).isEqualTo("SOME TOWN BRANCH");
+    }
+
+    /**
+     * SAVING_ACCOUNT_NO_SAME_LINE. A real ICICI savings statement's own account-number field is
+     * embedded mid-sentence, ended by a PERIOD rather than a colon -- "Statement of Transactions
+     * in Saving Account no. <number> in INR for the period ...". ACCOUNT_NUMBER's own
+     * labelPattern-built regex requires a colon for its mid-line branch, so this real shape
+     * matches neither branch: not line-start (ACCOUNT_NUMBER's anchored branch), no colon
+     * (ACCOUNT_NUMBER's mid-line branch). Digits and surrounding wording genericized per the
+     * Synthetic Fixture Policy -- the shape being tested is the label/punctuation, not the real
+     * account number.
+     */
+    @Test
+    void extract_recognizesASavingAccountNumber_embeddedMidSentenceWithATrailingPeriod() {
+        var metadata = extractor.extract(List.of(
+                "Statement of Transactions in Saving Account no. 100200300499 in INR for the period")); // synthetic-ok: invented value, not the real document's
+
+        assertThat(metadata.accountNumberMasked()).endsWith("0499");
+    }
+
+    @Test
+    void extract_recognizesASavingsAccountNumber_pluralSpelling() {
+        var metadata = extractor.extract(List.of(
+                "Statement for Savings Account No. 100200300499")); // synthetic-ok: invented value, not the real document's
+
+        assertThat(metadata.accountNumberMasked()).endsWith("0499");
+    }
+
+    /** Narrow by design: requires the word "Saving"/"Savings" immediately before "Account no" --
+     *  a bare mid-sentence "Account No." (no "Saving(s)" prefix) must keep failing to match, the
+     *  same restraint {@link #extract_doesNotMatchAccountNo_whenItIsNotAtTheStartOfTheLine()}
+     *  already asserts for ACCOUNT_NUMBER itself. Without this narrowing, this pattern would
+     *  reopen the exact false-positive class F22 fixed for the card-number family. */
+    @Test
+    void extract_doesNotMatchABareAccountNo_withoutTheSavingPrefix() {
+        var metadata = extractor.extract(List.of("Please quote your Account No. 500123456789 when calling.")); // synthetic-ok
+
+        assertThat(metadata.accountNumberMasked()).isNull();
     }
 }

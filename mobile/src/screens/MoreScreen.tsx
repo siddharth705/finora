@@ -14,14 +14,20 @@ type Props = NativeStackScreenProps<MoreStackParamList, 'MoreHome'>;
  * the reporting surfaces. Typed against the stack's own param list, so deleting or renaming a route
  * breaks this at compile time rather than at the tap.
  */
-const MENU_ITEMS: { label: string; route: keyof Omit<MoreStackParamList, 'MoreHome'> }[] = [
+// 'SupportTicketDetail' excluded alongside 'MoreHome': its params ({ ticketId }) are required, so
+// it has no zero-argument navigate() overload -- the same reason it isn't (and can't be) in the
+// MENU_ITEMS list below, which calls navigate(route) with nothing else. Support has its own entry
+// point in Settings instead (see SettingsScreen's "Help & Support" section), not this generic menu.
+const MENU_ITEMS: { label: string; route: keyof Omit<MoreStackParamList, 'MoreHome' | 'SupportTicketDetail'> }[] = [
   { label: 'Accounts', route: 'Accounts' },
   { label: 'Investments', route: 'Investments' },
   { label: 'Budgets', route: 'Budgets' },
   { label: 'Goals', route: 'Goals' },
   { label: 'Reports', route: 'Reports' },
   { label: 'Insights', route: 'Insights' },
+  { label: 'Review Categories', route: 'CategoryReview' },
   { label: 'Statement History', route: 'Statements' },
+  { label: 'Refer & Earn', route: 'Referrals' },
   { label: 'Settings', route: 'Settings' },
 ];
 

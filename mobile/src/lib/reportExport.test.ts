@@ -1,5 +1,14 @@
-import { toCsv, toPrintableHtml } from './reportExport';
+import { File, Paths } from 'expo-file-system';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import { shareCsv, sharePdf, toCsv, toPrintableHtml } from './reportExport';
 import type { ReportData } from '../api/endpoints';
+
+jest.mock('expo-print', () => ({ printToFileAsync: jest.fn() }));
+jest.mock('expo-sharing', () => ({
+  isAvailableAsync: jest.fn().mockResolvedValue(true),
+  shareAsync: jest.fn().mockResolvedValue(undefined),
+}));
 
 const report: ReportData = {
   month: '2026-07',
@@ -52,6 +61,26 @@ describe('toCsv', () => {
     expect(row).toBe('"\'=HYPERLINK(""http://evil.example"",""click"")","100"');
   });
 
+  // A leading space before the formula-triggering character must not slip past the guard --
+  // spreadsheet apps can still evaluate a leading-space-then-formula value as a formula on import.
+  it('neutralises a category name with leading whitespace before a formula-triggering character', () => {
+    const csv = toCsv({
+      ...report,
+      categories: [{ category: " =cmd|'/c calc'!A0", amount: 100 }],
+    });
+    const row = csv.split('\n').find((l) => l.includes('cmd'));
+    expect(row).toBe(`"' =cmd|'/c calc'!A0","100"`);
+  });
+
+  // A lone leading tab or carriage return is itself a formula trigger (not just whitespace to
+  // skip past) -- stripping it before the regex check, e.g. via a blanket trimStart(), would
+  // silently defeat the guard for this input shape.
+  it('neutralises a category name starting with a tab', () => {
+    const csv = toCsv({ ...report, categories: [{ category: '\tDining', amount: 100 }] });
+    const row = csv.split('\n').find((l) => l.includes('Dining') && l.includes('100'));
+    expect(row).toBe(`"'\tDining","100"`);
+  });
+
   it('does not mangle a genuine negative amount', () => {
     const csv = toCsv({ ...report, categories: [{ category: 'Refund', amount: -500 }] });
     expect(csv).toContain('"Refund","-500"');
@@ -85,5 +114,72 @@ describe('toPrintableHtml', () => {
   // blank trailing page.
   it('declares a doctype', () => {
     expect(toPrintableHtml(report).startsWith('<!DOCTYPE html>')).toBe(true);
+  });
+});
+
+/**
+ * D2 (Track D security cleanup). The exported file exists on disk only to hand the OS share
+ * sheet a real URI -- once shareAsync settles, it has to go, whichever of the two builders wrote
+ * it and whether the share itself succeeded or threw.
+ */
+describe('shareCsv / sharePdf clean up the cache file after sharing', () => {
+  const shareAsync = Sharing.shareAsync as jest.Mock;
+  const isAvailableAsync = Sharing.isAvailableAsync as jest.Mock;
+  const printToFileAsync = Print.printToFileAsync as jest.Mock;
+
+  beforeEach(() => {
+    shareAsync.mockReset().mockResolvedValue(undefined);
+    isAvailableAsync.mockReset().mockResolvedValue(true);
+  });
+
+  // Bug found in review (Track D/D2): the isAvailableAsync() check used to run before shareCsv's
+  // own try/finally, so a device with sharing unavailable threw straight out of share() and left
+  // the just-written cache file behind with no cleanup at all.
+  it('shareCsv still deletes its cache file when sharing is unavailable on the device', async () => {
+    isAvailableAsync.mockResolvedValue(false);
+
+    await expect(shareCsv(report)).rejects.toThrow('Sharing is not available on this device.');
+
+    const file = new File(Paths.cache, `fynora-report-${report.month}.csv`);
+    expect(file.exists).toBe(false);
+  });
+
+  it('shareCsv deletes its own cache file after a successful share', async () => {
+    await shareCsv(report);
+
+    const file = new File(Paths.cache, `fynora-report-${report.month}.csv`);
+    expect(file.exists).toBe(false);
+  });
+
+  it('shareCsv still deletes its cache file when the share itself throws', async () => {
+    shareAsync.mockRejectedValue(new Error('share sheet dismissed with an error'));
+
+    await expect(shareCsv(report)).rejects.toThrow();
+
+    const file = new File(Paths.cache, `fynora-report-${report.month}.csv`);
+    expect(file.exists).toBe(false);
+  });
+
+  it('sharePdf deletes the file expo-print wrote after a successful share', async () => {
+    const printed = new File(Paths.cache, 'printed-report.pdf');
+    printed.create();
+    printed.write('%PDF-fake');
+    printToFileAsync.mockResolvedValue({ uri: printed.uri });
+
+    await sharePdf(report);
+
+    expect(printed.exists).toBe(false);
+  });
+
+  it('sharePdf still deletes the printed file when the share itself throws', async () => {
+    const printed = new File(Paths.cache, 'printed-report-2.pdf');
+    printed.create();
+    printed.write('%PDF-fake');
+    printToFileAsync.mockResolvedValue({ uri: printed.uri });
+    shareAsync.mockRejectedValue(new Error('share sheet dismissed with an error'));
+
+    await expect(sharePdf(report)).rejects.toThrow();
+
+    expect(printed.exists).toBe(false);
   });
 });

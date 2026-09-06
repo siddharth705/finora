@@ -1,0 +1,277 @@
+# finora-pdf-trace v3
+# traceVersion: 3
+# redactorVersion: 2
+# allowlistFingerprint: 286ED08D
+# capturedAt: 2026-09-01
+# generatedFrom: IndusInd credit card statement whose second (rewards/purchase-detail) section never finds its own account number
+# capabilities: 
+# regressions: 
+# requiredHeaders: 
+# motivation: Motivates inheritAccountNumberAcrossSections: a CREDIT_CARD section's masked card number must propagate to a sibling UNKNOWN-product fragment that never finds its own.
+# page	x	y	width	text
+0	24.00	60.31	0.00	XXXX IndusInd Bank XxXxx Credit Card
+0	477.86	87.76	0.00	Xxxxxxxx Balance
+0	488.08	100.45	29.34	0.00 DR
+0	462.11	137.91	0.00	Purchases & Other Xxxxxxx
+0	487.18	150.45	31.14	2,776.00
+0	482.68	186.34	0.00	Cash Xxxxxxx
+0	494.97	199.45	15.57	0.00
+0	462.85	237.50	81.37	Payments & Other Credits 
+0	31.17	247.77	19.69	Credit
+0	89.16	244.17	38.19	Credit Limit
+0	165.74	244.17	69.22	Available Credit Limit
+0	275.74	244.17	33.37	Cash Limit
+0	352.42	244.17	64.38	Available Cash Limit
+0	487.18	249.45	31.14	1,491.00
+0	26.24	254.77	29.55	Summary
+0	86.62	257.45	42.26	2,19,000.00
+0	178.62	257.45	42.26	2,17,715.00
+0	273.96	257.45	35.58	43,800.00
+0	365.96	257.45	35.58	43,800.00
+0	30.19	279.73	0.00	XXXXXXXXX XXXXXXXX:
+0	235.49	279.73	0.00	XXXXXXXXXXX XXXXXXXX:
+0	30.00	286.05	0.00	Xxxxxxxxx 99xx Xxx'99, xxxxx xxxx xx xxxxxxx xx Xxxx Payment
+0	468.76	287.55	69.63	Total Amount Due
+0	30.00	293.57	0.00	Xxxxxxx, XXX Xxx, Xxxx Transaction Xxx, Xxx on Xxxxxxxxx
+0	30.00	301.08	0.00	Xxxxxxxxx Xxx XXXx & Interest Xxxxxxxxxxx. For details, xxxxx
+0	480.29	299.45	44.91	1,285.00 DR
+0	30.00	308.59	0.00	xxx.xxxxxxxx.xxxx.xx
+0	460.55	320.37	85.76	Minimum Amount Due
+0	30.19	325.71	0.00	XXXXXXXXX XXXXXXX 9:
+0	235.49	326.46	0.00	XXXXXXXXX XXXXXXX 9:
+0	490.52	331.45	24.46	100.00
+0	467.14	352.25	72.57	Payment Due Date
+0	482.73	364.45	40.03	11/09/2026
+0	188.22	374.31	72.71	ACCOUNT SUMMARY
+0	477.12	385.07	53.10	Statement Period
+0	40.94	393.42	14.23	Date
+0	117.45	393.42	57.68	Transaction Details
+0	232.30	393.42	0.00	Xxxxxxxx Xxxxxxxx
+0	316.09	393.42	0.00	XXXX Xxxxxx
+0	375.98	393.42	0.00	Amount (xx `)
+0	455.83	397.45	93.85	23/07/2026 To 22/08/2026
+0	25.90	405.83	0.00	Payment Details for XX XXXXXXXXX XXXXXX (Credit Card No. 9999XXXXXXXX9999)
+0	25.90	419.98	33.24	18/08/2026
+0	72.40	419.98	0.00	UPI XXXXXX XXXXXXXXX 999999999999
+0	222.40	419.98	0.00	XXXXXXXXXXXX XXXXXX
+0	333.19	419.98	0.00	9
+0	395.38	419.98	27.22	12.00 CR
+0	479.38	417.76	48.11	Statement Date
+0	482.73	430.45	40.03	22/08/2026
+0	25.90	437.98	33.24	18/08/2026
+0	72.40	437.98	0.00	UPI XXXXXX XXXXXXXXX 999999999999
+0	222.40	437.98	0.00	XXXXXXXXXXXX XXXXXX
+0	333.19	437.98	0.00	9
+0	386.35	437.98	36.25	1,479.00 CR
+0	476.57	448.89	53.72	Total Outstanding
+0	25.90	457.32	17.92	Total
+0	488.66	452.89	0.00	(Xxxxxxxxx Xxxxx)
+0	332.92	456.73	0.00	9
+0	381.41	456.73	29.19	1,491.00
+0	480.29	462.45	44.91	1,285.00 DR
+0	25.90	469.83	0.00	Purchases & Cash Transactions for XX XXXXXXXXX XXXXXX (Credit Card No. 9999XXXXXXXX9999)
+0	25.90	483.98	33.24	06/08/2026
+0	72.40	483.98	0.00	UPI XXXXX XXXXXXXXXXX 999999999999
+0	222.40	483.98	0.00	XXXXXXX &
+0	333.19	483.98	0.00	9
+0	391.89	483.98	30.71	150.00 DR
+0	222.40	489.96	0.00	XXXXXXXXXXX
+0	25.90	501.98	33.24	07/08/2026
+0	72.40	501.98	0.00	UPI XXXXX XXXXXXX XXXX 999999999999
+0	222.40	501.98	0.00	XXXXXXXXXXX
+0	333.19	501.98	0.00	9
+0	395.50	501.98	27.10	55.00 DR
+0	25.90	513.97	33.24	10/08/2026
+0	72.40	513.97	0.00	UPI XXXXXXXXXXX 999999999999
+0	222.40	513.97	0.00	XXXXXXX &
+0	333.19	513.97	0.00	9
+0	391.89	513.97	30.71	686.00 DR
+0	222.40	519.96	0.00	XXXXXXXXXXX
+0	25.90	531.97	33.24	12/08/2026
+0	72.40	531.97	0.00	UPI XXXXXXXX PAYMENTS 999999999999
+0	222.40	531.97	0.00	XXXXXXXXXXX
+0	333.19	531.97	0.00	9
+0	391.89	531.97	30.71	188.00 DR
+0	25.90	543.97	33.24	12/08/2026
+0	72.40	543.97	0.00	UPI XXXXXXX XXXXXXXX X 999999999999
+0	222.40	543.97	0.00	XXXXXXXXXXX
+0	333.19	543.97	0.00	9
+0	395.50	543.97	27.10	70.00 DR
+0	38.46	569.98	0.00	XXXX Xxxxxx
+0	37.61	577.99	0.00	Xxxxxxxxxxx*
+0	99.41	581.20	0.00	XXXX: XXXX Xxxxxx xxxxxx xxx xxxxxxxx on your XXXX IndusInd Bank XxXxx Credit Card xxxxxx the current xxxxxxx xxxxx xxx xxxxxxxxx 
+0	99.40	587.70	0.00	xxxxxxx xxxx transactions. Xx xxx xxxx xx to 9-9 xxxxxxxx xxxx for the XXXX Xxxxxx to xxxxxxx xx your XXXX Account.
+0	34.25	644.50	51.28	Opening Balance
+0	125.02	644.50	0.00	Total XXXX Xxxxxx for
+0	219.64	644.26	0.00	Total XXXX Xxxxxx Xxxxxxxx
+0	331.65	644.26	0.00	Total XXXX Xxxxxx xxxxxxxxxxx
+0	31.21	652.50	0.00	of the XXXX Xxxxxx
+0	122.96	652.50	68.85	the current statement
+0	221.72	652.26	79.88	for the current statement
+0	336.96	652.26	79.88	for the current statement
+0	57.80	665.52	0.00	9
+0	259.80	665.52	0.00	9
+0	31.00	712.52	0.00	XX XXXXXXXXX XXXXXX
+0	31.00	719.52	0.00	X-999, XXXXXX XXXXXX
+0	31.00	727.52	0.00	XXXXXX XXXXX
+0	31.00	745.52	0.00	XXXX XX - 999999
+0	31.00	765.52	0.00	XXXXX:
+0	31.00	776.52	0.00	Xxxxxxx and Credit xxxx No :
+0	121.00	776.52	0.00	9999999999999999999
+0	107.00	792.12	0.00	Xxxx Customer, Xxxxxx xxxxx xxx xxxxxxx "xxx.xxxxxxxx.xxx" for the INDUSIND BANK ATM xxxx xxx(xx) xxxxxxx xx and xxxxxx
+0	31.26	795.89	0.00	Xxxxxxx IndusInd Bank ATM
+0	107.00	798.48	0.00	your xxxxxxxx
+0	22.77	811.63	0.00	Xxxxxx xxxx your cheque xxxxxxxxx IndusInd Bank Credit Card No. 9999XXXXXXXX9999 (Xxxxxxx your xxxx Credit Card No.)
+0	530.00	830.52	0.00	9
+1	24.00	58.45	0.00	XXXX IndusInd Bank XxXxx Credit Card
+1	191.86	90.98	72.71	ACCOUNT SUMMARY
+1	30.80	108.84	14.23	Date
+1	115.81	108.84	34.77	Transaction
+1	152.08	106.34	21.42	 Details
+1	230.67	108.84	0.00	Xxxxxxxx
+1	260.48	106.34	0.00	 Xxxxxxxx
+1	314.45	108.84	0.00	XXXX
+1	331.94	106.34	0.00	 Xxxxxx
+1	376.35	108.84	0.00	Amount (xx `)
+1	25.90	120.08	33.24	12/08/2026
+1	72.40	120.08	0.00	UPI XXXXXXXX 99999999 999999999999
+1	333.19	120.08	0.00	9
+1	391.89	120.08	30.71	136.00 DR
+1	25.90	132.08	33.24	18/08/2026
+1	72.40	132.08	0.00	UPI ICICI 999999999999
+1	222.40	132.08	0.00	XXXXXXXXXXXX XXXXXX
+1	333.19	132.08	0.00	9
+1	386.47	132.08	36.13	1,491.00 DR
+1	25.90	151.42	17.92	Total
+1	332.92	150.83	0.00	9
+1	381.41	150.83	29.19	2,776.00
+1	530.00	830.52	0.00	9
+2	63.93	75.47	0.00	XXX TO XXXX PAYMENTS
+2	336.37	77.93	0.00	TO XXXXX AVAILABLE XXXX XXXXXX 
+2	33.58	94.44	0.00	Xxx Payments xxx to xx xxxx xx Indian Xxxxxx xxxx. The Xxxxxxxxxx xxx the To xxxx your current XXXX Xxxxxx Xxxxxx, xxxxxx xxx xx to your XXXX 
+2	33.58	103.93	0.00	xxxxx of xxxx following xxxxx of xxxxxxx payment to the Bank:
+2	307.33	106.13	30.51	Account.
+2	33.58	113.43	0.00	9. Using the “Pay Xxxx” xxxxxx xx the Credit Card Xxxxxxxxx xxxxxxx on XXXXX 
+2	48.18	122.93	0.00	Xxx from your IndusInd Bank account.
+2	47.40	132.42	0.00	Pay your Credit Card xxxx on the XXXX Xxx xxxxx://xxx.xxxx.xxxx/x99x/card
+2	336.37	128.73	0.00	XXXXXXX & STATEMENT
+2	33.57	141.92	0.00	9.
+2	47.39	141.92	0.00	Xxxxxx Xxxxx Xxxxxxxx from a xxx-Xxxxxxxx Bank account using NEFT/
+2	48.17	151.41	0.00	RTGS/IMPS/Xxxx Xxxxx Xxxxxxxx xxxxxxxx.
+2	306.33	147.56	0.00	9. The Bank xxxx xxxx a monthly statement to the Xxxxxxxxxx, x-xxxx and/or 
+2	33.57	160.91	0.00	9.
+2	47.39	160.91	0.00	By xxxxxxxx ‘IndusInd Credit Card Payment’ on XxxxxXxx, xxx xxx xx a
+2	320.43	157.56	0.00	xxxxxxxx, xxxxxxx the xxxxxxxx xxxx as xxxxxxx by Bank for xxxx xxxxxxx 
+2	48.17	170.41	0.00	xxxxxxxx from your Xxxxxxxx Bank Savings Account.
+2	320.43	167.56	0.00	period xxxxxx xxxxx xxxxx is any transaction/payment or any amount
+2	33.57	179.90	0.00	9. Using the “Xxxxx Pay” xxxxxx on xxx.xxxxxxxx.xxxx.xx to pay from any outstanding on the Card account.
+2	48.17	189.40	48.42	Bank account.
+2	306.33	188.56	0.00	9.
+2	321.22	188.56	0.00	Xxx-xxxxxxx of statement xxxxx not axxx the Xxxxxxxxxx’x xxxxxxxxxxx
+2	33.57	198.89	0.00	9. Using the “Credit Card Xxxxx Pay” xxxxxx on xxx.xxxxxxxx.xxxx.xx to pay and xxxxxxxxxxx xxxxx xxxx Xxxxxxxxx and xx/xxx xxxxx xx xxxxxx to xxxxxx xx 
+2	48.17	208.39	77.78	from any Bank account.
+2	320.43	208.56	0.00	xxxxx the Minimum Amount Due xxxxxx the payment due date.
+2	33.57	217.89	0.00	9.
+2	47.39	217.89	0.00	By xxxxxxxxxx xxxx payment xxxxxxxx on your Xxxxxxxx Bank account or
+2	306.33	219.56	0.00	9.
+2	321.22	219.56	0.00	Minimum Amount Due is xxxxxxxxxx as 999% of EMI amount + 999% of
+2	48.17	227.38	0.00	xxxxxxx NACH xxxxxxxx on your xxx-Xxxxxxxx Bank account. Contact
+2	320.43	229.56	0.00	XXX + 999% of Xxxx/Xxxxxxx + 999% of Finance Xxxxxxx + Xxxxxxxxx
+2	48.17	236.88	0.00	phone xxxxxxx for xxxx details.
+2	320.43	239.56	0.00	Amount (xx any) + 9% of Retail Xxxxxx/Cash Xxxxxxx/xxxxxxxxx balance 
+2	33.57	246.37	0.00	9. Cash Deposit xx Xxxxxxxx Bank Branch. Deposit xxxxxxx ₹999 xxxx xx applicable.
+2	320.43	249.56	42.39	outstanding.
+2	33.57	255.87	0.00	9.
+2	47.39	255.87	0.00	Cheque/xxxxx xxxxxxxxx Xxxxxxxx Bank Credit Card No.
+2	48.17	265.37	0.00	XXXXXXXXXXXXXXXX xxxxxxxxx xx the Xxxxxxxx Bank Xxxxxxxx/XXXx. For 9.
+2	321.22	260.56	0.00	Xxxx Payment Xxxxxxx xxxx xx xxxxxx xx Minimum Amount Due (xxxxx amount 
+2	48.17	274.86	0.00	a xxxx of xxxx xxxxx xxxxx xxx.xxxxxxxx.xxxx.xx. Xxx xxx xxxxxxx to xxxx
+2	320.43	270.56	0.00	xxxxxxxxx xxxxxxxx xx any) is not paid on or xxxxxx the Payment Due Date. 
+2	48.17	284.36	0.00	xxxxxxx xx xxxxx 9 xxxxxxx xxxx xxxxx to the payment due date to xxxxxx Xxxx Payment Xxxxxxx xxxx xxxx xx xxxxxx xx xxxx of no payment or payment 
+2	48.17	293.85	0.00	xxxxxx credit to your card account and xxxxx xxxx of xxxxx xxxxxxx. Xxxxxx
+2	320.43	290.56	0.00	xxxx xxxx the Minimum Amount Due.
+2	48.17	303.35	0.00	xxxxxxx your name and xxxxxx number on the xxxxxxx of the
+2	306.33	301.56	0.00	9. The Xxxxxxxxxx xxxxxx xxxx xx is xxx xxxxxxxxxxxxxx to xxxxxx the Bank xx
+2	48.17	312.85	0.00	cheque, xx xxxxx xxxx xxx an XXX on xxxxxxx of your cheque. Xxxxxx xx xxxx of xxx-xxxxxxx or discrepancy xx xxx monthly statement xxxxxx 99 xxxx 
+2	48.17	322.34	0.00	not deposit xxxx-xxxxx cheque. The Bank xx xxx xxxx xxxxxxxxxx xxx xxxxxx of xxx statement xxxxxxx date. Xx xxxx the Xxxxxxxxxx xxxx not xxxxxx the
+2	48.17	331.84	0.00	xxx xxxx-xxxxx xxxxxxx. Bank of any xxxx xxxxx, the statement xxxx xx xxxxxx to xxxx xxxx
+2	47.39	343.33	0.00	Payments xxxxxxxx xxxxxxx card outstanding xxxx xx xxxxxxxx xxxxxxx xxx
+2	320.43	341.56	0.00	xxxxxxxxx and xxxxxxxxxx.
+2	48.17	352.83	0.00	XXXx, xxxxx, xxxx, other xxxxxxx, interest xxxxxxx, cash xxxxxxx and
+2	306.33	352.56	0.00	9. Xx xxxxxxx xxx to xxxx xxxxxx payment of the amount due on the Card 
+2	48.17	362.33	0.00	xxxxxxxx, xx xxxx xxxxx.
+2	320.43	362.56	0.00	account. The payment details xxxxxxxxx the xxxxxxx xx payment is
+2	33.57	371.82	0.00	9.  IndusInd Bank xxxxxxxxxx Xxxxxxxxxxx to pay xxxxx card xxxx using xxxx
+2	320.43	372.56	0.00	xxxxxxxx to the Credit Xxxxxxx.
+2	47.39	381.32	0.00	the xxxxxxxxxx xxxxx of payment as xxxxxxxxx xxxxx
+2	306.33	383.56	0.00	9. Any Xxxxxx payment/credit xxxx xxx xxxxxxxx xxxxxxx the xxxxxxxx
+2	320.43	393.56	40.40	transactions.
+2	63.93	401.98	0.00	XXXX & XXXXXXX*
+2	306.33	404.56	0.00	9. Credit Card Xxxxxxxx - The Xxxxxxxxxx xxxxx xxxxxx the xxxx of the
+2	320.43	414.56	0.00	card to the Bank by xxxxxxx the 99-Xxxx Phone Xxxxxxx number,
+2	34.96	420.98	0.00	a) Xxxxxxx & Xxxxxx Xxxx - Xxxxxxx and Xxxxxx Xxx xxx xxxx from customer to xxxxxxx xxxxxXxx/XXX/XXXXX or by xxxxxxx XXX XXXXX <xxxx 9 xxxxxx
+2	49.14	430.86	0.00	customer and from xxx to xxx. Xxxxx xxxxx xx xxxxxxxxxxxx to the card of Credit Card number> to 9999999 from xxx registered xxxxxx number,
+2	49.14	440.18	0.00	xxxxxx xx the xxxx of xxxxxxxx for the card.
+2	320.42	444.56	0.00	immediately on xxxx xxxx.
+2	34.96	449.78	0.00	x) Cash Xxxxxxx Xxxxxxx - Xxxxxx. Interest xxxxxxx on cash xxxxxxx 
+2	49.14	459.38	146.52	transactions from the date of the transaction.
+2	306.32	455.56	0.00	9. The Xxxxxxxxxx xxx contact the Bank xxxxxxx any of the following
+2	34.96	468.98	0.00	x)
+2	49.14	468.90	0.00	Xxxxxxx Xxxxxxx - Xxxx payment xxxxxxx - Outstanding Balance: xx to xxxxxxxxxxxxx xxxxxxxx for any xxxxxxxxx and/or xxxxxxxxx of xxxxxxxx.
+2	49.21	478.50	0.00	₹999 -> Xxx; Xxxxxxx ₹999 - ₹999 = ₹999, Xxxxxxx ₹999 - ₹9,999 = ₹999, (a) 99-Xxxx Phone Xxxxxxx Number: 9999 999 9999
+2	49.14	488.10	0.00	Xxxxxxx ₹9999 - ₹9,999 = ₹999, Xxxxxxx ₹9999 - ₹99,999 = ₹999, (x) Email: xxxxxxx.xxxx@xxxxxxxx.xxx
+2	49.14	497.70	0.00	Xxxxxxx ₹99999 - ₹99,999 = ₹999, Xxxxxxx ₹99,999 - ₹99,999 = ₹9,999, (x)
+2	321.21	498.56	0.00	By xxxxxxx to the Bank’x Credit Card Xxxx xx: Xxxxxxxx Bank Ltd. (Credit
+2	49.14	507.30	0.00	Xxxxx ₹99,999 = ₹9,999. Xxxxxx xxxxx xxxx to xxxx xxxx on xxxx and Xxxxx Xxxxxxxx) XX Xxx 9999, Xxxxxxx, XXXX, Xxxxxxx (X), Xxxxxx -
+2	49.14	516.90	0.00	xxxxxxx or xxxxx xxx.xxxxxxxx.xxxx.xx 999999.
+2	34.01	526.33	0.00	x)
+2	47.99	526.33	0.00	Interest Xxxx Xxxxx Period - Xx to 99 xxxx; Interest xxxx period is not
+2	48.19	534.51	0.00	not applicable xx total amount due is not paid xx xxxx.
+2	306.32	529.56	0.00	(x)
+2	321.21	529.56	0.00	For Xxxxxxxxxx xxxxxxxxxx, xxxxxx xxxxx to: Xxxxx Xxxx, Xxxxxxxx Bank
+2	320.42	539.56	0.00	Ltd. (Credit Xxxxx Xxxxxxxx), XX Xxx 9999, Xxxxxxx, XXXX, Xxxxxxx (Xxxx),
+2	34.01	547.53	0.00	x) Interest Xxxxxxx - 3.95% Monthly; 47.4% Xxxxxxxx.
+2	320.42	549.56	0.00	Xxxxxx - 999 999 or email: xxxxx.xxxx@xxxxxxxx.xxx
+2	49.02	558.96	0.00	Interest is xxxxxxxxxx on a xxxxx xxxxx on the current outstanding balance (x) Xx xxxx xxx xx not xxxxxxx a xxxxxxxx from Xxxxx Xxxx xxxxxx 9 xxxx, 
+2	49.13	568.46	0.00	of the Xxxxxxxxxx. Interest is xxxxxx xx total amount due is not paid x xxx xxx xxxxx to: Principal Xxxxx Xxxx, IndusInd Bank Ltd. (Credit Xxxxx 
+2	49.13	577.95	0.00	by the due date. Xxxxxx xxxx xxxx xxxxxx xxxx the minimum payment Xxxxxxxx), XX Xxx 9999, Xxxxxxx, XXXX, Xxxxxxx (Xxxx), Xxxxxx - 999 999 
+2	49.13	587.45	0.00	xxxxx xxxxx xxxxx xxxxxx xx the repayment xxxxxxxxxx xxxx a period of or email: xxx@xxxxxxxx.xxx
+2	49.13	596.94	0.00	xxxx xxxx xxxxxxxxxx interest payment on your outstanding balance.
+2	306.32	601.56	0.00	(x
+2	311.76	601.56	0.00	) Credit Card Xxxxxxx - To xxxxx your Credit Card, xxxxxx xxxxx to 
+2	49.02	606.44	0.00	Interest Xxxxxxxxxxx Xxxxxxx - Xx the statement xxxxx is 99xx of xxxxx xxxxx 
+2	49.13	615.96	0.00	and the Xxxxxxx statement xxx xxx transaction: 99xx Xxxxxxx Xxxxxxx'x
+2	320.42	611.56	0.00	xxxxxxxxxx.xxxxxxx@xxxxxxxx.xxx (xxxxxxx to no outstanding xxxx xx the 
+2	49.12	625.46	0.00	Xxxx ₹99,999.
+2	320.42	621.56	45.24	card account)
+2	49.02	634.95	0.00	The outstanding balance on 99xx Xxxxxxx is ₹99,999. Xx the xxxxxxxx
+2	306.32	632.56	0.00	(x) Credit Card Xxxxxxxxxx  -  To xxxxx any xxxxxxxxx xxxxxxxxx Credit Card 
+2	49.12	644.46	0.00	payment is xxxx xxxxxx 99xx Xxxxxxxx, no interest xxxxx xx xxxxxx. xxx-xxxxxxx, xxxxxx xxxxx to xxxxxxxxxxxxxxxx@xxxxxxxx.xxx
+2	34.01	656.91	0.00	Xxxxxxx, xx a xxxx payment of ₹9,999 is xxxx on 99xx Xxxxxxxx, xxxx interest
+2	306.32	657.51	0.00	Xxxxxxxxx Xxxxxxxxx - Xxxxx xxxx for IndusInd Bank Xxxxxxxxx 
+2	34.01	666.51	0.00	xxxx xx xxxxxxxxxx as xxxxx:
+2	306.32	669.51	0.00	Xxxxxxxxx Xxxxxx.
+2	34.01	676.11	0.00	9. Interest on ₹99,999 from 99xx Xxxxxxx - 99xx Xxxxxxx (99 xxxx) = ₹99,999 x 
+2	48.19	685.71	0.00	3.95% x 99/999 x 99 = ₹142.85
+2	306.32	682.51	0.00	Xxxxxx xxxxx your Xxxxxxxx Bank Credit Card Number xx xxx your xxxxxxxxxxxxxx 
+2	34.02	695.31	0.00	9.
+2	48.20	695.31	0.00	Interest on statement balance as xxx 99xx statement from 99xx Xxxxxxx -
+2	306.32	692.51	0.00	xxxx xx. 
+2	48.19	704.91	0.00	99xx Xxxxxxxx (99 xxxx) = ₹99,999 x 3.95% x 99/999 x 99 = ₹207.78
+2	34.02	714.51	0.00	9.
+2	48.20	714.51	0.00	Interest on outstanding balance of ₹9,999 from 99xx Xxxxxxxx - 99xx 
+2	48.19	724.11	0.00	Xxxxxxxx (99 xxxx) = ₹9,999 x 3.95% x 99/999 x 99 = ₹58.44
+2	336.37	719.71	0.00	XXXXXXXXX
+2	34.01	733.71	0.00	9. Total Interest as xxx 99xx Xxxxxxxx statement = ₹142.85 + ₹207.78 + ₹58.44
+2	306.28	738.33	0.00	Xxxxxx Xxxxx xxxx for details of xxxxxxxxx xxxxxxxx on your IndusInd Bank 
+2	48.19	743.31	0.00	= ₹409.07.  Xxxxxx xxxx xx the xxxxx xxxxxxxxxxxx interest xxx xxxx xxxxxxxxxx 
+2	48.19	752.91	0.00	xx 3.95% x.x.
+2	306.28	749.33	42.56	Credit Card. 
+2	34.01	765.11	0.00	*XXX as applicable on xxx xxxx and xxxxxxx.
+2	306.28	763.33	0.00	Xxxxxxxxx Xxxxx: 
+2	306.28	774.40	0.00	Xxxxxxxxx Xxxxxxxx: ICICI Xxxxxxx Xxxxxxx Xxxxxxxxx Xxxxxxx Limited 
+2	306.28	786.13	0.00	Address: ICICI Xxxxxxx Xxxxx, 999, Xxxx Xxxxxxxx Xxxx, Xxxx Xxxxxx Xxxxxxx 
+2	306.28	797.53	0.00	Xxxxxx, Xxxxxxxxxx, Xxxxxx - 999999
+2	306.28	808.93	0.00	Contact Number: 9999 9999
+2	306.28	820.33	0.00	Email ID:  xxxxxxxxxxx@xxxxxxxxxxxx.xxx
+2	479.08	828.56	0.00	(IndusInd Bank XXXXX: 99XXXXX9999X9X9)

@@ -1,12 +1,15 @@
 package com.finora.exception;
 
 import com.finora.dto.ApiResponse;
+import com.finora.security.RefreshTokenCookie;
+import com.finora.util.LogSanitizer;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -29,10 +32,23 @@ public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
-    private final Environment environment;
+    /**
+     * Every code that ends a refresh session without reissuing a replacement (rotate()'s idle-
+     * timeout, absolute-cap and reuse-detection branches -- see RefreshTokenService). A refresh
+     * cookie is HttpOnly, so the client cannot clear it itself: leaving it in place after one of
+     * these responses means the browser's very next automatic refresh attempt re-presents the
+     * same now-dead token, turning an ordinary idle timeout into a reuse-detection response that
+     * reads as a suspected theft.
+     */
+    private static final java.util.Set<ErrorCode> TERMINATES_REFRESH_SESSION = java.util.Set.of(
+            ErrorCode.AUTH_SESSION_IDLE, ErrorCode.AUTH_SESSION_MAX_AGE, ErrorCode.AUTH_SESSION_REVOKED);
 
-    public GlobalExceptionHandler(Environment environment) {
+    private final Environment environment;
+    private final RefreshTokenCookie refreshTokenCookie;
+
+    public GlobalExceptionHandler(Environment environment, RefreshTokenCookie refreshTokenCookie) {
         this.environment = environment;
+        this.refreshTokenCookie = refreshTokenCookie;
     }
 
     // An unmapped route (typo'd path, wrong method, disabled feature) should 404, not 500 —
@@ -80,14 +96,19 @@ public class GlobalExceptionHandler {
         // contract says must never be logged at all.
         if (ex.getStatus().is5xxServerError() && ex.getCode() != null && ex.getCode().intentionalRejection()) {
             log.warn("Deliberate rejection ApiException [{}] on {} {}: {}",
-                    errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage());
+                    errorCode, LogSanitizer.sanitize(request.getMethod()),
+                    LogSanitizer.sanitize(request.getRequestURI()), ex.getMessage());
         } else if (ex.getStatus().is5xxServerError()) {
             log.error("Server-error ApiException [{}] on {} {}: {}",
-                    errorCode, request.getMethod(), request.getRequestURI(), ex.getMessage(), ex);
+                    errorCode, LogSanitizer.sanitize(request.getMethod()),
+                    LogSanitizer.sanitize(request.getRequestURI()), ex.getMessage(), ex);
         }
 
-        return ResponseEntity.status(ex.getStatus())
-                .body(ApiResponse.error(ex.getMessage(), errorCode, detailsWithActionRequired(ex)));
+        ResponseEntity.BodyBuilder response = ResponseEntity.status(ex.getStatus());
+        if (ex.getCode() != null && TERMINATES_REFRESH_SESSION.contains(ex.getCode())) {
+            response.header(HttpHeaders.SET_COOKIE, refreshTokenCookie.clear().toString());
+        }
+        return response.body(ApiResponse.error(ex.getMessage(), errorCode, detailsWithActionRequired(ex)));
     }
 
     /**
@@ -116,7 +137,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(BadCredentialsException.class)
-    public ResponseEntity<ApiResponse<Void>> handleBadCredentials(BadCredentialsException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleBadCredentials() {
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                 .body(ApiResponse.error("Invalid credentials", "UNAUTHORIZED"));
     }
@@ -136,7 +157,7 @@ public class GlobalExceptionHandler {
      * admin controller in this codebase actually uses.
      */
     @ExceptionHandler(AccessDeniedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleAccessDenied() {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(ApiResponse.error(ErrorCode.AUTH_FORBIDDEN.defaultMessage(), ErrorCode.AUTH_FORBIDDEN.code()));
     }
@@ -155,7 +176,7 @@ public class GlobalExceptionHandler {
      * happens, so a UI can tell the user to refresh and retry instead of showing a generic error.
      */
     @ExceptionHandler(OptimisticLockingFailureException.class)
-    public ResponseEntity<ApiResponse<Void>> handleOptimisticLock(OptimisticLockingFailureException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleOptimisticLock() {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("This record was just updated by another request — refresh and try again.", "CONFLICT"));
     }
@@ -183,7 +204,8 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ApiResponse<Void>> handleDataIntegrityViolation(DataIntegrityViolationException ex,
                                                                           HttpServletRequest request) {
-        log.warn("Data integrity violation on {} {}", request.getMethod(), request.getRequestURI(), ex);
+        log.warn("Data integrity violation on {} {}", LogSanitizer.sanitize(request.getMethod()),
+                LogSanitizer.sanitize(request.getRequestURI()), ex);
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.error("That conflicts with a record that already exists — refresh and try again.", "CONFLICT"));
     }
@@ -211,7 +233,7 @@ public class GlobalExceptionHandler {
      * back raw request body content, which for this API may be customer financial data.
      */
     @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ApiResponse<Void>> handleMalformedRequestBody(HttpMessageNotReadableException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleMalformedRequestBody() {
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error("The request body is missing or malformed.", "MALFORMED_REQUEST_BODY"));
     }
@@ -287,7 +309,7 @@ public class GlobalExceptionHandler {
     /** The {@code Content-Type} counterpart to {@link #handleMethodNotSupported} -- see that
      *  method's own doc comment for the shared fix (Bug 09). */
     @ExceptionHandler(HttpMediaTypeNotSupportedException.class)
-    public ResponseEntity<ApiResponse<Void>> handleMediaTypeNotSupported(HttpMediaTypeNotSupportedException ex) {
+    public ResponseEntity<ApiResponse<Void>> handleMediaTypeNotSupported() {
         return ResponseEntity.status(HttpStatus.UNSUPPORTED_MEDIA_TYPE)
                 .body(ApiResponse.error("That request's Content-Type is not supported for this endpoint.",
                         "UNSUPPORTED_MEDIA_TYPE"));
@@ -353,7 +375,7 @@ public class GlobalExceptionHandler {
                                                                     HttpServletRequest request) {
         log.warn("Rejecting a request with an unusable argument on {} {}. If this is not a bad "
                         + "parameter from the caller, it is a bug in the handler for that route.",
-                request.getMethod(), request.getRequestURI(), ex);
+                LogSanitizer.sanitize(request.getMethod()), LogSanitizer.sanitize(request.getRequestURI()), ex);
         return ResponseEntity.badRequest()
                 .body(ApiResponse.error("One of the request's parameters is not valid.", "INVALID_PARAMETER"));
     }
@@ -374,7 +396,8 @@ public class GlobalExceptionHandler {
         // the log to correlate by timestamp to work out WHICH endpoint failed. Method + path costs
         // nothing and is the first thing you want. Deliberately no query string or body -- this is
         // a financial API and both carry customer data.
-        log.error("Unhandled exception on {} {}", request.getMethod(), request.getRequestURI(), ex);
+        log.error("Unhandled exception on {} {}", LogSanitizer.sanitize(request.getMethod()),
+                LogSanitizer.sanitize(request.getRequestURI()), ex);
         boolean isProd = Arrays.asList(environment.getActiveProfiles()).contains("prod");
         String message = isProd ? "Unexpected error" : "Unexpected error: " + ex.getMessage();
         return ResponseEntity.internalServerError().body(ApiResponse.error(message, "INTERNAL_ERROR"));

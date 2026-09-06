@@ -12,10 +12,15 @@ vi.mock('../api/endpoints', () => ({
 }));
 
 function group(merchantName: string, count: number): MerchantGroup {
+  const ids = Array.from({ length: count }, (_, i) => `${merchantName}-${i}`);
   return {
     merchantId: `m-${merchantName}`,
     merchantName,
-    transactionIds: Array.from({ length: count }, (_, i) => `${merchantName}-${i}`),
+    transactionIds: ids,
+    transactions: ids.map((id, i) => ({
+      id, date: `2026-08-${String(10 + i).padStart(2, '0')}`,
+      description: `${merchantName} purchase ${i + 1}`, amount: 100 * (i + 1), type: 'EXPENSE' as const,
+    })),
   };
 }
 
@@ -105,5 +110,87 @@ describe('MerchantGroupReviewCard', () => {
     expect(screen.getAllByRole('combobox')[1]).toHaveTextContent('Choose category');
     expect(screen.getByRole('button', { name: /apply to 3 transactions/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /apply to 5 transactions/i })).not.toBeDisabled();
+  });
+});
+
+/**
+ * Reported directly: "user should have a drop down to see all the groups transaction" --
+ * applying a category to "5 transactions" sight-unseen asked for trust the card gave no way to
+ * check. Each group can now expand into the actual rows it would apply to.
+ */
+describe('MerchantGroupReviewCard — expand to preview', () => {
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockResolvedValue([
+      { id: 'cat-1', name: 'Food', isSystem: false, icon: 'tag', color: 'gray' },
+    ] as any);
+    vi.mocked(categoriesApi.options).mockResolvedValue({ icons: [], colors: [] } as any);
+  });
+
+  it('does not show any transaction rows until expanded', async () => {
+    vi.mocked(transactionsApi.groupsNeedsReview).mockResolvedValue([group('SWIGGY', 2)]);
+    renderCard();
+
+    await screen.findByText('SWIGGY');
+
+    expect(screen.queryByText('SWIGGY purchase 1')).not.toBeInTheDocument();
+  });
+
+  it('shows each transaction in the group once expanded', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.groupsNeedsReview).mockResolvedValue([group('SWIGGY', 2)]);
+    renderCard();
+
+    await screen.findByText('SWIGGY');
+    await user.click(screen.getByRole('button', { name: /show the 2 transactions for swiggy/i }));
+
+    expect(await screen.findByText('SWIGGY purchase 1')).toBeInTheDocument();
+    expect(screen.getByText('SWIGGY purchase 2')).toBeInTheDocument();
+    expect(screen.getByText('-₹100')).toBeInTheDocument();
+    expect(screen.getByText('-₹200')).toBeInTheDocument();
+  });
+
+  it('collapses again on a second click', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.groupsNeedsReview).mockResolvedValue([group('SWIGGY', 2)]);
+    renderCard();
+
+    await screen.findByText('SWIGGY');
+    const toggle = screen.getByRole('button', { name: /show the 2 transactions for swiggy/i });
+    await user.click(toggle);
+    await screen.findByText('SWIGGY purchase 1');
+
+    await user.click(screen.getByRole('button', { name: /hide the 2 transactions for swiggy/i }));
+
+    await waitFor(() => expect(screen.queryByText('SWIGGY purchase 1')).not.toBeInTheDocument());
+  });
+
+  it('keeps each group\'s expanded state independent of the others', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.groupsNeedsReview).mockResolvedValue([group('SWIGGY', 2), group('UBER', 2)]);
+    renderCard();
+
+    await screen.findByText('SWIGGY');
+    await screen.findByText('UBER');
+    await user.click(screen.getByRole('button', { name: /show the 2 transactions for swiggy/i }));
+
+    expect(await screen.findByText('SWIGGY purchase 1')).toBeInTheDocument();
+    expect(screen.queryByText('UBER purchase 1')).not.toBeInTheDocument();
+  });
+
+  it('still lets the transactions preview show credits with the same sign convention as the Ledger table', async () => {
+    const user = userEvent.setup();
+    vi.mocked(transactionsApi.groupsNeedsReview).mockResolvedValue([
+      {
+        merchantId: 'm-REFUND', merchantName: 'REFUND CO', transactionIds: ['r-0'],
+        transactions: [{ id: 'r-0', date: '2026-08-10', description: 'Refund received', amount: 500, type: 'INCOME' }],
+      },
+    ] as any);
+    renderCard();
+
+    await screen.findByText('REFUND CO');
+    await user.click(screen.getByRole('button', { name: /show the 1 transactions for refund co/i }));
+
+    const amount = await screen.findByText('+₹500');
+    expect(amount).toHaveClass('text-success');
   });
 });

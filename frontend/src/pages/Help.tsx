@@ -48,7 +48,9 @@ const ARTICLES: HelpArticle[] = [
   { category: 'Troubleshooting', question: 'My statement showed "0 transactions found" — what happened?', answer: 'This usually means the file\'s header row uses column names Fynora didn\'t recognize. Try re-exporting from your bank with default column names, or contact support with the file.' },
   { category: 'Troubleshooting', question: 'I can\'t re-import a statement into a deleted account.', answer: 'That\'s expected — a deleted account can\'t receive new statements. Restore isn\'t currently self-serve; contact support if you need this reversed within the 7-day window.' },
 
-  { category: 'Contact Support', question: 'How do I reach support?', answer: `Email ${SUPPORT_EMAIL} with a description of the issue — for import problems, attaching the file (with sensitive numbers redacted if you prefer) speeds up a diagnosis.` },
+  { category: 'Contact Support', question: 'How do I reach support?', answer: `Already a Fynora customer? Log in and open Support from the Help menu (top right) to file a ticket — you can attach a screenshot or file, and track its status. Not signed in yet, or reaching out about something else? Email ${SUPPORT_EMAIL} — for import problems, attaching the file (with sensitive numbers redacted if you prefer) speeds up a diagnosis.` },
+  { category: 'Contact Support', question: 'Can I check the status of a support ticket I filed?', answer: 'Yes — "My Tickets," reachable from the Help menu once you\'re logged in, lists every ticket you\'ve filed along with its current status (Open, In Progress, Resolved, or Closed).' },
+  { category: 'Contact Support', question: 'What\'s the difference between a support ticket and feedback?', answer: 'A support ticket is for something specific that\'s broken or wrong with your account — it gets a status and a response. "Send feedback" (also in the Help menu) is for a general bug report, feature request, or idea — it\'s read, but doesn\'t get an individual reply or a status you can track.' },
 ];
 
 const CATEGORIES = Array.from(new Set(ARTICLES.map((a) => a.category)));

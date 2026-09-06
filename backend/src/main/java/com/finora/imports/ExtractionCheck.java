@@ -9,6 +9,7 @@ import com.finora.exception.ErrorCode;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The one rule that decides whether the engine got anything usable out of a document.
@@ -104,15 +105,42 @@ final class ExtractionCheck {
                             + "or app usually contain text and import correctly.");
         }
 
-        boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
+        // Checked before the generic locatedATable branch below, and for the same reason
+        // hasNoExtractableText() is checked first: it is the most specific thing knowable. A
+        // statement that states its own zero activity did not defeat extraction -- there was
+        // nothing here to extract -- and IMPORT_007's "could not read any transactions" is simply
+        // false about the cause. See ExplicitZeroActivityDetector's own doc comment for the
+        // evidence and IMPORT_NO_ACTIVITY_IN_PERIOD's for why this is a separate code rather than
+        // a reworded IMPORT_007.
         int recoveredLines = staged.unparseableRows() == null ? 0 : staged.unparseableRows().size();
-        throw new ApiException(
-                locatedATable ? ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND : ErrorCode.IMPORT_NO_HEADER_DETECTED,
+        if (ctx != null && ctx.explicitZeroActivityDeclared()) {
+            // Same recovered-lines suffix the generic branch below appends, and for the same
+            // reason: a row declaring the statement's own zero activity does not mean every OTHER
+            // row in this section parsed cleanly. A boilerplate/disclaimer row can still land in
+            // unparseableRows() alongside it, and that diagnostic must not silently vanish just
+            // because this branch's cause is different from IMPORT_007's.
+            throw new ApiException(ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD,
+                    ErrorCode.IMPORT_NO_ACTIVITY_IN_PERIOD.defaultMessage()
+                            + (recoveredLines > 0
+                            ? " " + recoveredLines + " line(s) of text were recovered and recorded for review."
+                            : ""));
+        }
+
+        boolean locatedATable = ctx != null && ctx.buildMetadata().tables() > 0;
+        ErrorCode code = locatedATable ? ErrorCode.IMPORT_NO_TRANSACTIONS_FOUND : ErrorCode.IMPORT_NO_HEADER_DETECTED;
+        throw new ApiException(code.defaultStatus(), code,
                 (locatedATable
                         ? "Finora found a transaction table in this statement but could not read any transactions from it."
                         : "Finora could not find a transaction table anywhere in this statement.")
                         + (recoveredLines > 0
                         ? " " + recoveredLines + " line(s) of text were recovered and recorded for review."
-                        : ""));
+                        : ""),
+                // ImportJobWorker.carriesRecoveredEvidence reads this to tell "genuinely nothing
+                // here" (a summary, a T&C page -- FAIL_FAST, no admin needed) apart from "the
+                // engine saw date/amount-shaped text it could not anchor into a table" (real
+                // evidence a statement exists, worth the same triage queue an unrecognised
+                // exception gets). See that method's own doc comment for why this distinction
+                // exists and the real document that exposed the gap.
+                Map.of("recoveredLines", recoveredLines));
     }
 }

@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Users from './Users';
 import { useAdminAuth } from '../context/AdminAuthContext';
 import { mockAdminAuthState } from '../test/mockAdminAuth';
-import { adminUsersApi, adminRolesApi } from '../api/endpoints';
+import { adminUsersApi } from '../api/endpoints';
 import type { UserSummaryDto } from '../types';
 
 // AdminLayout now renders ThemeToggle (dark-mode support), which calls useTheme() --

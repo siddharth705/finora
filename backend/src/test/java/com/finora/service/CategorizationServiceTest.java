@@ -66,6 +66,163 @@ class CategorizationServiceTest {
         return m;
     }
 
+    /** An APPROVED merchant -- a person has confirmed this identity, so its canonical name is
+     *  trusted enough to retry the keyword table against. See
+     *  CategorizationService.suggestCategoryWithMerchantFallback. */
+    private Merchant merchantWith(UUID id, String canonicalName) {
+        Merchant m = new Merchant();
+        ReflectionTestUtils.setField(m, "id", id);
+        m.setCanonicalName(canonicalName);
+        m.setLifecycleStatus(Merchant.Lifecycle.APPROVED);
+        return m;
+    }
+
+    /** A TEMPORARY merchant -- created automatically by the engine's first-significant-token
+     *  guess, never confirmed by anyone. */
+    private Merchant temporaryMerchantWith(UUID id, String canonicalName) {
+        Merchant m = merchantWith(id, canonicalName);
+        m.setLifecycleStatus(Merchant.Lifecycle.TEMPORARY);
+        return m;
+    }
+
+    @Test
+    void suggest_fallsBackToMerchantCanonicalName_whenRawDescriptionHasNoKeyword() {
+        UUID merchantId = UUID.randomUUID();
+        // Simulates a merchant whose canonical name was correctly identified from an EARLIER
+        // transaction's narration (or an admin/user rename) -- this transaction's own raw text
+        // carries no recognizable brand token at all.
+        Merchant merchant = merchantWith(merchantId, "Swiggy Bangalore");
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchant);
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggest(userId, "UPI/REF88213764/SETTLEMENT");
+
+        assertThat(suggestion.category()).isEqualTo("Dining");
+        assertThat(suggestion.source()).isEqualTo("rule");
+        assertThat(suggestion.decisionSource()).isEqualTo(Transaction.DecisionSource.KEYWORD_MATCH);
+    }
+
+    @Test
+    void suggestReadOnly_fallsBackToMerchantCanonicalName_whenRawDescriptionHasNoKeyword() {
+        UUID merchantId = UUID.randomUUID();
+        Merchant merchant = merchantWith(merchantId, "Swiggy Bangalore");
+        when(merchantNormalizationEngine.resolveReadOnly(eq(userId), anyString()))
+                .thenReturn(Optional.of(merchant));
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggestReadOnly(userId, "UPI/REF88213764/SETTLEMENT");
+
+        assertThat(suggestion.category()).isEqualTo("Dining");
+        assertThat(suggestion.decisionSource()).isEqualTo(Transaction.DecisionSource.KEYWORD_MATCH);
+    }
+
+    @Test
+    void suggest_doesNotRetryAgainstAnEngineGuessedTemporaryMerchantName() {
+        // MerchantNormalizationEngine groups an unseen description onto an existing merchant by
+        // first significant token -- so a merchant created from "UPI/RAJESH TEA CAFE/..." absorbs
+        // a later "UPI/RAJESH KUMAR/..." on the token "rajesh". Retrying keywords against that
+        // GUESSED canonical name would file a person-to-person transfer as Dining, at rule-grade
+        // confidence and unflagged. Only an APPROVED (human-confirmed) name may be retried.
+        UUID merchantId = UUID.randomUUID();
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString()))
+                .thenReturn(temporaryMerchantWith(merchantId, "Upi Rajesh Tea Cafe"));
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggest(userId, "UPI/RAJESH KUMAR/rajesh1@ybl/REF8812");
+
+        assertThat(suggestion.category()).isNotEqualTo("Dining");
+    }
+
+    @Test
+    void suggestAndSuggestReadOnly_agreeOnAFirstSightingDescription() {
+        // The preview must show what the confirm will produce -- both methods' doc comments say so
+        // explicitly. suggest() resolves through resolve(), which CREATES the merchant (and so
+        // always had a canonical name to retry against); suggestReadOnly() gets nothing on a miss.
+        // Gating the retry on APPROVED is what keeps them identical, because a freshly created
+        // merchant is TEMPORARY.
+        UUID merchantId = UUID.randomUUID();
+        // The 4-digit reference is the point, not incidental: CategoryRules.extractMerchant strips
+        // any \d{4,} token, so the canonical name this WOULD produce ("Imps To Anil Verma") has
+        // "imps"/"to" adjacent and matches the Transfer keyword "imps to" -- while the raw
+        // description does not. That is exactly the gap that made the two paths disagree.
+        String firstSighting = "IMPS 9999 TO ANIL VERMA";
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString()))
+                .thenReturn(temporaryMerchantWith(merchantId, "Imps To Anil Verma"));
+        when(merchantNormalizationEngine.resolveReadOnly(eq(userId), anyString()))
+                .thenReturn(Optional.empty());
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var confirmSide = categorizationService.suggest(userId, firstSighting);
+        var previewSide = categorizationService.suggestReadOnly(userId, firstSighting);
+
+        assertThat(confirmSide.category()).isEqualTo(previewSide.category());
+        assertThat(confirmSide.source()).isEqualTo(previewSide.source());
+        assertThat(confirmSide.decisionSource()).isEqualTo(previewSide.decisionSource());
+        assertThat(confirmSide.confidence()).isEqualTo(previewSide.confidence());
+    }
+
+    @Test
+    void isUnconfirmedGuess_coversBothUnconfirmedSourcesAndNothingElse() {
+        // The single definition the review-queue flag and the learning gate both derive from --
+        // if these two ever disagree, a misfire becomes invisible AND permanently learned.
+        assertThat(CategorizationService.isUnconfirmedGuess("default", "Other")).isTrue();
+        assertThat(CategorizationService.isUnconfirmedGuess("structural_p2p", "Personal Transfer")).isTrue();
+        // Review changed it -- a real decision, worth learning from. "Transfer" is a genuine
+        // change now that it is no longer where the detector puts these: a user moving a row from
+        // "Paid a Person" to "Transfer" is telling us it really was money moved, not spent.
+        assertThat(CategorizationService.isUnconfirmedGuess("structural_p2p", "Transfer")).isFalse();
+        assertThat(CategorizationService.isUnconfirmedGuess("structural_p2p", "Rent")).isFalse();
+        assertThat(CategorizationService.isUnconfirmedGuess("default", "Groceries")).isFalse();
+        // Real matches are never unconfirmed guesses.
+        assertThat(CategorizationService.isUnconfirmedGuess("rule", "Dining")).isFalse();
+        assertThat(CategorizationService.isUnconfirmedGuess("learned", "Dining")).isFalse();
+        assertThat(CategorizationService.isUnconfirmedGuess("user_rule", "Dining")).isFalse();
+        assertThat(CategorizationService.isUnconfirmedGuess(null, "Other")).isFalse();
+    }
+
+    @Test
+    void suggest_detectsStructuralP2pTransfer_whenNothingElseMatches() {
+        UUID merchantId = UUID.randomUUID();
+        Merchant merchant = merchantWith(merchantId, "Unknown Merchant");
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchant);
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggest(userId, "UPI-RAJESH KUMAR-sampleuser@ybl-REF881234");
+
+        // The literal, not the constant: this test exists to pin the product decision that a
+        // detected person-to-person payment does NOT claim to be a transfer. Asserting
+        // P2P_CATEGORY would just restate whatever the constant happens to say.
+        assertThat(suggestion.category()).isEqualTo("Personal Transfer");
+        assertThat(suggestion.category()).isNotEqualTo("Transfer");
+        // Direction-neutral: the detector never inspects txn_type, and ~23% of the rows it matches
+        // on the real corpus are money received, so a name asserting a direction is wrong for them.
+        assertThat(suggestion.category()).doesNotContain("Paid").doesNotContain("Received");
+        assertThat(suggestion.source()).isEqualTo("structural_p2p");
+        assertThat(suggestion.decisionSource()).isEqualTo(Transaction.DecisionSource.STRUCTURAL_P2P);
+    }
+
+    @Test
+    void suggest_keywordMatchStillWinsOverStructuralP2pDetection() {
+        // "UBER" is a Transport keyword; even though this narration also carries a UPI marker,
+        // the keyword table -- which runs first -- must still win. The P2P detector is wired in
+        // strictly as the last resort, never as an override.
+        UUID merchantId = UUID.randomUUID();
+        Merchant merchant = merchantWith(merchantId, "Uber");
+        when(merchantNormalizationEngine.resolve(eq(userId), anyString())).thenReturn(merchant);
+        when(learningRepository.findByUserIdAndMerchantId(userId, merchantId)).thenReturn(List.of());
+
+        var suggestion = categorizationService.suggest(userId, "UPI-UBER TRIP-sampleuser@ybl-REF881234");
+
+        assertThat(suggestion.category()).isEqualTo("Transport");
+        assertThat(suggestion.decisionSource()).isEqualTo(Transaction.DecisionSource.KEYWORD_MATCH);
+    }
+
+    @Test
+    void decisionSourceFor_mapsStructuralP2pString() {
+        assertThat(CategorizationService.decisionSourceFor("structural_p2p"))
+                .isEqualTo(Transaction.DecisionSource.STRUCTURAL_P2P);
+    }
+
     @Test
     void suggest_fallsBackToRuleEngine_whenMerchantHasNoLearnedDistribution() {
         UUID merchantId = UUID.randomUUID();

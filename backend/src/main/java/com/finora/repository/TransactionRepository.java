@@ -68,6 +68,69 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     @Query("SELECT t.accountId AS accountId, COUNT(t) AS count FROM Transaction t WHERE t.userId = :userId GROUP BY t.accountId")
     List<AccountTransactionCount> countByAccountForUser(@Param("userId") UUID userId);
 
+    /** Projection backing the counterparty backfill: the narration is the classifier's ONLY input,
+     *  so a full entity would be loaded per row for two fields. Also keeps the sweep out of the
+     *  persistence context entirely -- see {@link #applyCounterpartyTyping} for why that matters. */
+    interface CounterpartyBackfillRow {
+        UUID getId();
+        String getDescription();
+    }
+
+    /**
+     * One page of rows the counterparty classifier has not answered for at the current revision.
+     *
+     * <p>NULL is the never-typed state (V143); {@code < :version} is the re-type-after-a-bump state
+     * described on {@link com.finora.util.CounterpartyClassifier#VERSION}. Both are served by
+     * {@code idx_transactions_counterparty_classifier_version}, and in the drained steady state the
+     * predicate matches nothing, so the scheduled sweep costs an empty index probe.
+     *
+     * <p>No ORDER BY, deliberately. Progress does not depend on ordering: every returned row either
+     * gets stamped (and leaves the candidate set) or fails and is retried, so a page is never the
+     * same page twice unless nothing in it could be typed at all. Paying for a sort of the whole
+     * candidate set on every pass would buy determinism nothing here needs.
+     *
+     * <p>Soft-deleted rows are excluded for free by {@code Transaction}'s {@code @SQLRestriction},
+     * and that is the behaviour wanted: typing a row the user cannot see is wasted work, and if one
+     * is ever restored it re-enters this query still carrying a NULL version.
+     *
+     * <p><b>When a user-facing correction for counterparty exists, it needs its own exclusion
+     * here</b> -- the same role {@code category_manually_set} plays for the category columns. A
+     * version comparison alone will happily overwrite a human's answer.
+     */
+    @Query("""
+            SELECT t.id AS id, t.description AS description
+            FROM Transaction t
+            WHERE t.counterpartyClassifierVersion IS NULL
+               OR t.counterpartyClassifierVersion < :version
+            """)
+    List<CounterpartyBackfillRow> findRowsNeedingCounterpartyTyping(@Param("version") short version,
+                                                                     Pageable pageable);
+
+    /**
+     * Writes one row's counterparty answer.
+     *
+     * <p>A bulk update rather than loading the entity and saving it, for a reason beyond speed: a
+     * JPQL update bypasses Hibernate's lifecycle callbacks, so it does NOT touch {@code updated_at}
+     * or bump the optimistic-lock {@code version}. Backfilling a derived column must not look like
+     * a user editing their transaction, and it must not lose a race against someone who genuinely
+     * is editing it.
+     *
+     * @return 1 when the row was updated, 0 when it no longer matches (deleted between the
+     *         discovery query and this write) -- the caller counts that as skipped, not failed
+     */
+    @Modifying
+    @Query("""
+            UPDATE Transaction t
+            SET t.counterpartyType = :type,
+                t.counterpartyKey = :key,
+                t.counterpartyClassifierVersion = :version
+            WHERE t.id = :id
+            """)
+    int applyCounterpartyTyping(@Param("id") UUID id,
+                                 @Param("type") com.finora.util.CounterpartyType type,
+                                 @Param("key") String key,
+                                 @Param("version") short version);
+
     List<Transaction> findByUserId(UUID userId);
 
     /** Like {@link #findByUserId}, but scoped to a specific set of accounts -- for a caller that
@@ -157,6 +220,11 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      * actual collection bound to an IN parameter regardless of whether this branch of the OR
      * chain ends up mattering for a given row, and an empty list correctly evaluates that
      * sub-clause to false rather than matching everything.
+     *
+     * categoryIds is resolved the same way, one layer up, for the same reason: categoryId is a
+     * plain UUID column with no JPA association to Category (see TransactionGroupingService's own
+     * doc comment for the identical constraint on merchantId), so `t.categoryId IN :categoryIds`
+     * is as close as this query can get to matching on a category's NAME directly.
      */
     /**
      * Deleted-account leak (see {@link #findByUserIdAndAccountIdIn}'s own doc comment): when the
@@ -174,6 +242,7 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
           AND (:accountId IS NOT NULL OR t.accountId IN :liveAccountIds)
           AND (:categoryId IS NULL OR t.categoryId = :categoryId)
           AND (:type IS NULL OR t.txnType = :type)
+          AND (:status IS NULL OR t.reconciliationStatus = :status)
           AND (:dateFrom IS NULL OR t.txnDate >= :dateFrom)
           AND (:dateTo IS NULL OR t.txnDate <= :dateTo)
           AND (:amountMin IS NULL OR t.amount >= :amountMin)
@@ -181,6 +250,7 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
           AND (:keyword IS NULL
                OR LOWER(t.description) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\'
                OR LOWER(t.merchant) LIKE LOWER(CONCAT('%', CAST(:keyword AS string), '%')) ESCAPE '\\'
+               OR t.categoryId IN :categoryIds
                OR t.accountId IN (
                     SELECT a.id FROM Account a
                     WHERE a.userId = :userId
@@ -198,20 +268,27 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
             @Param("accountId") UUID accountId,
             @Param("categoryId") UUID categoryId,
             @Param("type") Transaction.Type type,
+            @Param("status") Transaction.ReconciliationStatus status,
             @Param("dateFrom") LocalDate dateFrom,
             @Param("dateTo") LocalDate dateTo,
             @Param("amountMin") BigDecimal amountMin,
             @Param("amountMax") BigDecimal amountMax,
             @Param("keyword") String keyword,
             @Param("bankIds") List<String> bankIds,
+            @Param("categoryIds") List<UUID> categoryIds,
             @Param("liveAccountIds") List<UUID> liveAccountIds,
             Pageable pageable
     );
 
+    /** A2 (two-pass mobile audit, 2026-09-01). Description compared space-trimmed and case-folded,
+     *  not raw -- see {@link #findPotentialDuplicatesByUserAndAccountIdIn}'s doc comment for why.
+     *  No production call site (only {@code TransactionRepositoryIT} exercises it); kept consistent
+     *  with its siblings so a future caller doesn't silently inherit the exact-match bug this fixed
+     *  elsewhere. */
     @Query("""
         SELECT t FROM Transaction t
         WHERE t.userId = :userId AND t.accountId = :accountId AND t.txnDate = :date
-          AND t.amount = :amount AND t.description = :description
+          AND t.amount = :amount AND LOWER(TRIM(t.description)) = LOWER(TRIM(:description))
         """)
     List<Transaction> findPotentialDuplicates(
             @Param("userId") UUID userId, @Param("accountId") UUID accountId,
@@ -224,11 +301,15 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
      * created the account this import is going into. Also incidentally catches "you already
      * logged this transaction under a different account by mistake," which the account-scoped
      * version can't.
+     *
+     * <p>No call site -- kept consistent with {@link
+     * #findPotentialDuplicatesByUserAndAccountIdIn}'s description normalization for the same
+     * reason as {@link #findPotentialDuplicates} above.
      */
     @Query("""
         SELECT t FROM Transaction t
         WHERE t.userId = :userId AND t.txnDate = :date
-          AND t.amount = :amount AND t.description = :description
+          AND t.amount = :amount AND LOWER(TRIM(t.description)) = LOWER(TRIM(:description))
         """)
     List<Transaction> findPotentialDuplicatesByUser(
             @Param("userId") UUID userId, @Param("date") LocalDate date,
@@ -237,11 +318,29 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
     /** Like {@link #findPotentialDuplicatesByUser}, scoped to a set of live account ids --
      *  excludes a soft-deleted account's transactions, which the unscoped version would keep
      *  matching against forever (see {@link #findByUserIdAndAccountIdIn}'s own doc comment).
-     *  Pass the caller's own live account ids rather than re-deriving them here. */
+     *  Pass the caller's own live account ids rather than re-deriving them here.
+     *
+     *  <p>A2 (two-pass mobile audit, 2026-09-01; see
+     *  docs/project-management/plans/mobile-correctness-trust-roadmap.md, Track A). Description
+     *  compared space-trimmed and case-folded ({@code LOWER(TRIM(...))} on both sides), not the raw
+     *  column value: two extractions of the same underlying bank line (a CSV export vs. a
+     *  re-scraped PDF, or a bank that shifts capitalization between monthly exports) can differ
+     *  by nothing more than case or a stray leading/trailing space, and exact equality treated
+     *  those as two different transactions -- a false negative that silently double-counts real
+     *  money, with no duplicate badge ever shown to the user.
+     *
+     *  <p>This SQL is the CONSTRAINT the two Java paths are held to, not the other way round:
+     *  {@code TRIM()} here strips the space character only, while Java's {@code String.trim()}
+     *  also strips tabs and newlines, so {@code DuplicateIndex.key} and {@code
+     *  ReconciliationService.duplicateKey} both go through {@code
+     *  com.finora.util.DuplicateMatching.normalizeDescription} to match this exactly rather than
+     *  inlining {@code trim()}. {@code DuplicateIndexIT} asserts that equivalence against a real
+     *  Postgres -- widening either side without the other silently changes which duplicates get
+     *  surfaced, which is the failure mode this whole cluster of comments exists to prevent. */
     @Query("""
         SELECT t FROM Transaction t
         WHERE t.userId = :userId AND t.txnDate = :date
-          AND t.amount = :amount AND t.description = :description
+          AND t.amount = :amount AND LOWER(TRIM(t.description)) = LOWER(TRIM(:description))
           AND t.accountId IN :accountIds
         """)
     List<Transaction> findPotentialDuplicatesByUserAndAccountIdIn(
@@ -364,6 +463,52 @@ public interface TransactionRepository extends JpaRepository<Transaction, UUID> 
            """)
     List<LocalDate> findDistinctTransactionDates(@Param("userId") UUID userId,
                                                    @Param("accountIds") java.util.Collection<UUID> accountIds);
+
+    /**
+     * Whether this account already has a live transaction dated after {@code afterDate} that
+     * isn't part of the statement now being confirmed.
+     *
+     * <p>A1 (two-pass mobile audit, 2026-09-01; see
+     * docs/project-management/plans/mobile-correctness-trust-roadmap.md, Track A). {@code
+     * ImportService.isMostRecentStatementForAccount} only ever compared a statement against OTHER
+     * STATEMENTS. With no sibling statement newer than this one, an older-but-late-arriving
+     * import's corroborated closing balance was applied outright, silently discarding whatever a
+     * live transaction dated after it had already contributed to the balance, while that
+     * transaction stayed fully visible (and counted) in the Ledger -- two disagreeing numbers with
+     * no warning.
+     *
+     * <p><b>Which rows the two branches actually cover, precisely -- do not narrow this without
+     * re-reading it.</b> {@code statementImportId IS NULL} covers MANUAL rows only ({@code
+     * TransactionService.create} is the sole path that leaves it null; {@code
+     * ImportService.persistSection} is the only {@code setStatementImportId} call site in the whole
+     * of {@code main/}). A Gmail-synced receipt is NOT null here -- {@code
+     * GmailReviewService.approve} routes through {@code ImportService.confirmSession}, so it gets a
+     * {@code StatementImport} row of its own like any other import. Gmail rows are therefore caught
+     * by the {@code <> :excludingStatementId} branch, not by the null branch. Both branches are
+     * load-bearing for a different source, and the {@code IS NULL} half is still required on its own
+     * terms because SQL {@code NULL <> x} is unknown rather than true, so a manual row would
+     * otherwise be silently excluded.
+     *
+     * <p>Excludes the statement being confirmed by id, not by date: {@code ImportService.confirm}
+     * has already saved this statement's own rows (with this statement's id) by the time this runs.
+     * With today's caller that exclusion is belt-and-braces rather than load-bearing -- {@code
+     * afterDate} is the statement's own {@code maxDate}, so none of its rows can satisfy {@code
+     * txnDate > :afterDate} anyway -- but it becomes essential the moment the boundary is moved to
+     * the printed period end, which is the obvious next edit here.
+     */
+    @Query("""
+           SELECT CASE WHEN EXISTS (
+                  SELECT 1 FROM Transaction t
+                   WHERE t.userId = :userId
+                     AND t.accountId = :accountId
+                     AND t.txnDate > :afterDate
+                     AND (t.statementImportId IS NULL OR t.statementImportId <> :excludingStatementId)
+                  ) THEN true ELSE false END
+           """)
+    boolean existsLiveTransactionAfterDate(@Param("userId") UUID userId,
+                                            @Param("accountId") UUID accountId,
+                                            @Param("afterDate") LocalDate afterDate,
+                                            @Param("excludingStatementId") UUID excludingStatementId);
 
     /**
      * Every refund leg this user has, whenever it landed.

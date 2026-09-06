@@ -175,6 +175,17 @@ public class PdfMetadataExtractor {
             Pattern.compile("(?i)^\\s*Statement\\s+of\\s+Account\\s*:?\\s*$");
     private static final Pattern ACCOUNT_NUMBER_DIGITS = Pattern.compile("\\d{6,20}");
 
+    // SAVING_ACCOUNT_NO_SAME_LINE: a real ICICI savings statement's own account-number field is
+    // embedded mid-sentence, ended by a PERIOD rather than a colon -- "Statement of Transactions
+    // in Saving Account no. <number> in INR for the period ...". ACCOUNT_NUMBER's own
+    // labelPattern-built regex requires a colon for its mid-line branch (see labelPattern's own
+    // doc comment), so this real shape matches neither branch: it is not at the start of the line
+    // (ACCOUNT_NUMBER's start-anchored branch), and it has no colon (ACCOUNT_NUMBER's mid-line
+    // branch). Same optional-colon, unanchored shape as STATEMENT_OF_ACCOUNT_SAME_LINE just above,
+    // for the same reason -- "for the period ..." always trails the value on the same line.
+    private static final Pattern SAVING_ACCOUNT_NO_SAME_LINE =
+            Pattern.compile("(?i)\\bSaving(?:s)?\\s+Account\\s*no\\.?\\s*:?\\s*(\\d{6,20})\\b");
+
     // The account PRODUCTS a statement names when it banners its own identity ("SAVINGS ACCOUNT -
     // <number>") rather than labelling a field. Held as one shared constant, not inlined, because
     // this vocabulary is the thing that drifts: the same words already appear inside
@@ -215,9 +226,13 @@ public class PdfMetadataExtractor {
     // same-line-anywhere usage in extract() below) -- verified against a real SBI credit-card
     // statement, whose "Credit Card Number" label sits alone on its own line, with the masked
     // value on the very next one.
-    private static final String CARD_NUMBER_LABEL_SRC =
+    // Package-private (not private): reused by AccountNumberGridExtractor for the same label/value
+    // vocabulary against raw PositionedText, rather than re-declaring it a second time to drift
+    // from this one -- same reuse-over-duplication discipline CreditCardSummaryExtractor's own doc
+    // comment already documents for StatementSummaryExtractor's row utilities.
+    static final String CARD_NUMBER_LABEL_SRC =
             "(?:(?:Primary\\s+)?(?:Credit\\s+)?Card\\s*(?:No\\.?|Number)|Account\\s*Number)";
-    private static final Pattern CARD_NUMBER_LABEL = Pattern.compile("(?i)" + CARD_NUMBER_LABEL_SRC);
+    static final Pattern CARD_NUMBER_LABEL = Pattern.compile("(?i)" + CARD_NUMBER_LABEL_SRC);
 
     // CARD_NUMBER_VALUE: a card/account number exactly as a real statement prints it -- either the
     // bank's own masked form (X/x/* mask characters interleaved with visible digit groups, e.g.
@@ -227,8 +242,8 @@ public class PdfMetadataExtractor {
     // digit count afterward. Keeping that check separate from the regex, rather than trying to
     // express "6-20 characters, at least 2 real digits, ends in a digit" as one pattern, is what
     // keeps this simple enough to verify by eye and to test.
-    private static final String CARD_NUMBER_VALUE_SRC = "[\\dXx*]{2,}(?:[\\s-][\\dXx*]{2,})*";
-    private static final Pattern CARD_NUMBER_VALUE = Pattern.compile(CARD_NUMBER_VALUE_SRC);
+    static final String CARD_NUMBER_VALUE_SRC = "[\\dXx*]{2,}(?:[\\s-][\\dXx*]{2,})*";
+    static final Pattern CARD_NUMBER_VALUE = Pattern.compile(CARD_NUMBER_VALUE_SRC);
 
     // A_C_ACCOUNT_NUMBER_SAME_LINE: a real canara statement's own account-number field never says
     // "Account"/"Account Number"/"Card Number" at all -- it states the number inline as
@@ -322,9 +337,14 @@ public class PdfMetadataExtractor {
      */
     private static final DateTimeFormatter[] PERIOD_DATE_FORMATS;
     static {
-        PERIOD_DATE_FORMATS = new DateTimeFormatter[DATE_FORMATS.length + 1];
+        PERIOD_DATE_FORMATS = new DateTimeFormatter[DATE_FORMATS.length + 2];
         System.arraycopy(DATE_FORMATS, 0, PERIOD_DATE_FORMATS, 0, DATE_FORMATS.length);
         PERIOD_DATE_FORMATS[DATE_FORMATS.length] = ci("d MMM yy");
+        // "Jun 01, 2026" -- a real BOB.pdf statement's period range, abbreviated month FIRST with
+        // a comma before the year. DATE_FORMATS already has "d MMM, yyyy" (day first) and
+        // "MMMM d, yyyy" (full month name) but neither covers this exact token order; scoped to
+        // periods only, same reasoning as "d MMM yy" above.
+        PERIOD_DATE_FORMATS[DATE_FORMATS.length + 1] = ci("MMM d, yyyy");
     }
 
     // One date-shaped token, in any form the formats above accept. Used to pull a date out of a
@@ -332,8 +352,13 @@ public class PdfMetadataExtractor {
     // match, so "10 Aug 26   Amount" fails outright without this.
     // Self-grouping, deliberately: this is concatenated into larger patterns, and a bare top-level
     // alternation would rebind against whatever follows rather than staying one token.
+    //
+    // Bug fix: a real canara.pdf statement's period range hyphenates ALL THREE parts --
+    // "02-Jul-2026" -- where the first alternative previously only tolerated an optional comma
+    // (not a hyphen) between the month and the year. [-,]? is purely additive: every existing
+    // matched shape ("16 Feb 2026", "09 Aug, 2026") still matches unchanged.
     private static final String DATE_TOKEN_SRC =
-            "(?:\\d{1,2}[-/ ][A-Za-z]{3,9},?\\s?\\d{2,4}|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}"
+            "(?:\\d{1,2}[-/ ][A-Za-z]{3,9}[-,]?\\s?\\d{2,4}|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}"
                     + "|[A-Za-z]{3,9}\\s\\d{1,2},?\\s\\d{4})";
     private static final Pattern DATE_TOKEN = Pattern.compile("(?i)" + DATE_TOKEN_SRC);
 
@@ -352,6 +377,24 @@ public class PdfMetadataExtractor {
     private static final Pattern PERIOD_RANGE_VALUE = Pattern.compile(
             "(?i)(" + DATE_TOKEN_SRC + ")\\s*(?:to|[-\u2013])\\s*(" + DATE_TOKEN_SRC + ")");
 
+    // GRID_PERIOD_LABEL. Just the label, mid-line and with no colon after it -- the header row of a
+    // multi-column payment-summary grid, where the range lives on the row BELOW rather than on the
+    // label's own line ("Total Payment Due  Minimum Payment Due  Statement Period  Payment Due
+    // Date  ...", then all five values on the next row). Verified against the real Axis Bank
+    // credit-card statement in the corpus, whose printed period was being dropped entirely.
+    //
+    // Neither existing pattern can reach that shape, and the gap was that they GATE the grid
+    // lookahead: STATEMENT_PERIOD (via labelPattern) needs the label to start the line or be
+    // followed by a colon, and STATEMENT_PERIOD_ANYWHERE needs the range on the label's own line.
+    // So the "label sits on a header row and the range on a row below" fallback that
+    // PERIOD_RANGE_VALUE's own comment names for real Axis/IndusInd statements was unreachable on
+    // precisely those documents. This is the same "the label is somewhere in this line" vs "the
+    // label starts this line" distinction GRID_DUE_DATE_LABEL already draws for the due date, and
+    // it is deliberately a NEW pattern rather than a widening of either existing one -- both of
+    // those decide their own shapes correctly and are checked first.
+    private static final Pattern GRID_PERIOD_LABEL =
+            Pattern.compile("(?i)\\b(?:Statement|Billing)\\s*Period\\b");
+
     // The labelled form with unrelated text BEFORE the label -- a real SBI credit-card statement
     // renders it as "for Statement Period: <range>", and that leading "for " alone defeats
     // labelPattern's "^\s*" anchor. Kept as a separate, deliberately strict pattern rather than
@@ -359,8 +402,67 @@ public class PdfMetadataExtractor {
     // period...") being read as a field, the same guard F21 needed for "Account No". Safety here
     // comes instead from requiring a complete, date-shaped RANGE immediately after the label, so
     // a prose mention has nothing to match.
+    //
+    // Bug fix: a real BOB.pdf statement inserts the word "from" between the label and the range
+    // ("Statement Period from <date> to <date>") -- the optional ":?" alone didn't tolerate that.
+    // (?:from\s+)? is purely additive: every line this pattern already matched still matches.
     private static final Pattern STATEMENT_PERIOD_ANYWHERE = Pattern.compile(
-            "(?i)\\b(?:Statement|Billing)\\s*Period\\s*:?\\s*("
+            "(?i)\\b(?:Statement|Billing)\\s*Period\\s*:?\\s*(?:from\\s+)?("
+                    + DATE_TOKEN_SRC + "\\s*(?:to|[-\u2013])\\s*" + DATE_TOKEN_SRC + ")");
+
+    // FROM_TO_LABELED_PERIOD. Real HDFC savings-account statements (HDFC 3 month.pdf,
+    // HDFC sav.pdf, Mann HDFC.pdf) and a real Sanjay HDFC statement all print their period as two
+    // separately colon-labeled fields on one row -- "From : <date>" and "To : <date>" -- rather
+    // than one combined "Statement Period" label. Confirmed via direct PositionedText inspection:
+    // each half survives PDF extraction as its own separate run ("From", ":", the date, "To",
+    // ":", the second date), which groupIntoRows/lineOf already join into one line before this
+    // class ever sees it. Two capture groups, not one pre-joined range string -- the two dates
+    // are never adjacent in the source text the way parsePeriod's single-string entry point
+    // expects, so the two groups are joined with " to " before calling it (see the call site).
+    //
+    // Kept its `continue` unlike STATEMENT_PERIOD_PROSE/FOR_PERIOD_LABELED below -- direct
+    // PositionedText inspection of all four real evidencing documents confirmed the row always
+    // ends at "Statement of account" (the same trailing text this pattern's own test fixture
+    // uses), never followed by an account number or any other field on the same physical line.
+    // Revisit if a real document ever shows one.
+    private static final Pattern FROM_TO_LABELED_PERIOD = Pattern.compile(
+            "(?i)\\bFrom\\s*:\\s*(" + DATE_TOKEN_SRC + ")\\s+To\\s*:\\s*(" + DATE_TOKEN_SRC + ")");
+
+    // STATEMENT_FROM_LABELED_PERIOD. Real Manas_HDFC.pdf, Shivani_HDFC.pdf, and Sanjay SBI.pdf
+    // statements all label this field "Statement From" rather than "Statement Period"/"Billing
+    // Period" (STATEMENT_PERIOD_ANYWHERE's own label alternation). Same date-range-after-label
+    // shape STATEMENT_PERIOD_ANYWHERE already captures as one group, just a different label word
+    // -- kept as a separate pattern rather than widening STATEMENT_PERIOD_ANYWHERE's own label
+    // alternation, same "one pattern per real-evidenced shape" discipline every other pattern in
+    // this class already follows.
+    private static final Pattern STATEMENT_FROM_LABELED_PERIOD = Pattern.compile(
+            "(?i)\\bStatement\\s+From\\s*:?\\s*("
+                    + DATE_TOKEN_SRC + "\\s*(?:to|[-\u2013])\\s*" + DATE_TOKEN_SRC + ")");
+
+    // STATEMENT_OF_ACCOUNT_PERIOD. A real Central Bank of India statement's own top-of-document
+    // heading labels this field "Statement of Account" -- an entirely different label from every
+    // other pattern's "...Period"/"Statement From" vocabulary. Same "from"-tolerant date-range
+    // capture as STATEMENT_PERIOD_ANYWHERE's own fix above.
+    private static final Pattern STATEMENT_OF_ACCOUNT_PERIOD = Pattern.compile(
+            "(?i)\\bStatement\\s+of\\s+Account\\s*:?\\s*(?:from\\s+)?("
+                    + DATE_TOKEN_SRC + "\\s*(?:to|[-\u2013])\\s*" + DATE_TOKEN_SRC + ")");
+
+    // STATEMENT_PERIOD_PROSE. Real canara.pdf and ICICI saving.pdf statements both state their
+    // period as plain prose -- "...for the period <date> to <date>" -- with no parentheses at
+    // all, unlike STATEMENT_PERIOD_IN_SENTENCE's AU-evidenced shape (which requires a
+    // parenthesised range). Same "date-range immediately after a fixed phrase" idea as every
+    // other pattern in this class, just a different fixed phrase and no parens to anchor on.
+    private static final Pattern STATEMENT_PERIOD_PROSE = Pattern.compile(
+            "(?i)\\bfor\\s+the\\s+period\\s+("
+                    + DATE_TOKEN_SRC + "\\s*(?:to|[-\u2013])\\s*" + DATE_TOKEN_SRC + ")");
+
+    // FOR_PERIOD_LABELED. A real PNB ONE savings statement's own heading line reads "Statement
+    // of Account:<account number> For Period: <date> to <date>" -- the account number's own
+    // "Statement of Account:" label is unrelated leading text (a DIFFERENT field, not this one);
+    // the real period label is "For Period:", matched the same unanchored way
+    // STATEMENT_PERIOD_ANYWHERE already tolerates arbitrary text before its own label.
+    private static final Pattern FOR_PERIOD_LABELED = Pattern.compile(
+            "(?i)\\bFor\\s+Period\\s*:?\\s*("
                     + DATE_TOKEN_SRC + "\\s*(?:to|[-\u2013])\\s*" + DATE_TOKEN_SRC + ")");
 
     // AU states its period inside an ordinary sentence rather than labelling a field at all:
@@ -404,13 +506,22 @@ public class PdfMetadataExtractor {
     // trace happens to have. Bounded to one whitespace-delimited token instead -- a trailing clause
     // ("to avoid late fees") stops the capture at the space before it; trailing punctuation directly
     // against the date ("2026.") is still captured (it's non-whitespace) and stripped below before
-    // parsing. (DATE_LIKE below, despite the name, cannot substitute for this: its two alternatives
-    // are digit-only-separated and space-separated-month-name, neither of which matches this
-    // document's own hyphenated day-Mon-year shape, "02-Apr-2026".)
+    // parsing. (DATE_LIKE below, despite the name, cannot substitute for this: none of its
+    // alternatives (digit-only-separated, space-separated day-then-month-name, or
+    // space-separated month-name-then-day) matches this document's own hyphenated day-Mon-year
+    // shape, "02-Apr-2026".)
     private static final Pattern PAYMENT_DUE_DATE_SENTENCE = Pattern.compile(
             "(?i)remember\\s+to\\s+pay\\s+by\\s+(\\S+)");
+    // Bug fix: real ICICI Bank credit-card statement evidence prints the grid's own Payment Due
+    // Date value as "July 29, 2026" -- month name FIRST, then day, then a comma before the year --
+    // which the two alternatives below never matched (both require the day first). DATE_FORMATS
+    // already carries an "MMMM d, yyyy" parser entry for exactly this shape ("added ... for a real
+    // ICICI credit-card statement", see its own comment); it was simply unreachable because this
+    // pattern never handed it the matching substring. Purely additive: a third alternative, not a
+    // change to either existing one.
     private static final Pattern DATE_LIKE = Pattern.compile(
-            "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b");
+            "\\b\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}\\b|\\b\\d{1,2}\\s+[A-Za-z]{3,9}\\.?,?\\s+\\d{4}\\b"
+                    + "|\\b[A-Za-z]{3,9}\\s+\\d{1,2},?\\s+\\d{4}\\b");
     // A date immediately preceded or followed by " - " is one half of an explicit range (e.g. a
     // Statement Period column, "24/06/2026 - 22/07/2026") -- excluded from findGridValue's
     // date-shape scan so a standalone field like Payment Due Date is never confused with the
@@ -707,6 +818,107 @@ public class PdfMetadataExtractor {
                     }
                 }
             }
+            // The label alone on a grid header row, its range on a row below -- see
+            // GRID_PERIOD_LABEL. Deliberately last of the three same-label forms: a line that
+            // states its own range is always decided by one of the two above, so this only ever
+            // sees a label with no range beside it. The lookahead is the same bounded one every
+            // other grid fallback here uses, and both halves must parse before anything is
+            // committed, so a header row followed by unrelated text still resolves to null.
+            if (periodStart == null && periodEnd == null && GRID_PERIOD_LABEL.matcher(line).find()) {
+                String gridRange = findGridValue(preTableLines, i, PERIOD_RANGE_VALUE, null);
+                if (gridRange != null) {
+                    LocalDate[] fromGrid = parsePeriod(gridRange);
+                    if (fromGrid[0] != null && fromGrid[1] != null) {
+                        periodStart = fromGrid[0];
+                        periodEnd = fromGrid[1];
+                        if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
+                        // Deliberately NO `continue`, unlike every period branch above it. Those
+                        // all match a line that STATES a period, and such a line is about the
+                        // period and nothing else. This one matches a multi-column grid HEADER,
+                        // whose whole point is that it carries several labels at once -- the same
+                        // row also holds Payment Due Date and, on real statements, Credit Limit.
+                        // Consuming the line here left those fields unextracted; caught by this
+                        // class's own existing due-date test on this fixture.
+                    }
+                }
+            }
+            // Two separately colon-labeled fields on one row ("From : <date> To : <date>") --
+            // see FROM_TO_LABELED_PERIOD.
+            if (periodStart == null && periodEnd == null) {
+                Matcher fromTo = FROM_TO_LABELED_PERIOD.matcher(line);
+                if (fromTo.find()) {
+                    LocalDate[] parsed = parsePeriod(fromTo.group(1) + " to " + fromTo.group(2));
+                    if (parsed[0] != null && parsed[1] != null) {
+                        periodStart = parsed[0];
+                        periodEnd = parsed[1];
+                        if (ctx != null) ctx.record("STATEMENT_PERIOD_FROM_TO_FIELDS");
+                        continue;
+                    }
+                }
+            }
+            // Labeled "Statement From" rather than "Statement Period"/"Billing Period" -- see
+            // STATEMENT_FROM_LABELED_PERIOD.
+            if (periodStart == null && periodEnd == null) {
+                Matcher statementFrom = STATEMENT_FROM_LABELED_PERIOD.matcher(line);
+                if (statementFrom.find()) {
+                    LocalDate[] parsed = parsePeriod(statementFrom.group(1).trim());
+                    if (parsed[0] != null && parsed[1] != null) {
+                        periodStart = parsed[0];
+                        periodEnd = parsed[1];
+                        if (ctx != null) ctx.record("STATEMENT_PERIOD_STATEMENT_FROM_LABEL");
+                        continue;
+                    }
+                }
+            }
+            // Labeled "Statement of Account" -- see STATEMENT_OF_ACCOUNT_PERIOD.
+            if (periodStart == null && periodEnd == null) {
+                Matcher statementOfAccount = STATEMENT_OF_ACCOUNT_PERIOD.matcher(line);
+                if (statementOfAccount.find()) {
+                    LocalDate[] parsed = parsePeriod(statementOfAccount.group(1).trim());
+                    if (parsed[0] != null && parsed[1] != null) {
+                        periodStart = parsed[0];
+                        periodEnd = parsed[1];
+                        if (ctx != null) ctx.record("STATEMENT_PERIOD_STATEMENT_OF_ACCOUNT_LABEL");
+                        continue;
+                    }
+                }
+            }
+            // Stated as plain prose with no parentheses ("...for the period <date> to <date>")
+            // -- see STATEMENT_PERIOD_PROSE. Deliberately NO continue, same reasoning as
+            // FOR_PERIOD_LABELED below: the real canara.pdf line this is evidenced from also
+            // carries its own account number ("Statement for A/c <number> for the period ...") on
+            // the SAME line -- continuing here skipped that extraction entirely, a real
+            // regression caught by extract_recognizesACanaraAccountNumber_fromTheAcLine.
+            if (periodStart == null && periodEnd == null) {
+                Matcher prose = STATEMENT_PERIOD_PROSE.matcher(line);
+                if (prose.find()) {
+                    LocalDate[] parsed = parsePeriod(prose.group(1).trim());
+                    if (parsed[0] != null && parsed[1] != null) {
+                        periodStart = parsed[0];
+                        periodEnd = parsed[1];
+                        if (ctx != null) ctx.record("STATEMENT_PERIOD_PROSE");
+                    }
+                }
+            }
+            // Labeled "For Period" -- see FOR_PERIOD_LABELED. Deliberately NO continue, unlike
+            // every other period branch above: the real PNB ONE line this is evidenced from also
+            // carries its own account number under a separate "Statement of Account:" label on
+            // the SAME line (see ACCOUNT_NUMBER_TRAILING_LABEL /
+            // extract_recognizesAPnbAccountNumber_fromTheStatementOfAccountLine) -- continuing
+            // here skipped that extraction entirely, a real regression caught by that existing
+            // test. Every later branch is null-guarded, so falling through is safe, same
+            // reasoning STATEMENT_PERIOD_IN_SENTENCE's own doc comment already gives.
+            if (periodStart == null && periodEnd == null) {
+                Matcher forPeriod = FOR_PERIOD_LABELED.matcher(line);
+                if (forPeriod.find()) {
+                    LocalDate[] parsed = parsePeriod(forPeriod.group(1).trim());
+                    if (parsed[0] != null && parsed[1] != null) {
+                        periodStart = parsed[0];
+                        periodEnd = parsed[1];
+                        if (ctx != null) ctx.record("STATEMENT_PERIOD_FOR_PERIOD_LABEL");
+                    }
+                }
+            }
             // A period stated inside an ordinary sentence rather than as a labelled field -- see
             // STATEMENT_PERIOD_IN_SENTENCE. Checked after the labelled forms above, so a document
             // that labels the field properly is never decided by a sentence elsewhere on the page.
@@ -852,6 +1064,17 @@ public class PdfMetadataExtractor {
                     if (ctx != null) ctx.record("GRID_METADATA_FALLBACK");
                 }
                 continue;
+            }
+            // SAVING_ACCOUNT_NO_SAME_LINE (see that constant's own doc comment -- the real ICICI
+            // savings shape neither ACCOUNT_NUMBER nor STATEMENT_OF_ACCOUNT_SAME_LINE covers).
+            if (accountNumberMasked == null) {
+                Matcher savingAcctNo = SAVING_ACCOUNT_NO_SAME_LINE.matcher(line);
+                if (savingAcctNo.find()) {
+                    accountNumberFull = savingAcctNo.group(1);
+                    accountNumberMasked = com.finora.imports.CsvParser.maskAccountNumber(savingAcctNo.group(1));
+                    if (ctx != null) ctx.record("GRID_METADATA_TRAILING_LABEL");
+                    continue;
+                }
             }
             // A_C_ACCOUNT_NUMBER_SAME_LINE (see that constant's own doc comment -- the real canara
             // shape neither ACCOUNT_NUMBER nor STATEMENT_OF_ACCOUNT_SAME_LINE covers). Validated
@@ -1097,7 +1320,7 @@ public class PdfMetadataExtractor {
      *  how many digits a bank chooses to mask. A mask-character requirement was considered and
      *  rejected: a real HSBC statement's own account-number field is fully unmasked, so requiring
      *  one would have rejected a genuine match, not just noise. */
-    private static boolean looksLikeCardOrAccountNumber(String candidate) {
+    static boolean looksLikeCardOrAccountNumber(String candidate) {
         String stripped = candidate.replaceAll("[\\s-]", "");
         if (stripped.length() < 6 || stripped.length() > 20) return false;
         long digitCount = stripped.chars().filter(Character::isDigit).count();
@@ -1115,7 +1338,7 @@ public class PdfMetadataExtractor {
      * @return a two-element array: [0] the value for accountNumberMasked, [1] the unmasked full
      *         number for accountNumberFullForHashingOnly, or null when the value was already masked
      */
-    private static String[] normalizeCardOrAccountNumberValue(String captured) {
+    static String[] normalizeCardOrAccountNumberValue(String captured) {
         String trimmed = captured.trim();
         boolean alreadyMasked = trimmed.chars().anyMatch(c -> c == 'X' || c == 'x' || c == '*');
         if (alreadyMasked) return new String[]{trimmed, null};
@@ -1213,5 +1436,19 @@ public class PdfMetadataExtractor {
             try { return LocalDate.parse(raw, fmt); } catch (Exception ignored) {}
         }
         return null;
+    }
+
+    // Package-private so a raw-PositionedText reader (AccountNumberTransactionHeaderExtractor) can
+    // reject a transaction-table Date-column cell before mistaking it for an unlabeled account
+    // number -- CARD_NUMBER_VALUE's char class allows hyphens as an internal separator, so a real
+    // "dd-MM-yyyy" date (DATE_FORMATS itself already supports this exact shape, e.g. a Kotak
+    // statement's "16-Feb-2026") fully matches the masked-number shape too. Static, unlike
+    // tryEveryFormat/tryFormats above, since this has no instance state to share with them -- kept
+    // separate rather than widening those two to avoid changing an existing, already-tested path.
+    static boolean looksLikeADate(String candidate) {
+        for (DateTimeFormatter fmt : DATE_FORMATS) {
+            try { LocalDate.parse(candidate, fmt); return true; } catch (Exception ignored) {}
+        }
+        return false;
     }
 }

@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom';
 import { ShieldCheck, User, Mail, CheckCircle2, ArrowRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PasswordInput } from '../../components/PasswordInput';
-import { GoogleSignInButton } from '../../components/GoogleSignInButton';
-import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { SocialSignInButtons } from '../../components/SocialSignInButtons';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
 import { AuthDivider } from './AuthDivider';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
@@ -151,10 +150,19 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
 
   return (
     <form onSubmit={handleSubmit} noValidate>
-      <h2 className="text-2xl font-bold text-ink mb-1">Create your account</h2>
+      <h2 className="font-display text-2xl font-bold text-ink mb-1">Create your account</h2>
       <p className="text-sm text-muted mb-6">Start your journey towards financial clarity</p>
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
+
+      <SocialSignInButtons
+        googleText="signup_with"
+        onGoogleCredential={handleGoogleCredential}
+        onAppleCredential={handleAppleCredential}
+        onError={setError}
+      />
+
+      <AuthDivider />
 
       <label htmlFor="register-fullname" className="block text-xs font-medium text-muted mb-1">Full name</label>
       <div className="relative mb-1">
@@ -291,18 +299,11 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
       <button
         type="submit"
         disabled={loading || !formValid}
-        className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+        className="w-full bg-primary hover:bg-primary-dark active:scale-[0.98] transition-transform text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
       >
         {loading ? 'Creating account…' : 'Create account'}
         {!loading && <ArrowRight size={15} />}
       </button>
-
-      <AuthDivider />
-
-      <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
     </form>
   );
 }

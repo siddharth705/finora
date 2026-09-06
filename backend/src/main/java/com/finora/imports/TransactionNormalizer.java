@@ -123,7 +123,12 @@ public class TransactionNormalizer {
     // on purpose (one decides whether a column exists at all, this one decides what it means once
     // it does), but they need to agree on this document's exact wording or the recovered column
     // would still stage every transaction with an empty description.
-    private static final String[] DESCRIPTION_HINTS =
+    // Package-private, not private: ExplicitZeroActivityDetector reads the same narration column
+    // this class does (it needs to recognise a "Transaction Count" claim wherever this class would
+    // recognise a transaction's own description), and every bank-specific synonym added here
+    // (each with its own evidence, above) is exactly the vocabulary that detector also needs to
+    // stay in sync with -- one array, not two that can silently drift.
+    static final String[] DESCRIPTION_HINTS =
             {"description", "narration", "remarks", "particulars", "transaction remarks",
                     "transaction description", "transaction details", "transaction id"};
     private static final String[] CATEGORY_HINTS = {"category"};

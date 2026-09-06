@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Dimensions, RefreshControl } from 'react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
 import { DashboardScreen } from './DashboardScreen';
 import {
   accountsApi, budgetsApi, dashboardApi, goalsApi, insightsApi, reportsApi, transactionsApi, userApi,
@@ -41,7 +42,9 @@ function expensesKpiValue(): string {
 jest.mock('../api/endpoints', () => ({
   dashboardApi: { summary: jest.fn() },
   accountsApi: { list: jest.fn() },
-  transactionsApi: { search: jest.fn() },
+  transactionsApi: {
+    search: jest.fn(), needsReview: jest.fn(), needsReviewGroups: jest.fn(), confirmNotDuplicate: jest.fn(),
+  },
   goalsApi: { list: jest.fn() },
   insightsApi: { get: jest.fn() },
   userApi: { get: jest.fn() },
@@ -84,6 +87,7 @@ function emptySummary(over: Partial<DashboardSummary> = {}): DashboardSummary {
     healthScore: 0,
     healthLabel: 'No data',
     healthBreakdown: {},
+    healthBreakdownDetail: {},
     healthScoreAvailable: false,
     healthScoreTransactionCount: 0,
     healthScoreMinTransactions: 10,
@@ -91,6 +95,15 @@ function emptySummary(over: Partial<DashboardSummary> = {}): DashboardSummary {
     notifications: [],
     reportingMonth: null,
     reportingMonthIsCurrent: true,
+    // Track C/C1 fields: real defaults, not just whatever `as DashboardSummary` would paper over --
+    // a genuinely undefined categorizationConfidenceScore (as opposed to backend's real `null`)
+    // would otherwise slip past this cast and render as a broken "undefined out of 100" card in
+    // any test whose recentTxnsQ fixture happens to make isEmpty false.
+    categorizationConfidenceScore: null,
+    categorizationConfidenceTransactionCount: 0,
+    categorizationConfidenceMinTransactions: 5,
+    duplicateTransactionCount: 0,
+    detectedDuplicates: [],
     ...over,
   } as DashboardSummary;
 }
@@ -118,7 +131,7 @@ beforeEach(() => {
     content: [], page: 0, size: 5, totalElements: 0, totalPages: 0,
   } as never);
   goals.list.mockResolvedValue([]);
-  insights.get.mockResolvedValue({ sentences: [], movers: [] } as never);
+  insights.get.mockResolvedValue({ sentences: [], movers: [], coverageCaveat: null } as never);
   user.get.mockResolvedValue({ timezone: 'Asia/Kolkata' } as never);
   reports.availableMonths.mockResolvedValue([]);
   reports.forMonth.mockResolvedValue({} as never);
@@ -127,6 +140,9 @@ beforeEach(() => {
   // data cannot be undefined" console.error for the ['budgets'] key, since the un-mocked jest.fn()
   // resolves to undefined.
   budgets.list.mockResolvedValue([]);
+  // Default: an empty review backlog, so the nudge stays absent unless a test asks for it.
+  transactions.needsReview.mockResolvedValue([]);
+  transactions.needsReviewGroups.mockResolvedValue([]);
 });
 
 describe('when /dashboard/summary fails', () => {
@@ -178,10 +194,20 @@ describe('M0-A: the spending donut must not understate the period total', () => 
    *     + Health 1,500 + Education 800 + Misc 700  =  35,500
    *   top six only                                 =  34,000
    *
-   * The backend builds spendByCategory and monthlyExpense from the same filtered transaction list
-   * (DashboardService.java:104 and the expenseCur it shares), so their totals agree by
-   * construction: 35,500 is the authoritative figure for the period, and any smaller number shown
-   * as a spend total is wrong rather than merely rounded.
+   * NOTE -- this suite's original premise no longer holds, and the fixture below is what keeps it
+   * true here. It used to read: "the backend builds spendByCategory and monthlyExpense from the
+   * same filtered transaction list, so their totals agree by construction". PR #596 (2026-08-30)
+   * ended that: DashboardService now feeds monthlyExpense from
+   * `RefundNetting.excludingInvestmentTransfers(active)` while spendByCategory still streams the
+   * unfiltered list, so in any real month containing a SIP or a broker debit the category sum is
+   * LARGER than monthlyExpense. This fixture sets the two equal by hand, so these tests still pass
+   * -- they simply no longer describe production.
+   *
+   * What they DO still protect is the bug they were written for: the centre must show the whole
+   * period total, not just the six slices that fit. That is unaffected. The open question they no
+   * longer answer is which figure the centre should claim when the two genuinely disagree -- the
+   * screen currently shows "TOTAL ₹35,500" in the donut next to "Expenses ₹32,500" in the KPI, with
+   * nothing distinguishing the two definitions. That is a product call, deliberately not made here.
    */
   const CATEGORIES = {
     Rent: 20000, Food: 5000, Transport: 3000, Bills: 2500,
@@ -469,6 +495,97 @@ describe('Recent Transactions error state', () => {
   });
 });
 
+/**
+ * Cash Flow is fed by its own two-step chain -- report-months, then one report query per month --
+ * which the card used to render nothing about: its only gate was `summary`, an unrelated query.
+ * That made every failure and every intermediate state indistinguishable from "you have no data".
+ */
+describe('Cash Flow loading and failure states', () => {
+  afterEach(() => onlineManager.setOnline(true));
+
+  const summaryOnly = () => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+  };
+
+  it('does not claim there is no monthly data while the months are still loading', async () => {
+    // `summary` resolves; the months list never does. This is the ordinary cold-start ordering,
+    // not an error case -- the two requests are sequential, so this window happens on every launch.
+    dashboard.summary.mockResolvedValue(emptySummary({ currentBalance: 4200 }));
+    reports.availableMonths.mockReturnValue(new Promise(() => {}) as never);
+
+    renderScreen();
+
+    // Anchored on the KPI section, which only renders once summary has landed -- not on the static
+    // "Cash Flow" heading, which is present during the skeleton state too and would let this
+    // assertion run before summary arrived, passing without ever entering the window it tests.
+    // (The balance itself goes through AnimatedNumber, so it is not a queryable Text node.)
+    await screen.findByText('Total Balance');
+
+    expect(screen.queryByText(/No monthly data yet/i)).toBeNull();
+  });
+
+  it('says it could not load the cash flow rather than showing an empty chart', async () => {
+    summaryOnly();
+    reports.availableMonths.mockResolvedValue(['2026-07', '2026-08']);
+    reports.forMonth.mockRejectedValue(new Error('boom'));
+
+    renderScreen();
+
+    expect(await screen.findByText(/Couldn’t load your cash flow/)).toBeTruthy();
+    expect(screen.queryByText(/No monthly data yet/i)).toBeNull();
+  });
+
+  it('admits when only some months are missing instead of drawing the gap as continuous', async () => {
+    summaryOnly();
+    reports.availableMonths.mockResolvedValue(['2026-06', '2026-07', '2026-08']);
+    reports.forMonth.mockImplementation((month: string) =>
+      month === '2026-07'
+        ? Promise.reject(new Error('boom'))
+        : Promise.resolve({ month, income: 100, expense: 50, categories: [] })
+    );
+
+    renderScreen();
+
+    // The chart still renders what it has -- but says what it doesn't have, because the x-axis is
+    // index-based and would otherwise join June straight to August as one even segment.
+    expect(await screen.findByText(/One month couldn’t be loaded/)).toBeTruthy();
+  });
+
+  it('does not spin a skeleton forever when offline with no cached months', async () => {
+    // The realistic offline shape, not a blanket one: 'dashboard-summary' IS in the persistence
+    // allowlist, so it warm-starts from disk, while a device that has never loaded this month's
+    // report list has nothing for 'report-months'. That query then PAUSES rather than failing --
+    // pending, and staying pending until the network returns. Gating the skeleton on isPending
+    // alone would trade the old false empty state for a spinner that implies data is coming.
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    queryClient.setQueryData(['dashboard-summary'], emptySummary({ currentBalance: 4200 }));
+    onlineManager.setOnline(false);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DashboardScreen />
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText(/Couldn’t load your cash flow/)).toBeTruthy();
+    expect(screen.queryByText(/No monthly data yet/i)).toBeNull();
+  });
+
+  it('still shows the genuine empty state when there really are no months', async () => {
+    // The other side of the guard: a user with no statements at all must keep getting the real
+    // answer rather than an error.
+    summaryOnly();
+    reports.availableMonths.mockResolvedValue([]);
+
+    renderScreen();
+
+    expect(await screen.findByText(/No monthly data yet/i)).toBeTruthy();
+    expect(screen.queryByText(/Couldn’t load your cash flow/)).toBeNull();
+  });
+});
+
 describe('adjacent-screen prefetching', () => {
   it('prefetches the Ledger, Budgets and latest Reports caches once summary loads', async () => {
     dashboard.summary.mockResolvedValue(emptySummary());
@@ -486,5 +603,353 @@ describe('adjacent-screen prefetching', () => {
     await waitFor(() => expect(budgets.list).toHaveBeenCalled());
     expect(transactions.search).toHaveBeenCalledWith({ page: 0, size: 20, sortField: 'date', sortDir: 'desc' });
     await waitFor(() => expect(reports.forMonth).toHaveBeenCalledWith('2026-08'));
+  });
+});
+
+/**
+ * The review nudge.
+ *
+ * The categorization design spec (§3) is explicit that "needs review" is a queue state and never a
+ * chart slice -- a wedge of unclassified spend sitting in the donut alongside Food and Travel
+ * reads as information about someone's money when it is actually an admission of not knowing. So
+ * the backlog surfaces here as a count of work with somewhere to go, above the figures it would
+ * otherwise quietly distort.
+ */
+describe('categorization review nudge', () => {
+  beforeEach(() => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+  });
+
+  it('stays absent when there is nothing to review', async () => {
+    renderScreen();
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText(/needs? a quick look/i)).toBeNull();
+  });
+
+  it('counts the one-off queue and every transaction inside every merchant group', async () => {
+    // The two queries are disjoint server-side, so the honest total is the sum -- showing only
+    // one of them would understate the user's actual backlog.
+    transactions.needsReview.mockResolvedValue([{ id: 't-1' }, { id: 't-2' }] as never);
+    transactions.needsReviewGroups.mockResolvedValue([
+      { merchantId: 'm-1', merchantName: 'Swiggy', transactionIds: ['t-3', 't-4', 't-5'] },
+    ] as never);
+
+    renderScreen();
+
+    expect(await screen.findByText('5 transactions need a quick look')).toBeTruthy();
+  });
+
+  it('uses the singular for a backlog of one', async () => {
+    transactions.needsReview.mockResolvedValue([{ id: 't-1' }] as never);
+
+    renderScreen();
+
+    expect(await screen.findByText('1 transaction needs a quick look')).toBeTruthy();
+  });
+
+  it('shows no count at all when only one half of the backlog loads', async () => {
+    // The two queries are disjoint halves of one number. If one fails and the other returns rows,
+    // `data ?? []` still produces a specific, confident, WRONG total -- and it is the
+    // accessibilityLabel too. Suppressing the nudge is the only honest option; the review screen
+    // is where the partial outage gets disclosed.
+    transactions.needsReview.mockResolvedValue([{ id: 't-1' }, { id: 't-2' }] as never);
+    transactions.needsReviewGroups.mockRejectedValue(new Error('down'));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    await waitFor(() => expect(transactions.needsReviewGroups).toHaveBeenCalled());
+    expect(screen.queryByText(/needs? a quick look/i)).toBeNull();
+  });
+
+  it('renders the rest of the dashboard when the backlog lookup fails', async () => {
+    // A nudge is the one thing on this screen that should fail silently: no count means no nudge,
+    // which is exactly what a user with an empty queue already sees.
+    transactions.needsReview.mockRejectedValue(new Error('down'));
+    transactions.needsReviewGroups.mockRejectedValue(new Error('down'));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText(/needs? a quick look/i)).toBeNull();
+  });
+});
+
+/**
+ * Track C/C1: porting frontend/src/pages/Dashboard.tsx's Financial Health Score, Categorization
+ * Confidence and Detected Issues cards. DashboardService has always computed and returned all
+ * three; this is the first mobile UI that renders any of them.
+ */
+describe('Financial Health Score, Categorization Confidence, Detected Issues (Track C/C1)', () => {
+  // isEmpty is driven by recentTxnsQ, not by summary -- one non-empty transaction is enough to
+  // clear it for every test in this block that needs Health Score / Categorization Confidence
+  // visible, without having to fight the file-wide default (totalElements: 0) per test.
+  function markNotEmpty() {
+    transactions.search.mockResolvedValue({
+      content: [{
+        id: 't1', accountId: 'a1', categoryId: 'c1', categoryName: 'Shopping', date: '2026-08-01',
+        description: 'Coffee', merchant: 'Cafe', paymentMethod: 'CARD', amount: 150, type: 'EXPENSE',
+        tags: [], notes: null, reconciliationStatus: 'OK', recurring: false, needsCategoryReview: false,
+        categoryManuallySet: false,
+      }],
+      page: 0, size: 5, totalElements: 1, totalPages: 1,
+    } as never);
+  }
+
+  it('hides Financial Health Score entirely while the account is empty, even with a score computed', async () => {
+    // isEmpty stays true (the file-wide default: totalElements 0) -- a score computed from zero
+    // real transactions has nothing behind it, same reasoning as the web card's own comment.
+    dashboard.summary.mockResolvedValue(emptySummary({ healthScoreAvailable: true, healthScore: 72, healthLabel: 'Good' }));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText('Financial Health Score')).toBeNull();
+  });
+
+  it('shows onboarding progress, not a score, below the transaction-count floor', async () => {
+    markNotEmpty();
+    dashboard.summary.mockResolvedValue(emptySummary({
+      healthScoreAvailable: false, healthScoreTransactionCount: 4, healthScoreMinTransactions: 10,
+    }));
+
+    renderScreen();
+
+    expect(await screen.findByText('Getting Started')).toBeTruthy();
+    expect(screen.getByText('4 / 10 transactions')).toBeTruthy();
+    expect(screen.getByText('40%')).toBeTruthy();
+  });
+
+  it('shows the score and breakdown once available, with each row\'s detail hidden until asked for', async () => {
+    markNotEmpty();
+    dashboard.summary.mockResolvedValue(emptySummary({
+      healthScoreAvailable: true,
+      healthScore: 82,
+      healthLabel: 'Excellent',
+      healthBreakdown: { 'Debt Score': 100, 'Savings Rate': 65 },
+      healthBreakdownDetail: { 'Debt Score': 'No credit card balance carried over.' },
+    }));
+
+    renderScreen();
+
+    expect(await screen.findByText('82')).toBeTruthy();
+    expect(screen.getByText('Excellent')).toBeTruthy();
+    expect(screen.getByText('Debt Score')).toBeTruthy();
+    expect(screen.getByText('100%')).toBeTruthy();
+    // Savings Rate has no detail entry -- no "Why?" control to offer for it.
+    const whys = screen.getAllByText('Why?');
+    expect(whys).toHaveLength(1);
+    expect(screen.queryByText('No credit card balance carried over.')).toBeNull();
+
+    fireEvent.press(whys[0]);
+
+    expect(await screen.findByText('No credit card balance carried over.')).toBeTruthy();
+    expect(screen.getByText('Hide')).toBeTruthy();
+  });
+
+  it('hides Categorization Confidence below the engine-decided-transaction floor (score null)', async () => {
+    markNotEmpty();
+    dashboard.summary.mockResolvedValue(emptySummary({ categorizationConfidenceScore: null }));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText('Categorization Confidence')).toBeNull();
+  });
+
+  it('shows the categorization confidence score, label and transaction count once available', async () => {
+    markNotEmpty();
+    dashboard.summary.mockResolvedValue(emptySummary({
+      categorizationConfidenceScore: 91, categorizationConfidenceTransactionCount: 23,
+    }));
+
+    renderScreen();
+
+    expect(await screen.findByText('Categorization Confidence')).toBeTruthy();
+    expect(screen.getByText('91')).toBeTruthy();
+    expect(screen.getByText('Excellent')).toBeTruthy();
+    expect(screen.getByText(/Based on 23 automatically categorized transactions/)).toBeTruthy();
+  });
+
+  it('hides Detected Issues when nothing was flagged', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({ duplicateTransactionCount: 0 }));
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText('Detected Issues')).toBeNull();
+  });
+
+  // Deliberately NOT gated on isEmpty, unlike the two cards above -- markNotEmpty() is not called
+  // here, pinning that a flagged duplicate on an otherwise-empty account still surfaces.
+  it('lists detected duplicates and says how many more exist beyond the capped list', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({
+      duplicateTransactionCount: 3,
+      detectedDuplicates: [
+        { transactionId: 'tx-1', date: '2026-07-10', merchant: 'Swiggy', amount: 450 },
+      ],
+    }));
+
+    renderScreen();
+
+    expect(await screen.findByText('Detected Issues')).toBeTruthy();
+    expect(screen.getByText(/We found 3 transactions/)).toBeTruthy();
+    expect(screen.getByText('Swiggy')).toBeTruthy();
+    expect(screen.getByText('and 2 more')).toBeTruthy();
+  });
+
+  it('confirms a detected duplicate and refreshes the figures it just changed', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [{ transactionId: 'tx-1', date: '2026-07-10', merchant: 'Swiggy', amount: 450 }],
+    }));
+    transactions.confirmNotDuplicate.mockResolvedValue({} as never);
+
+    const { queryClient } = renderScreen();
+    const invalidateSpy = jest.spyOn(queryClient, 'invalidateQueries');
+    await screen.findByText('Swiggy');
+
+    fireEvent.press(screen.getByLabelText('Not a duplicate: Swiggy'));
+
+    await waitFor(() => expect(transactions.confirmNotDuplicate).toHaveBeenCalledWith('tx-1'));
+    // dashboard-summary (the card itself) and recent-transactions/transactions (the row's status
+    // just changed) all have to refresh -- BH-027's whole point is that this transaction counts
+    // again everywhere it didn't before.
+    await waitFor(() => expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['dashboard-summary'] }));
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['transactions'] });
+  });
+
+  it('shows an inline error rather than silently dropping a failed confirmation', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({
+      duplicateTransactionCount: 1,
+      detectedDuplicates: [{ transactionId: 'tx-1', date: '2026-07-10', merchant: 'Swiggy', amount: 450 }],
+    }));
+    transactions.confirmNotDuplicate.mockRejectedValue(new Error('network'));
+
+    renderScreen();
+    await screen.findByText('Swiggy');
+
+    fireEvent.press(screen.getByLabelText('Not a duplicate: Swiggy'));
+
+    expect(await screen.findByText("Couldn't update this transaction. Please try again.")).toBeTruthy();
+  });
+});
+
+/**
+ * Track C/C2: promoting the statement coverage-gap warning from a buried Insights sentence to a
+ * proactive Dashboard banner with a CTA into Import. InsightsService has always aggregated this
+ * across every live account and returned it on /insights; nothing on mobile rendered the
+ * structured field until now (only the flattened sentence, folded in among several others).
+ */
+describe('statement coverage-gap banner (Track C/C2)', () => {
+  // Every test in this file isolates the summary call (see the file's own top comment) -- each
+  // test below sets it explicitly rather than relying on whatever a PRECEDING test happened to
+  // leave behind, since beforeEach only clears call history (jest.clearAllMocks), not mocked
+  // implementations.
+  beforeEach(() => {
+    dashboard.summary.mockResolvedValue(emptySummary());
+  });
+
+  it('stays absent when nothing is missing', async () => {
+    insights.get.mockResolvedValue({ sentences: [], movers: [], coverageCaveat: null } as never);
+
+    renderScreen();
+
+    await screen.findByTestId('kpi-Expenses');
+    expect(screen.queryByText(/Possible gap/)).toBeNull();
+  });
+
+  it('names the month and offers a way into Import when a gap touches the current month', async () => {
+    insights.get.mockResolvedValue({
+      sentences: ['Some transactions for August 2026 may be missing — import that statement to complete your history.'],
+      movers: [],
+      coverageCaveat: { month: '2026-08', gaps: [{ gapStart: '2026-08-05', gapEnd: '2026-08-19' }] },
+    } as never);
+
+    renderScreen();
+
+    expect(await screen.findByText('Possible gap in August 2026')).toBeTruthy();
+    expect(screen.getByText(/Import that statement/)).toBeTruthy();
+    // Said once, as the banner -- not also as an Insights bullet. The banner's own body copy is
+    // deliberately worded differently from the backend's sentence, so this can only match the
+    // filtered-out original.
+    expect(screen.queryByText(/may be missing — import that statement to complete your history/)).toBeNull();
+  });
+
+  it('leaves unrelated Insights sentences in place -- the filter targets one sentence, not the whole card', async () => {
+    insights.get.mockResolvedValue({
+      sentences: [
+        'Some transactions for August 2026 may be missing — import that statement to complete your history.',
+        'Groceries was your biggest category at ₹6,000.',
+      ],
+      movers: [],
+      coverageCaveat: { month: '2026-08', gaps: [{ gapStart: '2026-08-05', gapEnd: '2026-08-19' }] },
+    } as never);
+
+    renderScreen();
+
+    expect(await screen.findByText(/Groceries was your biggest category/)).toBeTruthy();
+  });
+
+  it('opens Import when the banner is tapped', async () => {
+    insights.get.mockResolvedValue({
+      sentences: [],
+      movers: [],
+      coverageCaveat: { month: '2026-08', gaps: [{ gapStart: '2026-08-05', gapEnd: '2026-08-19' }] },
+    } as never);
+    const { navigate } = useNavigation<never>() as unknown as { navigate: jest.Mock };
+    navigate.mockClear();
+
+    renderScreen();
+    fireEvent.press(await screen.findByText('Possible gap in August 2026'));
+
+    expect(navigate).toHaveBeenCalledWith('Import');
+  });
+});
+
+describe('Spending by Category donut drill-through (Track C/C4)', () => {
+  it('navigates to Transactions with the tapped category and the reporting month it belongs to', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({
+      spendByCategory: { Dining: 4000, Groceries: 6000 },
+      monthlyExpense: 10000,
+      reportingMonth: '2026-08',
+      reportingMonthIsCurrent: false,
+    }));
+    const { navigate } = useNavigation<never>() as unknown as { navigate: jest.Mock };
+    navigate.mockClear();
+
+    renderScreen();
+
+    fireEvent.press(await screen.findByRole('button', { name: 'Dining: ₹4,000' }));
+
+    expect(navigate).toHaveBeenCalledWith('Transactions', {
+      filters: expect.objectContaining({
+        categoryName: 'Dining', dateFrom: '2026-08-01', dateTo: '2026-08-31', label: 'Dining · Aug 26',
+      }),
+    });
+  });
+});
+
+describe('"As of" staleness caption on Total Balance (Track C/C5)', () => {
+  it('reads "As of today" when the reporting month is the current one', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({ reportingMonthIsCurrent: true }));
+
+    renderScreen();
+
+    expect(await screen.findByText('As of today')).toBeTruthy();
+    expect(screen.getByLabelText(/Total Balance: .*, As of today/)).toBeTruthy();
+    // Total Balance's own new slot, not a change to the other three -- with every delta null
+    // (emptySummary's default), Income/Expenses/Net Savings all take the SAME "no delta" branch
+    // Total Balance used to, and none of them grows a caption of its own.
+    expect(screen.getAllByText(/^As of/)).toHaveLength(1);
+  });
+
+  it('names the stale month instead, when the reporting month is not the current one', async () => {
+    dashboard.summary.mockResolvedValue(emptySummary({ reportingMonth: '2026-06', reportingMonthIsCurrent: false }));
+
+    renderScreen();
+
+    expect(await screen.findByText('As of Jun 26')).toBeTruthy();
+    expect(screen.queryByText('As of today')).toBeNull();
   });
 });

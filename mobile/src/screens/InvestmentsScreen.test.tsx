@@ -1,7 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { InvestmentsScreen } from './InvestmentsScreen';
 import { accountsApi, networthApi } from '../api/endpoints';
+import { light } from '../theme/palette';
 import type { Account } from '../types';
 
 jest.mock('../api/endpoints', () => ({
@@ -178,7 +180,7 @@ describe('InvestmentsScreen', () => {
     });
     renderScreen();
 
-    expect(await screen.findByText(/Save a snapshot periodically/)).toBeTruthy();
+    expect(await screen.findByText(/Building your net worth trend/)).toBeTruthy();
   });
 
   // useQueries, not Promise.all: one endpoint failing must not blank the other's section.
@@ -190,5 +192,82 @@ describe('InvestmentsScreen', () => {
     expect(screen.getAllByText('Index fund').length).toBeGreaterThan(0);
     // Net Worth and Liabilities read as unavailable rather than as zero, which would be a lie.
     expect(screen.getAllByText('—')).toHaveLength(2);
+  });
+
+  /**
+   * The counterpart of the test above, for the query it does NOT cover. `holdings` is [] both when
+   * the user genuinely has none and when /accounts failed, so every `length === 0` branch on this
+   * screen was answering a question it had no answer to -- and inconsistently: the Holdings card
+   * admitted the failure while Allocation and the Investments total did not.
+   */
+  it('does not state a portfolio of zero when the accounts endpoint fails', async () => {
+    accounts.list.mockReset().mockRejectedValue(new Error('boom'));
+    renderScreen();
+
+    expect(await screen.findByText('Could not load holdings.')).toBeTruthy();
+    expect(screen.getByText('Could not load your allocation.')).toBeTruthy();
+    // Crucially NOT "₹0": a fabricated zero is indistinguishable from a real answer.
+    expect(screen.queryByText('No investment holdings yet. Add one above, or import a deposit statement.')).toBeNull();
+    expect(screen.queryByText('₹0')).toBeNull();
+  });
+
+  it('does not tell a user with saved snapshots that they have never saved one', async () => {
+    networth.current.mockReset().mockRejectedValue(new Error('boom'));
+    renderScreen();
+    await loaded();
+
+    expect(screen.getByText('Could not load your net worth history.')).toBeTruthy();
+    expect(screen.queryByText(/Building your net worth trend/)).toBeNull();
+  });
+
+  it('paints a negative net worth as a loss, not a gain', async () => {
+    // Ordinary for anyone who imports a credit-card statement before a bank one: the card is a
+    // liability, so net worth is legitimately negative and green would invert the signal.
+    networth.current.mockReset().mockResolvedValue({
+      totalAssets: 0, totalLiabilities: 250000, netWorth: -250000, history: [],
+    });
+    renderScreen();
+    await loaded();
+
+    const value = await screen.findByText('-₹2,50,000');
+    expect(value).toHaveStyle({ color: light.danger });
+  });
+});
+
+/**
+ * A first fetch made with no connectivity is PAUSED, not failed -- so every isError guard on this
+ * screen skipped it, and every `?? 0` fallback treated it as a settled answer. The screen printed
+ * ₹0 as this person's net worth underneath a banner that said "No connection — showing the last
+ * data loaded", when nothing had been loaded at all. 'networth' is deliberately excluded from the
+ * persistence allowlist, so there is never a cached figure to soften it.
+ */
+describe('offline, with nothing cached', () => {
+  afterEach(() => onlineManager.setOnline(true));
+
+  it('says the figures are unavailable rather than printing zero', async () => {
+    onlineManager.setOnline(false);
+    // Never called while offline -- the queries pause before reaching the network.
+    accounts.list.mockReset().mockResolvedValue([]);
+    networth.current.mockReset().mockResolvedValue({
+      totalAssets: 0, totalLiabilities: 0, netWorth: 0, history: [],
+    });
+
+    renderScreen();
+    await settle();
+
+    // Investments, Net Worth and Liabilities all decline to answer.
+    await waitFor(() => expect(screen.getAllByText('—')).toHaveLength(3));
+    expect(screen.queryByText('₹0')).toBeNull();
+  });
+});
+
+// D3 (Track D security cleanup). Holdings/net worth are the single most sensitive figures in the
+// app -- as screenshot-attractive as anything on the Dashboard or Accounts screen, which already
+// guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });

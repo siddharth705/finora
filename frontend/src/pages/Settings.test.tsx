@@ -312,6 +312,33 @@ describe('Settings', () => {
     expect(screen.queryByText(/plan/i)).not.toBeInTheDocument();
   });
 
+  // Phase 3 (animation-polish roadmap): every button on this page was `text-xs uppercase
+  // font-medium` before migrating to the shared <Button> primitive. <Button>'s own base classes
+  // don't include `uppercase` (Dashboard/Ledger's buttons were never uppercase, so the primitive
+  // never needed it) -- without passing it back in via `className` at each call site, the swap
+  // would have silently dropped this page's small-caps look on every button.
+  it('preserves the small-caps button styling this page always had, on every migrated button', async () => {
+    renderSettings();
+
+    const uppercaseButtons = [
+      /save preferences/i, /^change password$/i, /save setting/i, /export my data/i,
+      /^connect gmail$/i, /^deactivate account$/i, /^delete account$/i,
+    ];
+    for (const name of uppercaseButtons) {
+      expect(await screen.findByRole('button', { name })).toHaveClass('uppercase');
+    }
+  });
+
+  it('preserves the small-caps styling on the Gmail Review/Disconnect buttons too', async () => {
+    vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+      connected: true, googleEmail: 'amy@gmail.example.test', needsReview: 3,
+    }));
+    renderSettings();
+
+    expect(await screen.findByRole('button', { name: /review 3/i })).toHaveClass('uppercase');
+    expect(screen.getByRole('button', { name: /disconnect/i })).toHaveClass('uppercase');
+  });
+
   it('never renders placeholder controls for capabilities that do not exist yet', async () => {
     renderSettings();
 
@@ -452,17 +479,14 @@ describe('Settings', () => {
     it('redirects the browser to the authorization URL returned by connect()', async () => {
       const user = userEvent.setup();
       vi.mocked(gmailApi.connect).mockResolvedValue({ authorizationUrl: 'https://accounts.google.com/o/oauth2/auth?x=1' });
-      const originalHref = window.location.href;
-      // jsdom throws "Not implemented: navigation" on a real assignment -- redefine the property
-      // rather than actually navigating, the same reason clearSessionAndRedirect's own tests do.
-      delete (window as any).location;
-      (window as any).location = { href: '' };
-
+      // src/test/setup.ts stands in for jsdom's missing navigation and records the attempted URL
+      // on window.location.href, so the redirect is asserted directly. This used to hand-roll its
+      // own `delete window.location` replacement, which was never restored -- every test after it
+      // in this file inherited a bare `{ href }` object in place of the real Location.
       renderSettings();
       await user.click(await screen.findByRole('button', { name: /connect gmail/i }));
 
       await waitFor(() => expect(window.location.href).toBe('https://accounts.google.com/o/oauth2/auth?x=1'));
-      (window as any).location = { href: originalHref };
     });
 
     it('shows the connected state with account, sync stats, and actions', async () => {
@@ -607,13 +631,123 @@ describe('Settings', () => {
       const user = userEvent.setup();
       vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: false, status: 'REAUTH_REQUIRED', needsReconnect: true }));
       vi.mocked(gmailApi.connect).mockResolvedValue({ authorizationUrl: 'https://accounts.google.com/o/oauth2/auth?x=1' });
-      delete (window as any).location;
-      (window as any).location = { href: '' };
 
       renderSettings();
       await user.click(await screen.findByRole('button', { name: /reconnect gmail/i }));
 
       await waitFor(() => expect(window.location.href).toBe('https://accounts.google.com/o/oauth2/auth?x=1'));
+    });
+
+    // The bug this guards against: the backend used to refuse EVERY Reconnect click for a
+    // REAUTH_REQUIRED connection with a 409 ("already connected") -- the guard didn't distinguish
+    // a dead grant from a working one. handleGmailConnect's bare `catch {}` then discarded that
+    // 409's own message and showed a generic "please try again", which is actively bad advice for
+    // a failure retrying can never fix. The backend guard is now scoped to CONNECTED only, but this
+    // covers the frontend half on its own: whatever the backend does say should reach the user.
+    it('surfaces the backend message when Reconnect Gmail is refused, instead of a generic one', async () => {
+      const user = userEvent.setup();
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+        connected: false, status: 'REAUTH_REQUIRED', needsReconnect: true, googleEmail: 'amy@gmail.example.test',
+      }));
+      vi.mocked(gmailApi.connect).mockRejectedValue({
+        response: {
+          status: 409,
+          data: { message: 'A Gmail account (amy@gmail.example.test) is already connected. Disconnect it first to connect a different one.' },
+        },
+      });
+
+      renderSettings();
+      await user.click(await screen.findByRole('button', { name: /reconnect gmail/i }));
+
+      expect(await screen.findByText(/disconnect it first to connect a different one/i)).toBeInTheDocument();
+      expect(screen.queryByText(/couldn't start the gmail connection/i)).not.toBeInTheDocument();
+    });
+  });
+
+  // Phase 3 (animation-polish roadmap): General/Security's fields, Active Sessions, AI, and
+  // Connected Apps each fetch independently, but a single outer `if (loading) return ...` used to
+  // block the whole page on General/Security's userApi.get() alone -- so a slow account-settings
+  // request delayed sections that had nothing to do with it. These prove each section renders off
+  // its own fetch, not the others'.
+  describe('Phase 3 section-scoped loading', () => {
+    function pendingUserGet() {
+      let resolveGet: (u: ReturnType<typeof userSettings>) => void;
+      vi.mocked(userApi.get).mockReset().mockReturnValue(
+        new Promise((resolve) => { resolveGet = resolve; })
+      );
+      return { resolveGet: () => resolveGet(userSettings()) };
+    }
+
+    it('renders Active Sessions before General/Security have finished loading', async () => {
+      pendingUserGet();
+      renderSettings();
+
+      expect(await screen.findByText('Chrome on Windows')).toBeInTheDocument();
+      // General's own content (fed by the still-pending userApi.get()) must not have appeared.
+      expect(screen.queryByDisplayValue('2000')).not.toBeInTheDocument();
+    });
+
+    it('renders the AI section before General/Security have finished loading', async () => {
+      pendingUserGet();
+      renderSettings();
+
+      expect(await screen.findByText(/confidence threshold — 90%/i)).toBeInTheDocument();
+      expect(screen.queryByDisplayValue('2000')).not.toBeInTheDocument();
+    });
+
+    it('renders the Connected Apps section before General/Security have finished loading', async () => {
+      pendingUserGet();
+      renderSettings();
+
+      expect(await screen.findByRole('button', { name: /^connect gmail$/i })).toBeInTheDocument();
+      expect(screen.queryByDisplayValue('2000')).not.toBeInTheDocument();
+    });
+
+    // Export/Deactivate/Delete all open a modal that needs the real signInMethod -- fetched by the
+    // same userApi.get() call as General/Security, and defaulted to 'PASSWORD' until it resolves.
+    // Decoupling Data/Manage-Your-Account from the outer `loading` gate (so Active Sessions/AI/
+    // Gmail could render independently) accidentally made these three reachable before that value
+    // is trustworthy -- a Google-sign-in account could see the password-based flow. They must stay
+    // disabled until userApi.get() actually resolves.
+    it('keeps Export/Deactivate/Delete Account disabled until signInMethod has actually loaded, then enables them', async () => {
+      const { resolveGet } = pendingUserGet();
+      renderSettings();
+
+      const exportButton = await screen.findByRole('button', { name: /^export my data$/i });
+      const deactivateButton = screen.getByRole('button', { name: /^deactivate account$/i });
+      const deleteButton = screen.getByRole('button', { name: /^delete account$/i });
+      expect(exportButton).toBeDisabled();
+      expect(deactivateButton).toBeDisabled();
+      expect(deleteButton).toBeDisabled();
+
+      resolveGet();
+
+      await waitFor(() => expect(exportButton).toBeEnabled());
+      expect(deactivateButton).toBeEnabled();
+      expect(deleteButton).toBeEnabled();
+    });
+
+    it('keeps Export/Deactivate/Delete Account permanently disabled when the account data fails to load', async () => {
+      vi.mocked(userApi.get).mockReset().mockRejectedValue(new Error('network error'));
+      renderSettings();
+
+      await screen.findAllByText(/couldn't load your settings/i);
+      expect(screen.getByRole('button', { name: /^export my data$/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /^deactivate account$/i })).toBeDisabled();
+      expect(screen.getByRole('button', { name: /^delete account$/i })).toBeDisabled();
+    });
+
+    it('shows an inline error scoped to General and Security when their data fails to load, without blocking the independent sections', async () => {
+      vi.mocked(userApi.get).mockReset().mockRejectedValue(new Error('network error'));
+      renderSettings();
+
+      const errors = await screen.findAllByText(/couldn't load your settings/i);
+      expect(errors.length).toBeGreaterThan(0);
+      // Active Sessions, AI, and Connected Apps all fetch independently of userApi.get() and must
+      // still render their real content.
+      expect(await screen.findByText('Chrome on Windows')).toBeInTheDocument();
+      expect(await screen.findByText(/confidence threshold — 90%/i)).toBeInTheDocument();
+      expect(await screen.findByRole('button', { name: /^connect gmail$/i })).toBeInTheDocument();
     });
   });
 });
