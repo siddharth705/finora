@@ -295,10 +295,6 @@ export default function Dashboard() {
     return `${m.category}: ${fmt(m.currentAmount)} vs ${fmt(m.priorAmount)} (${pctText})`;
   });
 
-  // iconBg/iconColor below are dead under the KPI grid's variant="elevated" (it always renders a
-  // uniform graphite/cream medallion, see MetricCard.tsx) -- kept anyway because MetricCard's
-  // default variant (Reports/Investments/Budgets) still requires them, and duplicating this array
-  // with/without color per variant would be its own bug risk.
   const kpis = [
     { label: 'Total Balance', value: fmt(summary.currentBalance), delta: null as number | null, icon: Wallet, iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
     { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600', gateReasonText: comparisonGateReasonText },
@@ -326,9 +322,13 @@ export default function Dashboard() {
               most common next steps, not a duplicate of the full Quick Actions grid further down
               the page (which covers all seven). */}
           <div className="flex flex-wrap gap-2">
+            {/* Primary styling on Import Statement, not Add Transaction: it's the one action that
+                actually grows what the whole dashboard has to show (a fresh statement adds a whole
+                month of data; one manual transaction adds one row) -- same reasoning the empty
+                states elsewhere on this page already give importing top billing over manual entry. */}
             <Link
               to="/app/import"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-bg hover:bg-surface px-3.5 py-2 text-xs font-semibold text-ink transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-on-primary hover:bg-primary-dark px-3.5 py-2 text-xs font-semibold transition-colors shadow-card"
             >
               <UploadCloud size={14} /> Import Statement
             </Link>
@@ -341,15 +341,20 @@ export default function Dashboard() {
             </button>
           </div>
         </div>
-        {/* Purely decorative -- the illustration carries no information the heading/chips above
-            don't already state, so the whole region is hidden from assistive tech rather than
-            given (unhelpful, made-up) alt text. Hidden below `lg`: there isn't room for a side
-            illustration without shrinking or overlapping the greeting text on a narrow viewport. */}
+        {/* Purely decorative -- the illustration and quote carry no information the heading/chips
+            above don't already state, so the whole region is hidden from assistive tech rather
+            than given (unhelpful, made-up) alt text. Hidden below `lg`: there isn't room for a
+            side illustration without shrinking or overlapping the greeting text on a narrow
+            viewport. */}
         <div
           data-testid="dashboard-hero-illustration"
           aria-hidden="true"
           className="hidden lg:block absolute inset-y-0 right-0 w-[42%]"
         >
+          <p className="absolute top-0 right-1 max-w-[190px] text-right text-xs italic text-muted leading-snug">
+            "Small steps today, bigger goals tomorrow."
+            <span className="block not-italic font-semibold text-ink/50 mt-1 text-[11px]">— Fynora</span>
+          </p>
           <svg viewBox="0 0 380 220" className="absolute inset-0 w-full h-full" preserveAspectRatio="xMaxYMid slice">
             <polygon
               points="0,220 40,150 70,158 110,120 150,138 190,100 230,122 270,86 310,108 340,72 380,92 380,220"
@@ -690,7 +695,14 @@ export default function Dashboard() {
                     labels: categoryEntries.map(([k]) => k),
                     datasets: [{ data: categoryEntries.map(([, v]) => v), backgroundColor: categoryEntries.map((_, i) => donutColors[i % donutColors.length]), borderWidth: 0 }],
                   }}
-                  options={{ cutout: '72%', plugins: { legend: { display: false } } }}
+                  options={{
+                    cutout: '72%',
+                    plugins: { legend: { display: false } },
+                    // animateScale (grow from center) alongside the default rotate -- Chart.js's
+                    // usual arc-only rotate reads as static on a donut this small; the two together
+                    // are what actually reads as "the chart appearing", not just a color change.
+                    animation: { animateRotate: true, animateScale: true, duration: 900, easing: 'easeOutQuart' },
+                  }}
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
                   <span className="text-lg font-bold text-ink">{fmt(totalSpend)}</span>
@@ -1141,6 +1153,7 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
         // DashboardService) and live the moment the component or this options object is reused
         // for a net series -- which is exactly how the same bug got everywhere else it was fixed.
         scales: { y: { ticks: { callback: (v) => fmt(Number(v)) } } },
+        animation: { duration: 900, easing: 'easeOutQuart' },
       }}
     />
   );
