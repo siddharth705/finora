@@ -141,14 +141,15 @@ class AuthFlowIT extends AbstractIntegrationTest {
      * this test would have passed against the broken code too.
      */
     @Test
-    void login_withOriginHeader_succeedsAndReturnsCorsAllowOriginHeader() {
+    void login_withOriginHeader_succeedsAndReturnsCorsAllowOriginHeader() throws Exception {
         String email = "cors-" + System.currentTimeMillis() + "@example.com";
         HttpHeaders registerHeaders = new HttpHeaders();
         registerHeaders.setContentType(MediaType.APPLICATION_JSON);
         String registerBody = """
                 {"email": "%s", "password": "SecurePass123", "fullName": "CORS Test", "phoneNumber": "+919876543213"}
                 """.formatted(email);
-        restTemplate.postForEntity("/api/v1/auth/register", new HttpEntity<>(registerBody, registerHeaders), String.class);
+        ResponseEntity<String> registerResponse = restTemplate.postForEntity(
+                "/api/v1/auth/register", new HttpEntity<>(registerBody, registerHeaders), String.class);
 
         HttpHeaders loginHeaders = new HttpHeaders();
         loginHeaders.setContentType(MediaType.APPLICATION_JSON);
@@ -162,5 +163,18 @@ class AuthFlowIT extends AbstractIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getHeaders().getFirst("Access-Control-Allow-Origin")).isEqualTo("http://localhost:5173");
+
+        // Subscription billing V4 (design spec §2): the mobile app needs the real Fynora user id
+        // from the auth response itself to call RevenueCat's configureRevenueCat() at sign-in --
+        // AuthResponse carried no id field before this. Piggybacks on the register/login round
+        // trip already above rather than adding a dedicated test with its own register() call --
+        // this file's register rate-limit budget is already fully spent (rate-limit.register.max
+        // is 5 per 5 minutes; see application.yml's own comment on why that ceiling is tight on
+        // purpose, and this class was already tuned to exactly that many register() calls).
+        JsonNode registerJson = mapper.readTree(registerResponse.getBody());
+        JsonNode loginJson = mapper.readTree(response.getBody());
+        String registeredId = registerJson.get("data").get("id").asText();
+        assertThat(registeredId).isNotBlank();
+        assertThat(loginJson.get("data").get("id").asText()).isEqualTo(registeredId);
     }
 }

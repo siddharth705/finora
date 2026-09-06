@@ -5,6 +5,7 @@ import * as SecureStore from 'expo-secure-store';
 import { AuthProvider, useAuth } from './AuthContext';
 import { authApi } from '../api/endpoints';
 import { registerDeviceToken, revokeDeviceToken } from '../lib/pushRegistration';
+import { configureRevenueCat } from '../lib/revenueCat';
 
 jest.mock('../api/endpoints', () => ({
   authApi: {
@@ -30,11 +31,20 @@ jest.mock('../lib/pushRegistration', () => ({
   revokeDeviceToken: jest.fn(),
 }));
 
+// Subscription billing V4 (design spec §2/§6.1 step 1): configureRevenueCat() must run once the
+// real Fynora user id is known, whether that's a fresh login/register/etc. or a cold-start
+// restore of an already-persisted session -- see AuthContext bootstrap/configureRevenueCat below.
+jest.mock('../lib/revenueCat', () => ({
+  configureRevenueCat: jest.fn(),
+}));
+
 const mockedAuthApi = authApi as jest.Mocked<typeof authApi>;
 const mockedRegisterDeviceToken = registerDeviceToken as jest.MockedFunction<typeof registerDeviceToken>;
 const mockedRevokeDeviceToken = revokeDeviceToken as jest.MockedFunction<typeof revokeDeviceToken>;
+const mockedConfigureRevenueCat = configureRevenueCat as jest.MockedFunction<typeof configureRevenueCat>;
 
 const SESSION = {
+  id: 'user-abc-123',
   token: 'access-token',
   refreshToken: 'refresh-token',
   email: 'someone@example.com',
@@ -114,6 +124,23 @@ describe('AuthContext bootstrap', () => {
     expect(view.getByTestId('token')).toHaveTextContent('none');
   });
 
+  it('configures RevenueCat with the restored user id -- a cold start on an already-signed-in device', async () => {
+    await SecureStore.setItemAsync('finora_token', 'stored-token');
+    await SecureStore.setItemAsync('finora_user_id', 'user-restored-456');
+
+    const view = renderAuth();
+    await settle(view);
+
+    expect(mockedConfigureRevenueCat).toHaveBeenCalledWith('user-restored-456');
+  });
+
+  it('does not configure RevenueCat when there is no stored session to restore', async () => {
+    const view = renderAuth();
+    await settle(view);
+
+    expect(mockedConfigureRevenueCat).not.toHaveBeenCalled();
+  });
+
   // Stored as the string 'true'/'false'; anything else must not read as verified.
   it('treats a non-"true" verified flag as unverified', async () => {
     await SecureStore.setItemAsync('finora_token', 't');
@@ -168,6 +195,18 @@ describe('AuthContext login', () => {
 
     expect(view.getByTestId('token')).toHaveTextContent('none');
     expect(await SecureStore.getItemAsync('finora_token')).toBeNull();
+  });
+
+  it('configures RevenueCat with the signed-in user id', async () => {
+    mockedAuthApi.login.mockResolvedValue({ data: SESSION } as never);
+    const view = renderAuth();
+    await settle(view);
+
+    await act(async () => {
+      await auth.login('someone@example.com', 'pw');
+    });
+
+    expect(mockedConfigureRevenueCat).toHaveBeenCalledWith('user-abc-123');
   });
 });
 

@@ -50,6 +50,9 @@ export interface AuthResponseDto {
   fullName: string;
   phoneVerified: boolean;
   maskedPhone: string | null;
+  /** The real Fynora user id -- subscription billing V4 needs it to call RevenueCat's
+   *  Purchases.configure({ appUserID }) with the real, authenticated id at sign-in. */
+  id: string;
 }
 
 export const authApi = {
