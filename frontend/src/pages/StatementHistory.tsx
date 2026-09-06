@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ChevronDown, ChevronRight, FileText, Download, RefreshCw, Trash2, Eye, ListChecks, X, AlertTriangle, Clock,
+  Search, UploadCloud, CalendarDays, History, Landmark, Sparkles, FilterX, type LucideIcon,
 } from 'lucide-react';
 import { importApi, importJobsApi, statementImportsApi, type ImportFailureSummary, type ImportJobProgress } from '../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../api/errorCodes';
@@ -12,7 +13,8 @@ import { recentImportsRefetchIntervalMs, label as jobLabel } from '../lib/import
 import { navigateToReimport, navigateToRetryFailedImport } from '../lib/importNavState';
 import type { AccountStatementGroup, StatementSummary, Transaction } from '../types';
 import { formatDate } from '../utils/date';
-import { FinoraCard, EmptyState, ConfirmDialog } from '../design-system';
+import { FinoraCard, EmptyState, ConfirmDialog, QuickActionCard, Skeleton } from '../design-system';
+import heroIllustration from '../assets/statement-history/statement-history-hero.png';
 
 // Reused from the same failure UX contract Import.tsx's live upload flow already draws on
 // (Premium Import Reliability v1, §6) -- a failure a user comes back to later reads the same way
@@ -107,6 +109,78 @@ export default function StatementHistory() {
   // anywhere else today -- that's this section's actual reason to exist.
   const inProgressJobs = (recentJobs ?? []).filter((j) => j.status !== 'COMPLETED');
 
+  // Hooks below must run on every render regardless of the isLoading early-return further down,
+  // so accountGroups (and everything derived from it) is computed here rather than after that
+  // return -- a conditional hook call would violate the Rules of Hooks the moment `groups`
+  // resolves and isLoading flips from true to false mid-session.
+  const accountGroups = useMemo(() => groups ?? [], [groups]);
+
+  const [search, setSearch] = useState('');
+  const [bankFilter, setBankFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const hasActiveFilters = !!(search || bankFilter || dateFrom || dateTo);
+
+  function clearFilters() {
+    setSearch(''); setBankFilter(''); setDateFrom(''); setDateTo('');
+  }
+
+  // KPI row figures -- every one of these is a real aggregate over the statements actually
+  // returned by the API, never a fabricated or hardcoded number (there is, for instance, no
+  // storage-quota concept anywhere in Fynora's backend or billing model, so that mockup element
+  // has no equivalent here).
+  const stats = useMemo(() => {
+    const totalStatements = accountGroups.reduce((sum, g) => sum + g.statements.length, 0);
+    const bankCount = new Set(accountGroups.map((g) => g.bank.id)).size;
+    const totalTransactions = accountGroups.reduce(
+      (sum, g) => sum + g.statements.reduce((s, st) => s + st.transactionsImported, 0), 0,
+    );
+
+    let oldest: { date: string; bankName: string } | null = null;
+    let latest: { date: string; bankName: string } | null = null;
+    for (const g of accountGroups) {
+      const bankName = g.bank.officialName ?? g.bank.shortName;
+      for (const s of g.statements) {
+        if (!s.statementPeriodStart) continue;
+        if (!oldest || s.statementPeriodStart < oldest.date) oldest = { date: s.statementPeriodStart, bankName };
+        if (!latest || s.statementPeriodStart > latest.date) latest = { date: s.statementPeriodStart, bankName };
+      }
+    }
+
+    return { totalStatements, bankCount, totalTransactions, oldest, latest };
+  }, [accountGroups]);
+
+  const bankOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    accountGroups.forEach((g) => {
+      if (!map.has(g.bank.id)) map.set(g.bank.id, g.bank.officialName ?? g.bank.shortName);
+    });
+    return Array.from(map.entries());
+  }, [accountGroups]);
+
+  // Filters narrow which statements show inside each account's accordion -- they never flatten
+  // the grouping itself. Statement History groups by account on purpose (see AccountStatementGroup
+  // above): that's how users actually think about their statements, not as one undifferentiated
+  // pile of files. An account with zero statements left after filtering just doesn't render.
+  const filteredGroups = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return accountGroups
+      .map((g) => ({
+        ...g,
+        statements: g.statements.filter((s) => {
+          if (bankFilter && g.bank.id !== bankFilter) return false;
+          if (dateFrom && (!s.statementPeriodStart || s.statementPeriodStart < dateFrom)) return false;
+          if (dateTo && (!s.statementPeriodEnd || s.statementPeriodEnd > dateTo)) return false;
+          if (term) {
+            const haystack = `${s.fileName} ${g.accountName} ${g.bank.officialName ?? ''} ${g.bank.shortName}`.toLowerCase();
+            if (!haystack.includes(term)) return false;
+          }
+          return true;
+        }),
+      }))
+      .filter((g) => g.statements.length > 0);
+  }, [accountGroups, search, bankFilter, dateFrom, dateTo]);
+
   function toggleAccount(accountId: string) {
     setOpenAccounts((prev) => {
       const next = new Set(prev);
@@ -180,46 +254,154 @@ export default function StatementHistory() {
     }
   }
 
-  if (isLoading) return <p className="text-muted">Loading…</p>;
-
-  const accountGroups = groups ?? [];
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <Hero />
+        <Skeleton.Region label="Loading statement history" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[0, 1, 2, 3].map((i) => <Skeleton.Card key={i} />)}
+        </Skeleton.Region>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      <div className="mb-2">
-        <h1 className="text-xl font-bold text-ink">Statement History</h1>
-        <p className="text-sm text-muted">
-          Every imported statement, organized by account — not by which file you uploaded.
-        </p>
-      </div>
+    <div className="space-y-6">
+      <Hero />
 
       {error && <p className="text-danger text-sm">{error}</p>}
 
-      {!!failures?.length && <FailedImportsSection failures={failures} />}
-
-      {!!inProgressJobs.length && <RecentImportsSection jobs={inProgressJobs} />}
-
-      {accountGroups.length === 0 ? (
-        <FinoraCard padding="lg">
-          <EmptyState
+      {accountGroups.length > 0 && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatCard
+            label="Total Statements"
+            value={String(stats.totalStatements)}
+            caption={`Across ${stats.bankCount} bank${stats.bankCount === 1 ? '' : 's'}`}
             icon={FileText}
+            iconBg="bg-green-100"
+            iconColor="text-green-600"
+          />
+          <StatCard
+            label="Total Transactions"
+            value={stats.totalTransactions.toLocaleString('en-IN')}
+            caption="Extracted from statements"
+            icon={UploadCloud}
             iconBg="bg-blue-100"
             iconColor="text-blue-600"
-            title="No statements imported yet"
-            desc="Import a bank or credit card statement to get started."
-            cta={
-              <button
-                onClick={() => navigate('/app/import')}
-                className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-4 py-2"
-              >
-                Import a Statement
-              </button>
-            }
           />
-        </FinoraCard>
-      ) : (
-        accountGroups.map((group: AccountStatementGroup) => {
-          const isOpen = openAccounts.has(group.accountId) || accountGroups.length === 1;
+          <StatCard
+            label="Oldest Statement"
+            value={stats.oldest ? formatDate(stats.oldest.date, { year: 'numeric', month: 'short' }) : '—'}
+            caption={stats.oldest ? stats.oldest.bankName : 'No dated statements yet'}
+            icon={CalendarDays}
+            iconBg="bg-purple-100"
+            iconColor="text-purple-600"
+          />
+          <StatCard
+            label="Latest Statement"
+            value={stats.latest ? formatDate(stats.latest.date, { year: 'numeric', month: 'short' }) : '—'}
+            caption={stats.latest ? stats.latest.bankName : 'No dated statements yet'}
+            icon={History}
+            iconBg="bg-orange-100"
+            iconColor="text-orange-600"
+          />
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-6 items-start">
+        <div className="min-w-0 space-y-4">
+          {accountGroups.length > 0 && (
+            <FinoraCard padding="sm">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                <div className="relative md:col-span-2">
+                  <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted pointer-events-none" />
+                  <input
+                    placeholder="Search by bank, file name, or period…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="w-full bg-card text-ink border border-border rounded-lg pl-8 pr-3 py-2 text-sm"
+                  />
+                </div>
+                <select
+                  value={bankFilter}
+                  onChange={(e) => setBankFilter(e.target.value)}
+                  className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm"
+                >
+                  <option value="">All Banks</option>
+                  {bankOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                </select>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  aria-label="From date"
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm"
+                />
+                <div className="flex gap-2">
+                  <input
+                    type="date"
+                    value={dateTo}
+                    aria-label="To date"
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="flex-1 min-w-0 bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={clearFilters}
+                    disabled={!hasActiveFilters}
+                    title="Clear all filters"
+                    className="flex-shrink-0 flex items-center gap-1.5 border border-border rounded-lg px-3 py-2 text-sm text-muted hover:text-ink hover:bg-bg disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <FilterX size={14} />
+                  </button>
+                </div>
+              </div>
+            </FinoraCard>
+          )}
+
+          {!!failures?.length && <FailedImportsSection failures={failures} />}
+
+          {!!inProgressJobs.length && <RecentImportsSection jobs={inProgressJobs} />}
+
+          {accountGroups.length === 0 ? (
+            <FinoraCard padding="lg">
+              <EmptyState
+                icon={FileText}
+                iconBg="bg-blue-100"
+                iconColor="text-blue-600"
+                title="No statements imported yet"
+                desc="Import a bank or credit card statement to get started."
+                cta={
+                  <button
+                    onClick={() => navigate('/app/import')}
+                    className="bg-primary text-on-primary text-xs font-semibold rounded-lg px-4 py-2"
+                  >
+                    Import a Statement
+                  </button>
+                }
+              />
+            </FinoraCard>
+          ) : filteredGroups.length === 0 ? (
+            <FinoraCard padding="lg">
+              <EmptyState
+                icon={Search}
+                iconBg="bg-bg"
+                iconColor="text-muted"
+                title="No statements match your filters"
+                desc="Try a different bank, search term, or date range."
+                cta={
+                  <button
+                    onClick={clearFilters}
+                    className="border border-border rounded-lg px-4 py-2 text-xs font-semibold text-ink hover:bg-bg"
+                  >
+                    Clear Filters
+                  </button>
+                }
+              />
+            </FinoraCard>
+          ) : (
+            filteredGroups.map((group: AccountStatementGroup) => {
+              const isOpen = openAccounts.has(group.accountId) || filteredGroups.length === 1;
           return (
             <div key={group.accountId} className="bg-card rounded-xl2 shadow-card border border-border overflow-hidden">
               <button
@@ -304,7 +486,27 @@ export default function StatementHistory() {
             </div>
           );
         })
-      )}
+          )}
+        </div>
+
+        <div className="space-y-4">
+          <FinoraCard>
+            <h2 className="font-semibold text-ink text-sm mb-4">Quick Actions</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <QuickActionCard icon={UploadCloud} label="Import Statement" to="/app/import" />
+              <QuickActionCard icon={Landmark} label="Manage Banks" to="/app/accounts" />
+            </div>
+          </FinoraCard>
+
+          <FinoraCard className="text-center">
+            <div className="w-10 h-10 rounded-full bg-primary-light flex items-center justify-center mx-auto mb-3">
+              <Sparkles size={16} className="text-primary" />
+            </div>
+            <p className="text-sm font-semibold text-ink mb-1">Your financial history, always ready.</p>
+            <p className="text-xs text-muted">Revisit, analyze, and make smarter decisions.</p>
+          </FinoraCard>
+        </div>
+      </div>
 
       {viewing && <StatementDetailModal viewing={viewing} onClose={() => setViewing(null)} />}
 
@@ -332,6 +534,57 @@ export default function StatementHistory() {
         />
       )}
     </div>
+  );
+}
+
+/** Page header -- eyebrow + headline + illustration, same pattern Ledger.tsx's redesign already
+ *  established. Unlike Ledger, this page DOES have a real illustration asset (generated for this
+ *  redesign, in the app's actual graphite/cream/navy palette, not the mockup's purple) -- so
+ *  unlike Ledger's own "no invented decoration" call, showing it here isn't fabricating anything. */
+function Hero() {
+  return (
+    <div className="flex items-center justify-between gap-6 flex-wrap">
+      <div className="max-w-xl">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-muted mb-1">Statement History</p>
+        <h1 className="text-2xl md:text-3xl font-bold text-ink font-display">
+          All your statements, <span className="text-primary">in one place</span>
+        </h1>
+        <p className="text-sm text-muted mt-1">
+          View, download, and manage all your imported statements. Revisit anytime, stay organized.
+        </p>
+      </div>
+      <img
+        src={heroIllustration}
+        alt=""
+        aria-hidden="true"
+        className="hidden md:block w-40 h-auto flex-shrink-0"
+      />
+    </div>
+  );
+}
+
+/**
+ * Dashboard's/Ledger's KPI-tile shape (icon badge, label, big value) reused here with a plain
+ * caption line instead of a delta -- MetricCard's delta/deltaLabel contract renders a leading "—"
+ * for a KPI with no delta concept, which reads as "not available" rather than a normal subtitle
+ * like "Across 5 banks", so a plain variant fits this row better than forcing that contract.
+ */
+function StatCard({
+  label, value, caption, icon: Icon, iconBg, iconColor,
+}: {
+  label: string; value: string; caption: string; icon: LucideIcon; iconBg: string; iconColor: string;
+}) {
+  return (
+    <FinoraCard>
+      <div className="flex items-start justify-between mb-3">
+        <p className="text-sm text-muted">{label}</p>
+        <div className={`w-9 h-9 rounded-full ${iconBg} flex items-center justify-center flex-shrink-0`}>
+          <Icon size={17} className={iconColor} />
+        </div>
+      </div>
+      <p className="text-2xl font-bold text-ink mb-1">{value}</p>
+      <p className="text-xs text-muted">{caption}</p>
+    </FinoraCard>
   );
 }
 
