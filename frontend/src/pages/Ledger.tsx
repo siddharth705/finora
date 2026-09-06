@@ -19,7 +19,7 @@ import { MerchantLogo } from '../components/MerchantLogo';
 import { BankLogo } from '../components/BankLogo';
 import type { Transaction } from '../types';
 import { counterpartyLabel } from '../lib/counterpartyLabel';
-import { ConfirmDialog, Button, IconButton, Skeleton, FinoraCard, MetricCard, Badge } from '../design-system';
+import { ConfirmDialog, Button, IconButton, Skeleton, FinoraCard, Badge } from '../design-system';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 import { ICON_COMPONENTS, COLOR_HEX } from '../lib/categoryIcons';
 
@@ -38,14 +38,6 @@ function fmt(n: number) {
   return (n < 0 ? '-₹' : '₹') + Math.round(Math.abs(n)).toLocaleString('en-IN');
 }
 
-// The label+icon-badge header row `MetricCard` renders internally -- factored out here rather
-// than hand-rolled twice, since Top Category/This Month need a custom body `MetricCard` itself
-// doesn't support (a "spend (pct%)" line, a progress bar) but still want the identical header.
-// Matches MetricCard's own `variant="elevated"` header exactly (rounded-xl icon badge, semibold
-// label) -- Total Spent/Transactions use that variant directly; Top Category/This Month need a
-// custom body (a "spend (pct%)" line, a progress bar) `MetricCard` doesn't support in either
-// variant, but must still look like the same card family, not a visually different one sitting
-// next to it in the same row.
 function KpiCardHeader({ label, icon: Icon, iconBg, iconColor }: { label: string; icon: LucideIcon; iconBg: string; iconColor: string }) {
   return (
     <div className="flex items-start justify-between mb-4">
@@ -57,17 +49,96 @@ function KpiCardHeader({ label, icon: Icon, iconBg, iconColor }: { label: string
   );
 }
 
+/**
+ * Every KPI card in this row, through one component -- reported directly that the previous
+ * version (two `MetricCard`s plus two hand-rolled `FinoraCard`s) rendered at visibly different
+ * heights. Cause: a CSS Grid item stretches to the row's height by default, but a plain-content
+ * `<div>` inside it (no `MetricCard` `className` prop existed to reach in and set one) only ever
+ * sizes to its OWN content -- so a card with less content (no footer) stayed shorter than one with
+ * more, inside an equally-tall but invisible grid cell. `h-full` + `flex flex-col justify-between`
+ * here (and on `KpiEntrance`'s wrapper below) makes the VISIBLE bordered/shadowed card itself fill
+ * that cell, with `footer` pinned to the bottom regardless of how tall the value/label above it is.
+ */
+function KpiCard({
+  label, value, valueColor, icon, iconBg, iconColor, footer,
+}: {
+  label: string; value: string; valueColor?: string; icon: LucideIcon; iconBg: string; iconColor: string; footer: ReactNode;
+}) {
+  return (
+    <FinoraCard className="h-full flex flex-col justify-between transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-soft">
+      <div>
+        <KpiCardHeader label={label} icon={icon} iconBg={iconBg} iconColor={iconColor} />
+        <p className={`font-display text-[26px] font-extrabold tracking-tight truncate ${valueColor ?? 'text-ink'}`}>{value}</p>
+      </div>
+      {footer}
+    </FinoraCard>
+  );
+}
+
+/** A real (not decorative-only) trend line: `values` are actual per-day totals from the same
+ *  window the card's own big number summarizes (see the `dailySpend`/`dailyCount` comment where
+ *  they're computed) -- never a fabricated "vs last month" shape. Renders nothing for fewer than
+ *  two points; a single point has no line to draw. */
+function Sparkline({ values, color }: { values: number[]; color: string }) {
+  if (values.length < 2) return null;
+  const width = 72;
+  const height = 28;
+  const max = Math.max(...values);
+  const min = Math.min(...values, 0);
+  const range = max - min || 1;
+  const stepX = width / (values.length - 1);
+  const points = values.map((v, i) => `${(i * stepX).toFixed(1)},${(height - ((v - min) / range) * height).toFixed(1)}`).join(' ');
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className="flex-shrink-0" aria-hidden="true">
+      <polyline points={points} fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** Real per-category spend, tallest-first-in-data-order (not re-sorted here) -- the same
+ *  `topCategoriesBySpend` slice the Top Category card's own percentage is computed from. */
+function MiniBars({ values, color }: { values: number[]; color: string }) {
+  if (values.length === 0) return null;
+  const width = 72;
+  const height = 28;
+  const max = Math.max(...values);
+  const gap = 3;
+  const barWidth = (width - gap * (values.length - 1)) / values.length;
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} width={width} height={height} className="flex-shrink-0" aria-hidden="true">
+      {values.map((v, i) => {
+        const barHeight = Math.max(2, (v / max) * height);
+        return (
+          <rect
+            key={i}
+            x={i * (barWidth + gap)}
+            y={height - barHeight}
+            width={barWidth}
+            height={barHeight}
+            rx={1.5}
+            fill={color}
+            opacity={0.35 + 0.65 * (v / max)}
+          />
+        );
+      })}
+    </svg>
+  );
+}
+
 // Mount-fire fade/rise, staggered by index -- same convention Dashboard's own
 // `.journey-reveal-item`/AuthEntry's `.auth-reveal` already use (see index.css), just expressed
 // via framer-motion instead of a CSS keyframe class since this file already imports framer-motion
 // for the button tap feedback below, and mixing both animation systems on one page for two
 // halves of the same "polish this page" request isn't worth the inconsistency. Fires once on
 // mount, not on scroll -- the KPI row sits above the fold, same reasoning journeyReveal/authReveal
-// already documented for their own always-visible-on-load content.
+// already documented for their own always-visible-on-load content. `h-full` so the animated
+// wrapper itself participates in the grid-stretch fix `KpiCard` documents above, rather than
+// re-introducing the same uneven-height bug one layer further out.
 function KpiEntrance({ index, reduceMotion, children }: { index: number; reduceMotion: boolean | null; children: ReactNode }) {
-  if (reduceMotion) return <>{children}</>;
+  if (reduceMotion) return <div className="h-full">{children}</div>;
   return (
     <motion.div
+      className="h-full"
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: index * 0.06, ease: [0.16, 1, 0.3, 1] }}
@@ -259,9 +330,10 @@ export default function Ledger() {
   const budgetLimit = (budgets ?? []).reduce((s, b) => s + b.monthlyLimit, 0);
   const budgetPct = budgetLimit > 0 ? Math.min(100, Math.round((budgetSpend / budgetLimit) * 100)) : 0;
 
-  const { totalSpend, categoryChips, topCategory } = useMemo(() => {
+  const { totalSpend, categoryChips, topCategory, topCategoriesBySpend, dailySpend, dailyCount } = useMemo(() => {
     const statsTxns = statsPage?.content ?? [];
     const totals = new Map<string, { id: string; name: string; count: number; spend: number }>();
+    const byDate = new Map<string, { spend: number; count: number }>();
     let spend = 0;
     for (const t of statsTxns) {
       const cur = totals.get(t.categoryId) ?? { id: t.categoryId, name: t.categoryName, count: 0, spend: 0 };
@@ -271,6 +343,15 @@ export default function Ledger() {
         spend += t.amount;
       }
       totals.set(t.categoryId, cur);
+
+      // Real daily buckets from the same already-fetched window -- powers the KPI cards' small
+      // trend sparklines below. Not a "vs last month" percentage (see the KPI row's own comment
+      // for why that's deliberately not computed): this is an actual day-by-day shape of the
+      // SAME data the cards' big numbers already summarize, not a separate claim about the past.
+      const dayCur = byDate.get(t.date) ?? { spend: 0, count: 0 };
+      dayCur.count += 1;
+      if (t.type === 'EXPENSE') dayCur.spend += t.amount;
+      byDate.set(t.date, dayCur);
     }
     // The currently-selected chip must always be present, even at zero count in this window --
     // otherwise narrowing another filter (date, search, ...) after selecting a category can make
@@ -281,8 +362,20 @@ export default function Ledger() {
       totals.set(filters.categoryId, { id: filters.categoryId, name: cat?.name ?? 'Selected category', count: 0, spend: 0 });
     }
     const chips = [...totals.values()].sort((a, b) => b.count - a.count);
-    const top = [...totals.values()].sort((a, b) => b.spend - a.spend)[0] ?? null;
-    return { totalSpend: spend, categoryChips: chips, topCategory: top && top.spend > 0 ? top : null };
+    const bySpend = [...totals.values()].sort((a, b) => b.spend - a.spend);
+    const top = bySpend[0] ?? null;
+    // Ascending by date (oldest -> newest, left -> right) over the last 14 distinct days actually
+    // present in this window -- not a fixed calendar range, since the filtered window itself may
+    // be shorter or sparser than that.
+    const orderedDates = [...byDate.keys()].sort().slice(-14);
+    return {
+      totalSpend: spend,
+      categoryChips: chips,
+      topCategory: top && top.spend > 0 ? top : null,
+      topCategoriesBySpend: bySpend.filter((c) => c.spend > 0).slice(0, 5),
+      dailySpend: orderedDates.map((d) => byDate.get(d)!.spend),
+      dailyCount: orderedDates.map((d) => byDate.get(d)!.count),
+    };
   }, [statsPage, filters.categoryId, categoriesById]);
 
   // Deleting a transaction can shrink the total below the page currently being viewed (e.g. the
@@ -354,45 +447,68 @@ export default function Ledger() {
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiEntrance index={0} reduceMotion={prefersReducedMotion}>
-            <MetricCard
+            <KpiCard
               label={hasStatsFilters ? 'Total Spent (filtered)' : 'Total Spent'}
               value={fmt(totalSpend)}
               icon={Wallet}
               iconBg="bg-green-100"
               iconColor="text-green-600"
-              variant="elevated"
+              footer={
+                <div className="flex items-end justify-between mt-2">
+                  <span className="text-xs text-muted">{dailySpend.length >= 2 ? 'Recent daily spend' : ' '}</span>
+                  <Sparkline values={dailySpend} color="#16a34a" />
+                </div>
+              }
             />
           </KpiEntrance>
           <KpiEntrance index={1} reduceMotion={prefersReducedMotion}>
-            <MetricCard
+            <KpiCard
               label="Transactions"
               value={transactionCount.toLocaleString('en-IN')}
               icon={Receipt}
               iconBg="bg-orange-100"
               iconColor="text-orange-600"
-              variant="elevated"
+              footer={
+                <div className="flex items-end justify-between mt-2">
+                  <span className="text-xs text-muted">{dailyCount.length >= 2 ? 'Recent daily count' : ' '}</span>
+                  <Sparkline values={dailyCount} color="#ea580c" />
+                </div>
+              }
             />
           </KpiEntrance>
           <KpiEntrance index={2} reduceMotion={prefersReducedMotion}>
-            <FinoraCard className="transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-soft">
-              <KpiCardHeader label="Top Category" icon={Tag} iconBg="bg-purple-100" iconColor="text-purple-600" />
-              <p className="font-display text-[26px] font-extrabold mb-1.5 tracking-tight text-ink truncate">{topCategory ? topCategory.name : '—'}</p>
-              {topCategory && (
-                <p className="text-xs text-muted">
-                  {fmt(topCategory.spend)} ({totalSpend > 0 ? Math.round((topCategory.spend / totalSpend) * 100) : 0}%)
-                </p>
-              )}
-            </FinoraCard>
+            <KpiCard
+              label="Top Category"
+              value={topCategory ? topCategory.name : '—'}
+              icon={Tag}
+              iconBg="bg-purple-100"
+              iconColor="text-purple-600"
+              footer={
+                <div className="flex items-end justify-between mt-2">
+                  <span className="text-xs text-muted">
+                    {topCategory ? `${fmt(topCategory.spend)} (${totalSpend > 0 ? Math.round((topCategory.spend / totalSpend) * 100) : 0}%)` : ' '}
+                  </span>
+                  <MiniBars values={topCategoriesBySpend.map((c) => c.spend)} color="#9333ea" />
+                </div>
+              }
+            />
           </KpiEntrance>
           <KpiEntrance index={3} reduceMotion={prefersReducedMotion}>
-            <FinoraCard className="transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-soft">
-              <KpiCardHeader label="This Month" icon={PiggyBank} iconBg="bg-blue-100" iconColor="text-blue-600" />
-              <p className="font-display text-[26px] font-extrabold mb-2 tracking-tight text-ink">{fmt(budgetSpend)}</p>
-              <div className="h-1.5 bg-black/10 rounded-full overflow-hidden mb-1">
-                <div className="h-full bg-primary" style={{ width: `${budgetPct}%` }} />
-              </div>
-              <p className="text-xs text-muted">{budgetPct}% of budget</p>
-            </FinoraCard>
+            <KpiCard
+              label="This Month"
+              value={fmt(budgetSpend)}
+              icon={PiggyBank}
+              iconBg="bg-blue-100"
+              iconColor="text-blue-600"
+              footer={
+                <div className="mt-2">
+                  <div className="h-1.5 bg-black/10 rounded-full overflow-hidden mb-1">
+                    <div className="h-full bg-primary" style={{ width: `${budgetPct}%` }} />
+                  </div>
+                  <p className="text-xs text-muted">{budgetPct}% of budget</p>
+                </div>
+              }
+            />
           </KpiEntrance>
         </div>
       )}

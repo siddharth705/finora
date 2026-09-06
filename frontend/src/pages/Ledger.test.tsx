@@ -639,6 +639,31 @@ describe('Ledger — KPI row and category chips', () => {
     expect(screen.getByText('₹1,200')).toBeInTheDocument();
   });
 
+  // KPI polish: Total Spent/Transactions get a real (not fabricated) daily-trend sparkline, and
+  // Top Category gets a real per-category bar chart -- both built from the same statsFilters
+  // window the cards' own big numbers already summarize, never a "vs last month" guess.
+  it('renders a real daily-trend sparkline and category bar chart, not just the raw numbers', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [
+        txn({ id: 't1', date: '2026-08-01', categoryId: 'cat-1', categoryName: 'Shopping', amount: 500, type: 'EXPENSE' }),
+        txn({ id: 't2', date: '2026-08-02', categoryId: 'cat-2', categoryName: 'Travel', amount: 200, type: 'EXPENSE' }),
+      ],
+      page: 0, size: 10, totalElements: 2, totalPages: 1,
+    });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Shopping', isSystem: false, icon: 'shopping-bag', color: 'blue' },
+      { id: 'cat-2', name: 'Travel', isSystem: false, icon: 'plane', color: 'green' },
+    ]);
+    const { container } = renderLedger();
+
+    expect(await screen.findByText('Recent daily spend')).toBeInTheDocument();
+    expect(screen.getByText('Recent daily count')).toBeInTheDocument();
+    // One sparkline each for Total Spent/Transactions (a <polyline>), plus a multi-bar chart
+    // (<rect> per category) for Top Category -- two real distinct categories here, so two bars.
+    expect(container.querySelectorAll('polyline').length).toBe(2);
+    expect(container.querySelectorAll('svg rect').length).toBe(2);
+  });
+
   // Bug fix: the KPI row's loading skeleton only checked the transactions-stats query, not the
   // separate budgets query "This Month" reads -- so that card could render a real-looking
   // "₹0 / 0% of budget" before /budgets had actually responded.
