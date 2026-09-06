@@ -27,7 +27,7 @@ vi.mock('../context/NotificationContext', () => ({
   useNotify: () => ({ success: notifySuccess, error: notifyError }),
 }));
 vi.mock('../api/endpoints', () => ({
-  adminSubscriptionsApi: { list: vi.fn(), changePlan: vi.fn() },
+  adminSubscriptionsApi: { list: vi.fn(), changePlan: vi.fn(), cancelPaidSubscription: vi.fn() },
 }));
 
 function renderPage() {
@@ -67,6 +67,7 @@ describe('Subscriptions', () => {
     vi.mocked(useAdminAuth).mockReset();
     vi.mocked(adminSubscriptionsApi.list).mockReset();
     vi.mocked(adminSubscriptionsApi.changePlan).mockReset();
+    vi.mocked(adminSubscriptionsApi.cancelPaidSubscription).mockReset();
   });
 
   it('shows an access-denied message when the account lacks SUBSCRIPTION_MANAGEMENT_VIEW', () => {
@@ -123,5 +124,33 @@ describe('Subscriptions', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Next page' }));
 
     await waitFor(() => expect(adminSubscriptionsApi.list).toHaveBeenCalledWith(1, 20));
+  });
+
+  it('shows a confirm dialog instead of changing the plan directly for a Razorpay-backed subscription', async () => {
+    mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(
+      pageOf(subscription({ paymentProvider: 'RAZORPAY', planCode: 'PLUS', planName: 'Plus' }))
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Jane Doe')).toBeInTheDocument());
+
+    // A Razorpay-backed row renders a "Cancel paid subscription" action instead of the plain
+    // plan dropdown a non-Razorpay row still gets.
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /cancel paid subscription/i }));
+    await user.click(screen.getByRole('button', { name: /confirm/i }));
+
+    await waitFor(() => expect(adminSubscriptionsApi.cancelPaidSubscription).toHaveBeenCalledWith('user-1'));
+  });
+
+  it('still shows the plain dropdown for a non-Razorpay subscription', async () => {
+    mockAuth(['SUBSCRIPTION_MANAGEMENT_VIEW']);
+    vi.mocked(adminSubscriptionsApi.list).mockResolvedValue(pageOf(subscription()));
+    renderPage();
+    await waitFor(() => expect(screen.getByText('Jane Doe')).toBeInTheDocument());
+
+    expect(screen.getByRole('combobox')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /cancel paid subscription/i })).not.toBeInTheDocument();
   });
 });

@@ -5,6 +5,7 @@ import { AdminLayout } from '../components/AdminLayout';
 import { RequirePermission } from '../components/ProtectedRoute';
 import { DataTable, type DataTableColumn } from '../components/DataTable';
 import { Pagination } from '../components/Pagination';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useNotify } from '../context/NotificationContext';
 import { adminSubscriptionsApi } from '../api/endpoints';
 import type { SubscriptionSummaryDto } from '../types';
@@ -19,13 +20,9 @@ const PLAN_CODES = ['FREE', 'PLUS', 'PREMIUM'];
 
 const PAGE_SIZE = 20;
 
-/**
- * D-28 PR4-A. Manual plan changes are, for now, the only way anyone reaches Plus/Premium -- no
- * payment gateway exists yet (proposal §10). "Admin manual override" is a fixed reason: refining
- * the actual reason-capture UX is a later product decision, not a blocker for this first cut.
- */
 function SubscriptionsContent() {
   const [page, setPage] = useState(0);
+  const [confirmingCancelFor, setConfirmingCancelFor] = useState<SubscriptionSummaryDto | null>(null);
   const queryClient = useQueryClient();
   const notify = useNotify();
   const { data, isLoading } = useQuery({
@@ -41,6 +38,22 @@ function SubscriptionsContent() {
       notify.success('Plan updated.');
     },
     onError: (err: any) => notify.error(errorMessage(err, 'Failed to change this plan.')),
+  });
+
+  // design spec §6.6 -- a Razorpay-backed subscription cannot be moved by the plain dropdown
+  // (the backend already refuses it with 409); this is the confirm-then-retry flow that
+  // dropdown's 409 error message alone left no way to actually act on.
+  const cancelPaidMutation = useMutation({
+    mutationFn: (userId: string) => adminSubscriptionsApi.cancelPaidSubscription(userId),
+    onSuccess: () => {
+      setConfirmingCancelFor(null);
+      void queryClient.invalidateQueries({ queryKey: ['admin-subscriptions'] });
+      notify.success("Paid subscription cancelled. You can now change this user's plan.");
+    },
+    onError: (err: any) => {
+      setConfirmingCancelFor(null);
+      notify.error(errorMessage(err, 'Failed to cancel this subscription.'));
+    },
   });
 
   const columns: DataTableColumn<SubscriptionSummaryDto>[] = [
@@ -60,18 +73,30 @@ function SubscriptionsContent() {
     },
     {
       header: 'Plan',
-      render: (s) => (
-        <select
-          value={s.planCode ?? ''}
-          disabled={changePlanMutation.isPending}
-          onChange={(e) => changePlanMutation.mutate({ userId: s.userId, planCode: e.target.value })}
-          className="text-xs border border-border rounded-lg px-2 py-1.5 bg-card text-ink"
-        >
-          {PLAN_CODES.map((code) => (
-            <option key={code} value={code}>{code}</option>
-          ))}
-        </select>
-      ),
+      render: (s) =>
+        s.paymentProvider === 'RAZORPAY' ? (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-ink">{s.planCode}</span>
+            <button
+              type="button"
+              onClick={() => setConfirmingCancelFor(s)}
+              className="text-[11px] font-semibold text-danger hover:underline"
+            >
+              Cancel paid subscription
+            </button>
+          </div>
+        ) : (
+          <select
+            value={s.planCode ?? ''}
+            disabled={changePlanMutation.isPending}
+            onChange={(e) => changePlanMutation.mutate({ userId: s.userId, planCode: e.target.value })}
+            className="text-xs border border-border rounded-lg px-2 py-1.5 bg-card text-ink"
+          >
+            {PLAN_CODES.map((code) => (
+              <option key={code} value={code}>{code}</option>
+            ))}
+          </select>
+        ),
     },
     { header: 'Status', render: (s) => s.status, cellClassName: 'text-muted' },
     { header: 'Start date', render: (s) => s.startDate, cellClassName: 'text-muted' },
@@ -81,9 +106,8 @@ function SubscriptionsContent() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted max-w-xl">
-        Every user's current plan. Changing the dropdown grants or revokes access immediately --
-        there is no payment gateway yet, so this is the only way anyone reaches Plus or Premium
-        today.
+        Every user's current plan. A Razorpay-backed subscription must be cancelled here before its
+        plan can be changed manually -- see design spec §6.6.
       </p>
       <DataTable
         columns={columns}
@@ -99,6 +123,17 @@ function SubscriptionsContent() {
           totalElements={data.totalElements}
           pageSize={PAGE_SIZE}
           onPageChange={setPage}
+        />
+      )}
+      {confirmingCancelFor && (
+        <ConfirmDialog
+          title="Cancel this user's paid subscription?"
+          message={`This immediately stops ${confirmingCancelFor.userEmail ?? 'this user'}'s Razorpay subscription. You can then change their plan manually.`}
+          confirmLabel="Confirm"
+          danger
+          busy={cancelPaidMutation.isPending}
+          onConfirm={() => cancelPaidMutation.mutate(confirmingCancelFor.userId)}
+          onCancel={() => setConfirmingCancelFor(null)}
         />
       )}
     </div>
