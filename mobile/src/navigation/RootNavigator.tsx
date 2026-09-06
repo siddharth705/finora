@@ -7,6 +7,7 @@ import { RegisterScreen } from '../screens/RegisterScreen';
 import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
 import { VerifyPhoneScreen } from '../screens/VerifyPhoneScreen';
 import { AppTabs } from './AppTabs';
+import { OnboardingNavigator } from '../onboarding/OnboardingNavigator';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, useThemeSetting } from '../theme';
 import { useAuthStackInitialRoute } from './useAuthStackInitialRoute';
@@ -51,17 +52,18 @@ const linkingPrefixes = ['finora://'];
  * what the client renders.
  */
 export function RootNavigator() {
-  const { bootstrapping, token, phoneVerified } = useAuth();
+  const { bootstrapping, token, phoneVerified, onboardingCompleted } = useAuth();
   const authInitialRoute = useAuthStackInitialRoute(token);
   const c = useTheme();
   const { resolved } = useThemeSetting();
   const navigationRef = useNavigationContainerRef<AppTabParamList>();
   // AppTabs is actually the mounted tree -- token alone isn't enough, since a
   // signed-in-but-unverified account gets the single-screen VerifyPhone AppStack instead, which
-  // has no route to More.VerifyEmailChange either. Shared below by the deep-link hook (its own
-  // "ready" gate) and the nav-state-persistence hook (its own "which tree does this state belong
-  // to" gate) -- both need exactly this condition, not a slightly different one.
-  const isAppTabsActive = token !== null && phoneVerified;
+  // has no route to More.VerifyEmailChange either, and a verified-but-not-yet-onboarded account
+  // gets OnboardingNavigator instead (see the render logic below). Shared below by the deep-link
+  // hook (its own "ready" gate) and the nav-state-persistence hook (its own "which tree does this
+  // state belong to" gate) -- both need exactly this condition, not a slightly different one.
+  const isAppTabsActive = token !== null && phoneVerified && onboardingCompleted;
   const { onNavigationReady } = useEmailChangeDeepLink(navigationRef, isAppTabsActive, token !== null);
   const navPersistence = useNavigationStatePersistence(bootstrapping, isAppTabsActive);
 
@@ -133,6 +135,8 @@ export function RootNavigator() {
         <AppStack.Navigator screenOptions={{ headerShown: false }}>
           <AppStack.Screen name="VerifyPhone" component={VerifyPhoneScreen} />
         </AppStack.Navigator>
+      ) : !onboardingCompleted ? (
+        <OnboardingNavigator />
       ) : (
         <AppTabs />
       )}
