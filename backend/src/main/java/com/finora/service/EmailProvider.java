@@ -50,6 +50,6 @@ public interface EmailProvider {
      *  subscription; never for a downgrade (no new activation happens) or a renewal (design spec
      *  never asked for a renewal receipt, and inventing one is unrequested scope). Sent from
      *  {@code EmailProperties.billingFromAddress}, not the default from-address -- see
-     *  {@link EmailMessage}'s own doc comment for why. */
+     *  {@link EmailMessage.Sender}'s own doc comment for why. */
     EmailResult sendSubscriptionActivatedEmail(String toEmail, String fullName, String planName, String billingCycle);
 }

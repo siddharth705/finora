@@ -12,6 +12,11 @@ public class EmailProperties {
     // Optional display name shown alongside fromAddress (e.g. "Finora <onboarding@resend.dev>")
     // -- unset means every real mail client just shows the bare address, exactly today's behavior.
     private String fromName;
+    // The second address EmailMessage.Sender.SUPPORT resolves to -- see that enum's own doc for
+    // which emails use it. A plain field, not a map keyed by NotificationType: exactly one
+    // alternate address exists today, and a caller decides which one it wants via Sender, not by
+    // naming a config key.
+    private String supportFromAddress;
     // Subscription billing V3 (product decision, made explicitly by the repo owner, not inferred):
     // billing/subscription emails (e.g. "your subscription is active") send from a distinct
     // address from every other transactional email, so a billing question is recognizably a
@@ -40,6 +45,8 @@ public class EmailProperties {
     public void setFromAddress(String fromAddress) { this.fromAddress = fromAddress; }
     public String getFromName() { return fromName; }
     public void setFromName(String fromName) { this.fromName = fromName; }
+    public String getSupportFromAddress() { return supportFromAddress; }
+    public void setSupportFromAddress(String supportFromAddress) { this.supportFromAddress = supportFromAddress; }
     public String getBillingFromAddress() { return billingFromAddress; }
     public void setBillingFromAddress(String billingFromAddress) { this.billingFromAddress = billingFromAddress; }
     public String getAppBaseUrl() { return appBaseUrl; }

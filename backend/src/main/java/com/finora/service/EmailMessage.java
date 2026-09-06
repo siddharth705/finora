@@ -10,11 +10,6 @@ import java.util.Map;
  * set. templateVariables are substituted into html/text as {{name}} placeholders before sending
  * -- deliberately simple string substitution, not a templating engine, since no caller needs more
  * than that today.
- *
- * from is null for every existing caller (the provider's own configured default address applies)
- * -- non-null only for the billing/subscription emails added in Plan 3, which send from a
- * distinct address ({@code EmailProperties.billingFromAddress}) per an explicit product decision
- * that billing correspondence should come from a recognizably billing-specific sender.
  */
 public record EmailMessage(
         String to,
@@ -23,20 +18,38 @@ public record EmailMessage(
         String text,
         List<EmailAttachment> attachments,
         Map<String, String> templateVariables,
-        String from
+        Sender sender
 ) {
+    /**
+     * Which configured address a message goes out under -- a caller names the BUCKET, never an
+     * address itself, so a deployment can change any of these without touching a single caller.
+     * {@link com.finora.config.EmailProperties} resolves each to the actual value.
+     *
+     * <p>{@code SUPPORT} (product decision, 2026-09-06): an email a customer might reasonably want
+     * to reply to and reach a person (held-import/held-statement notices) goes out as
+     * {@code support@}, not {@code noreply@}; everything else (welcome, password reset/changed,
+     * account lifecycle) stays on {@code DEFAULT} (the existing {@code noreply@} address).
+     *
+     * <p>{@code BILLING} (Subscription Billing V3, merged the same day): billing/subscription
+     * correspondence sends from a distinct, recognizably billing-specific address -- originally
+     * built as a raw {@code String from} override on this record with its own {@code htmlFrom}
+     * factory; folded into this enum instead of kept as a second, parallel "which sender" concept
+     * once the two features landed on the same day and needed reconciling. Behavior for the one
+     * caller ({@code ResendEmailProvider.sendSubscriptionActivatedEmail}) is unchanged.
+     */
+    public enum Sender { DEFAULT, SUPPORT, BILLING }
+
     public EmailMessage {
         attachments = attachments == null ? List.of() : attachments;
         templateVariables = templateVariables == null ? Map.of() : templateVariables;
+        sender = sender == null ? Sender.DEFAULT : sender;
     }
 
     public static EmailMessage html(String to, String subject, String html) {
-        return new EmailMessage(to, subject, html, null, List.of(), Map.of(), null);
+        return new EmailMessage(to, subject, html, null, List.of(), Map.of(), Sender.DEFAULT);
     }
 
-    /** Same as {@link #html(String, String, String)}, sent from a specific address instead of the
-     *  provider's default -- see this record's own doc comment for why billing emails need this. */
-    public static EmailMessage htmlFrom(String to, String subject, String html, String from) {
-        return new EmailMessage(to, subject, html, null, List.of(), Map.of(), from);
+    public static EmailMessage html(String to, String subject, String html, Sender sender) {
+        return new EmailMessage(to, subject, html, null, List.of(), Map.of(), sender);
     }
 }
