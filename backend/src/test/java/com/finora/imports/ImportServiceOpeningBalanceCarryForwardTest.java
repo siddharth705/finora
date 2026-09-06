@@ -74,6 +74,8 @@ class ImportServiceOpeningBalanceCarryForwardTest {
         PreviewGenerator previewGenerator = new PreviewGenerator(csvParser, transactionNormalizer, statementValidator, new com.finora.imports.ImportVerifier(new com.finora.imports.BalanceChainValidator(), new com.finora.imports.StatementTotalsValidator(), new com.finora.imports.SummaryTotalsValidator(), new com.finora.imports.ColumnAmbiguityValidator(), new com.finora.imports.RowAccountingValidator(), new com.finora.imports.CreditCardStatementTotalsValidator(), new com.finora.imports.CreditCardFlowReconciliationValidator()), com.finora.imports.TestRuleEngines.empty());
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
 
+        com.finora.service.EntitlementService entitlementService = mock(com.finora.service.EntitlementService.class);
+        when(entitlementService.hasEntitlement(any(), any())).thenReturn(true);
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService,
@@ -84,7 +86,8 @@ class ImportServiceOpeningBalanceCarryForwardTest {
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 learningEventPublisher, mock(LayoutRegistryService.class),
-                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));
+                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class),
+                entitlementService);
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);

@@ -119,6 +119,8 @@ class VerificationSurvivesStagingConversionTest {
         pdfPreviewGenerator = mock(com.finora.imports.pdf.PdfPreviewGenerator.class);
         verificationRecorder = mock(ImportVerificationRecorder.class);
 
+        com.finora.service.EntitlementService entitlementService = mock(com.finora.service.EntitlementService.class);
+        when(entitlementService.hasEntitlement(any(), any())).thenReturn(true);
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
@@ -127,7 +129,8 @@ class VerificationSurvivesStagingConversionTest {
                 new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(StatementAnalysisRecorder.class), verificationRecorder,
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
-                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));
+                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class),
+                entitlementService);
     }
 
     private void stubSections(List<StagedAccountSection> sections) throws Exception {
