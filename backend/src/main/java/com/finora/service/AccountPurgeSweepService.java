@@ -36,6 +36,7 @@ import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.StatementImportRepository.StatementMetadata;
+import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.SupportTicketRepository;
 import com.finora.repository.TransactionRepository;
@@ -147,6 +148,7 @@ public class AccountPurgeSweepService {
     private final GoalRepository goalRepository;
     private final SubscriptionRepository subscriptionRepository;
     private final PaymentRepository paymentRepository;
+    private final SubscriptionOrderRepository subscriptionOrderRepository;
     private final ReferralCodeRepository referralCodeRepository;
     private final ReferralRepository referralRepository;
     private final WalletLedgerRepository walletLedgerRepository;
@@ -189,6 +191,7 @@ public class AccountPurgeSweepService {
                                      GoalRepository goalRepository,
                                      SubscriptionRepository subscriptionRepository,
                                      PaymentRepository paymentRepository,
+                                     SubscriptionOrderRepository subscriptionOrderRepository,
                                      ReferralCodeRepository referralCodeRepository,
                                      ReferralRepository referralRepository,
                                      WalletLedgerRepository walletLedgerRepository,
@@ -230,6 +233,7 @@ public class AccountPurgeSweepService {
         this.goalRepository = goalRepository;
         this.subscriptionRepository = subscriptionRepository;
         this.paymentRepository = paymentRepository;
+        this.subscriptionOrderRepository = subscriptionOrderRepository;
         this.referralCodeRepository = referralCodeRepository;
         this.referralRepository = referralRepository;
         this.walletLedgerRepository = walletLedgerRepository;
@@ -365,6 +369,12 @@ public class AccountPurgeSweepService {
             // SubscriptionRepository.hardDeleteByUserId's own comment for why the two child tables
             // need no separate call here.
             subscriptionRepository.hardDeleteByUserId(userId);
+            // subscription_orders (V154, Subscription Billing V1) is another user-linked table this
+            // sweep didn't know about yet -- same trap as V125/notifications above: V157 gives it
+            // its own ON DELETE CASCADE, but that never fires here, so it needs the same explicit
+            // hard-delete call as payments/subscriptions. No ordering dependency on either of those
+            // two calls -- razorpay_subscription_id is a plain correlation string, not an FK.
+            subscriptionOrderRepository.hardDeleteByUserId(userId);
             // D-28 PR4-C: referral_codes/wallet_ledger have their own user_id column, deleted
             // directly. referrals needs BOTH directions -- a purged user may appear as either
             // referrer_user_id or referred_user_id, on two entirely different rows -- see

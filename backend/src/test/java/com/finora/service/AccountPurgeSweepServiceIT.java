@@ -11,6 +11,8 @@ import com.finora.entity.Payment;
 import com.finora.entity.Referral;
 import com.finora.entity.ReferralCode;
 import com.finora.entity.StatementImport;
+import com.finora.entity.Subscription;
+import com.finora.entity.SubscriptionOrder;
 import com.finora.entity.SupportTicket;
 import com.finora.entity.SupportTicketAttachment;
 import com.finora.entity.SupportTicketInternalNote;
@@ -56,6 +58,7 @@ import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
 import com.finora.repository.RoleRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.SupportTicketAttachmentRepository;
 import com.finora.repository.SupportTicketInternalNoteRepository;
@@ -112,6 +115,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
     @Autowired private GoalRepository goalRepository;
     @Autowired private SubscriptionRepository subscriptionRepository;
     @Autowired private PaymentRepository paymentRepository;
+    @Autowired private SubscriptionOrderRepository subscriptionOrderRepository;
     @Autowired private ReferralCodeRepository referralCodeRepository;
     @Autowired private ReferralRepository referralRepository;
     @Autowired private WalletLedgerRepository walletLedgerRepository;
@@ -157,6 +161,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
                 transactionRepository, merchantLearningEventRepository, merchantLearningAuditRepository,
                 merchantCategoryLearningRepository, merchantAliasRepository, merchantCategoryMapRepository,
                 merchantRepository, budgetRepository, goalRepository, subscriptionRepository, paymentRepository,
+                subscriptionOrderRepository,
                 referralCodeRepository, referralRepository, walletLedgerRepository, categoryRuleRepository, categoryRepository,
                 relationshipRepository, relationshipIdentifierRepository, netWorthSnapshotRepository,
                 importJobRepository, importSessionRepository, passwordHistoryRepository,
@@ -239,7 +244,10 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
      * proves the same explicit-call pattern as Payment: it has its own {@code ON DELETE CASCADE}
      * now too, but that alone would never fire here, since this method anonymizes {@code users}
      * rather than deleting the row -- {@code NotificationRepository.deleteByUserId} is what
-     * actually has to do the work.
+     * actually has to do the work. {@link SubscriptionOrder} (V154, follow-up to PR #1039's V157
+     * cascade) proves the identical pattern once more: {@code SubscriptionOrderRepository
+     * .hardDeleteByUserId} is what actually removes the row, not the CASCADE, for the same reason
+     * as Notification above.
      */
     @Test
     @Transactional
@@ -265,7 +273,8 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         goalRepository.save(goal);
 
         subscriptionService.provisionFreeSubscription(userId);
-        UUID subscriptionId = subscriptionRepository.findActiveOrTrial(userId).orElseThrow().getId();
+        Subscription freeSubscription = subscriptionRepository.findActiveOrTrial(userId).orElseThrow();
+        UUID subscriptionId = freeSubscription.getId();
 
         // D-28 PR4-B: no gateway exists yet to create one of these for real, so this is a
         // synthetic row purely to prove PaymentRepository.hardDeleteByUserId actually fires --
@@ -277,6 +286,17 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         payment.setCurrency("INR");
         payment.setStatus(Payment.STATUS_SUCCESS);
         paymentRepository.save(payment);
+
+        // Follow-up to PR #1039's V157 cascade -- synthetic row purely to prove
+        // SubscriptionOrderRepository.hardDeleteByUserId actually fires, same reasoning as Payment
+        // above.
+        SubscriptionOrder order = new SubscriptionOrder();
+        order.setUserId(userId);
+        order.setPlanId(freeSubscription.getPlanId());
+        order.setBillingCycle("MONTHLY");
+        order.setStatus(SubscriptionOrder.STATUS_COMPLETED);
+        order.setAmount(BigDecimal.valueOf(399));
+        subscriptionOrderRepository.save(order);
 
         // D-28 PR4-C: two referral rows, one in each direction -- the purged user as referrer of
         // someone else, and as the one who was referred by someone else -- to prove BOTH
@@ -341,6 +361,9 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         Long paymentCount = (Long) entityManager
                 .createNativeQuery("SELECT COUNT(*) FROM payments WHERE user_id = :userId")
                 .setParameter("userId", userId).getSingleResult();
+        Long subscriptionOrderCount = (Long) entityManager
+                .createNativeQuery("SELECT COUNT(*) FROM subscription_orders WHERE user_id = :userId")
+                .setParameter("userId", userId).getSingleResult();
         // subscription_events has no user_id column of its own -- checked by the subscription_id
         // captured before the purge, proving V99's ON DELETE CASCADE actually fired, not just that
         // the parent row (which this same query would trivially miss anyway) is gone.
@@ -368,6 +391,7 @@ class AccountPurgeSweepServiceIT extends AbstractIntegrationTest {
         assertThat(subscriptionCount).isZero();
         assertThat(subscriptionEventCount).isZero();
         assertThat(paymentCount).isZero();
+        assertThat(subscriptionOrderCount).isZero();
         assertThat(referralCodeCount).isZero();
         assertThat(referralsAsReferrerCount).isZero();
         assertThat(referralsAsReferredCount).isZero();
