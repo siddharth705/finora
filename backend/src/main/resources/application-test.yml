@@ -116,3 +116,8 @@ app:
       key-id: test-key-id
       key-secret: test-key-secret
       webhook-secret: test-webhook-secret
+
+    # Subscription billing V4 -- same reasoning as razorpay above: RevenueCatProperties.isConfigured()
+    # requires this non-blank, or the webhook 503s before ever reaching its own logic under test.
+    revenuecat:
+      webhook-signing-secret: test-revenuecat-webhook-secret
