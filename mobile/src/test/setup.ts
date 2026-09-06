@@ -32,6 +32,11 @@ if (!process.env.NODE_OPTIONS?.includes('--experimental-vm-modules')) {
 // everything that would touch the network mocks the endpoint layer.
 process.env.EXPO_PUBLIC_API_BASE_URL = 'https://tests.invalid';
 
+// Subscription billing V4. src/lib/revenueCat.ts throws at import time when this is missing, same
+// reasoning as EXPO_PUBLIC_API_BASE_URL above. Tests mock react-native-purchases itself, so
+// nothing ever sends this to a real RevenueCat project.
+process.env.EXPO_PUBLIC_REVENUECAT_API_KEY = 'test-revenuecat-api-key';
+
 // Reanimated ships a real (non-native) implementation for use under Jest -- see
 // https://docs.swmansion.com/react-native-reanimated/docs/guides/testing. AnimatedNumber
 // (src/components/AnimatedNumber.tsx) and the chart reveal components in
