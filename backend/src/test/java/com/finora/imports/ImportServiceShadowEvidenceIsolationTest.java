@@ -118,6 +118,8 @@ class ImportServiceShadowEvidenceIsolationTest {
         when(importSessionService.claimForConfirmation(userId, sessionId)).thenReturn(session);
         when(importSessionService.readStagedRows(session)).thenReturn(List.of(stagedRow()));
 
+        com.finora.service.EntitlementService entitlementService = mock(com.finora.service.EntitlementService.class);
+        when(entitlementService.hasEntitlement(any(), any())).thenReturn(true);
         ImportService importService = new ImportService(accountRepository, mock(AccountService.class),
                 transactionRepository, merchantRepository, statementImportRepository, categorizationService,
                 mock(ReconciliationService.class), mock(RecurringService.class), previewGenerator,
@@ -130,7 +132,8 @@ class ImportServiceShadowEvidenceIsolationTest {
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class),
                 mock(LayoutRegistryService.class),
-                observer);
+                observer,
+                entitlementService);
         return new Harness(importService, importSessionService, statementImportRepository);
     }
 

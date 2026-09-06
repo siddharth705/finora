@@ -79,6 +79,8 @@ class ImportServiceSessionTest {
 
         pdfPreviewGenerator = mock(com.finora.imports.pdf.PdfPreviewGenerator.class);
         var productIdentityResolver = new com.finora.imports.product.ProductIdentityResolver(accountRepository);
+        com.finora.service.EntitlementService entitlementService = mock(com.finora.service.EntitlementService.class);
+        when(entitlementService.hasEntitlement(any(), any())).thenReturn(true);
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService, importSessionService,
@@ -88,7 +90,8 @@ class ImportServiceSessionTest {
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 learningEventPublisher, mock(LayoutRegistryService.class),
-                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));
+                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class),
+                entitlementService);
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);

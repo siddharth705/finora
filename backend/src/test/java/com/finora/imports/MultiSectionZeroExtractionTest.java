@@ -525,6 +525,8 @@ class MultiSectionZeroExtractionTest {
                 new StatementValidator(com.finora.imports.product.ProductDiscovery.standard()), verifier(),
                 TestRuleEngines.empty());
 
+        com.finora.service.EntitlementService entitlementService = mock(com.finora.service.EntitlementService.class);
+        when(entitlementService.hasEntitlement(any(), any())).thenReturn(true);
         return new ImportService(accountRepository, mock(AccountService.class), transactionRepository,
                 mock(MerchantRepository.class), mock(StatementImportRepository.class), categorizationService,
                 mock(ReconciliationService.class), mock(RecurringService.class), previewGenerator, duplicateDetector,
@@ -534,6 +536,7 @@ class MultiSectionZeroExtractionTest {
                 new com.finora.imports.storage.StatementContentService(java.util.Optional.empty(), mock(com.finora.security.crypto.EncryptionService.class), "", ""),
                 mock(StatementAnalysisRecorder.class), mock(ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
-                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));
+                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class),
+                entitlementService);
     }
 }

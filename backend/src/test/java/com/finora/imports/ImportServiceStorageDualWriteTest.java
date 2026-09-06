@@ -119,6 +119,8 @@ class ImportServiceStorageDualWriteTest {
         ImportRuleLearningService ruleLearningService = new ImportRuleLearningService(categorizationService);
         var productIdentityResolver = new com.finora.imports.product.ProductIdentityResolver(accountRepository);
 
+        com.finora.service.EntitlementService entitlementService = mock(com.finora.service.EntitlementService.class);
+        when(entitlementService.hasEntitlement(any(), any())).thenReturn(true);
         return new ImportService(accountRepository, mock(AccountService.class), transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, mock(ReconciliationService.class),
                 mock(RecurringService.class), previewGenerator, duplicateDetector, ruleLearningService,
@@ -127,7 +129,8 @@ class ImportServiceStorageDualWriteTest {
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
-                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));
+                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class),
+                entitlementService);
     }
 
     private ConfirmedRow confirmedRow() {

@@ -90,6 +90,8 @@ class ImportServiceAskOnceTest {
         // ImportSessionService is mocked but never actually exercised by these tests -- they all
         // go through the MultipartFile confirm() overload with sessionId left null throughout,
         // not confirmSession() (see ImportServiceSessionTest for session-specific coverage).
+        com.finora.service.EntitlementService entitlementService = mock(com.finora.service.EntitlementService.class);
+        when(entitlementService.hasEntitlement(any(), any())).thenReturn(true);
         importService = new ImportService(accountRepository, accountService, transactionRepository,
                 merchantRepository, statementImportRepository, categorizationService, reconciliationService,
                 recurringService, previewGenerator, duplicateDetector, ruleLearningService,
@@ -100,7 +102,8 @@ class ImportServiceAskOnceTest {
                 mock(com.finora.imports.analysis.StatementAnalysisRecorder.class),
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 learningEventPublisher, mock(LayoutRegistryService.class),
-                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class));
+                mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class),
+                entitlementService);
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);
