@@ -1986,6 +1986,39 @@ describe('Import — queued imports', () => {
   });
 
   /**
+   * Found live in testing (2026-09-06): once a statement is held, there was no way back to the
+   * dropzone at all -- the fix above keeps the "Running additional checks" screen up, but that
+   * screen offered nothing clickable, so a person who wanted to upload a second, unrelated
+   * statement had no way to do it short of leaving the page. This is the end-to-end proof: the
+   * button actually returns to the dropzone, not just that it renders.
+   */
+  it('lets the user import another statement while one is held for review', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'HELD_FOR_REVIEW' }));
+    vi.mocked(importJobsApi.timeline).mockResolvedValue({
+      jobId: 'job-1',
+      status: 'HELD_FOR_REVIEW',
+      userStatus: 'PROCESSING',
+      failureCode: null,
+      stages: [
+        { stage: 'PARSING', attempt: 1, outcome: 'COMPLETED', startedAt: '2026-08-08T09:00:00Z', endedAt: '2026-08-08T09:00:01Z', durationMs: 1000 },
+        { stage: 'ANALYZING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-08T09:00:01Z', endedAt: '2026-08-08T09:00:02Z', durationMs: 1000 },
+      ],
+    });
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText('Running additional checks');
+
+    await user.click(await screen.findByRole('button', { name: 'Import another statement' }));
+
+    // Actually back to the dropzone -- not just that the button existed and was clickable.
+    await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
+    expect(screen.getByTestId('statement-file-input')).toBeInTheDocument();
+  });
+
+  /**
    * The other half of the same review finding: `ImportStageRecorder` deliberately tolerates its
    * own write failing without breaking the import ("a measurement gap, not an outage"), so a
    * FAILED job can genuinely reach the client with an empty stage list. Before the fix,
