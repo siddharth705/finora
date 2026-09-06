@@ -205,4 +205,47 @@ describe('Investments — loading states', () => {
     // the pending state is announced rather than conveyed only as "disabled".
     await waitFor(() => expect(screen.getByRole('button', { name: /^Add\s*,\s*loading$/ })).toBeDisabled());
   });
+
+  /**
+   * Bug fix: this catch used to be a bare `catch { setError('Could not add this holding.') }`,
+   * discarding whatever the server actually said. Harmless while every create() failure really
+   * was generic -- wrong now that a Free-plan holder past the 2-account cap gets a specific,
+   * actionable message ("Free plan is limited to 2 accounts. Upgrade to Plus for unlimited
+   * accounts.") that told them nothing was actually broken and how to fix it, silently replaced
+   * with a message implying a transient failure worth retrying.
+   */
+  it('shows the server message when adding a holding is rejected, not a fixed string', async () => {
+    const user = userEvent.setup();
+    vi.mocked(accountsApi.list).mockResolvedValue([]);
+    vi.mocked(networthApi.current).mockResolvedValue(netWorth({ history: [] }));
+    vi.mocked(accountsApi.create).mockRejectedValue({
+      response: { data: { message: 'Free plan is limited to 2 accounts. Upgrade to Plus for unlimited accounts.' } },
+    });
+
+    render(<Investments />);
+    await screen.findByText('No holdings yet');
+
+    await user.type(screen.getByLabelText('Name'), 'Index Fund');
+    await user.type(screen.getByLabelText('Current value'), '50000');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('Free plan is limited to 2 accounts. Upgrade to Plus for unlimited accounts.'))
+      .toBeInTheDocument();
+  });
+
+  it('falls back to a generic message when the rejection carries no server message', async () => {
+    const user = userEvent.setup();
+    vi.mocked(accountsApi.list).mockResolvedValue([]);
+    vi.mocked(networthApi.current).mockResolvedValue(netWorth({ history: [] }));
+    vi.mocked(accountsApi.create).mockRejectedValue(new Error('network down'));
+
+    render(<Investments />);
+    await screen.findByText('No holdings yet');
+
+    await user.type(screen.getByLabelText('Name'), 'Index Fund');
+    await user.type(screen.getByLabelText('Current value'), '50000');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText('Could not add this holding.')).toBeInTheDocument();
+  });
 });
