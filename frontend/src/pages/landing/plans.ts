@@ -11,10 +11,15 @@
  * THE RULE THIS FILE ENFORCES: `price` may only be set on a plan whose availability is
  * 'available'. Anything else shows its status where the price would go. A number beside a small
  * "coming soon" tag still reads as a price, and an invented one is remembered by whoever
- * screenshotted it. There is no billing in the backend at all — no plan field on User, no payment
- * integration — so today exactly one plan can be 'available', and that is Free.
+ * screenshotted it.
  *
- * landing-claims.test.tsx asserts that rule rather than trusting this comment.
+ * Plus and Premium are real, purchasable plans now (subscription billing V1/V2, PRs #1008/#1016)
+ * -- these four numbers (₹399/₹3,500/₹799/₹8,000) are the design spec's own §2 pricing decision
+ * table and match the already-seeded `billing_prices` rows exactly, not invented for this page.
+ * Checkout itself happens inside the app's Billing Portal (frontend/src/pages/Billing.tsx), never
+ * on this public page -- see Pricing.tsx's own doc comment for why.
+ *
+ * landing-claims.test.tsx asserts the price/availability rule rather than trusting this comment.
  */
 
 export type Availability = 'available' | 'coming-soon' | 'planned' | 'exploring';
@@ -25,6 +30,10 @@ export interface Plan {
   /** Only ever set when availability is 'available'. See the rule above. */
   price: string | null;
   cadence?: string;
+  /** A second cadence worth mentioning below the primary price (e.g. the yearly price, when the
+   *  primary price shown is monthly) -- purely informational, never a second buyable price on its
+   *  own; checking out at a specific cycle happens inside the app's Billing Portal, not here. */
+  secondaryPriceNote?: string;
   availability: Availability;
   blurb: string;
   features: string[];
@@ -80,8 +89,10 @@ export const PLANS: Plan[] = [
   {
     id: 'plus',
     name: 'Plus',
-    price: null,
-    availability: 'coming-soon',
+    price: '₹399',
+    cadence: '/month',
+    secondaryPriceNote: 'or ₹3,500/year',
+    availability: 'available',
     blurb: 'For people who want deeper financial intelligence.',
     promise: 'For people who simply want to go deeper.',
     stage: { when: 'Tomorrow', outcome: 'Understand your spending patterns.' },
@@ -96,8 +107,10 @@ export const PLANS: Plan[] = [
   {
     id: 'premium',
     name: 'Premium',
-    price: null,
-    availability: 'coming-soon',
+    price: '₹799',
+    cadence: '/month',
+    secondaryPriceNote: 'or ₹8,000/year',
+    availability: 'available',
     blurb: 'For people who want Fynora to work for them, not just show them the numbers.',
     promise: 'For people who want an assistant, not just a dashboard.',
     stage: { when: 'Later', outcome: 'Let Fynora work for you.' },

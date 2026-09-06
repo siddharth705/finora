@@ -17,6 +17,12 @@ public class EmailProperties {
     // alternate address exists today, and a caller decides which one it wants via Sender, not by
     // naming a config key.
     private String supportFromAddress;
+    // Subscription billing V3 (product decision, made explicitly by the repo owner, not inferred):
+    // billing/subscription emails (e.g. "your subscription is active") send from a distinct
+    // address from every other transactional email, so a billing question is recognizably a
+    // billing question at a glance. Same override-via-env-var escape hatch as fromAddress itself,
+    // for whichever environment's Resend account has a different domain verified.
+    private String billingFromAddress;
     // Kept as "appBaseUrl"/APP_BASE_URL for backward compatibility with existing deployments —
     // this is specifically the USER-facing frontend's base URL now that adminAppBaseUrl exists
     // as a separate setting (see that field's own doc comment for why this split was needed).
@@ -41,6 +47,8 @@ public class EmailProperties {
     public void setFromName(String fromName) { this.fromName = fromName; }
     public String getSupportFromAddress() { return supportFromAddress; }
     public void setSupportFromAddress(String supportFromAddress) { this.supportFromAddress = supportFromAddress; }
+    public String getBillingFromAddress() { return billingFromAddress; }
+    public void setBillingFromAddress(String billingFromAddress) { this.billingFromAddress = billingFromAddress; }
     public String getAppBaseUrl() { return appBaseUrl; }
     public void setAppBaseUrl(String appBaseUrl) { this.appBaseUrl = appBaseUrl; }
     public String getAdminAppBaseUrl() { return adminAppBaseUrl; }

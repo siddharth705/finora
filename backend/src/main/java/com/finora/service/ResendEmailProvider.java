@@ -114,12 +114,14 @@ public class ResendEmailProvider implements EmailProvider {
 
     /** "Name <email>" when EMAIL_FROM_NAME is set, matching how every real mail client renders
      *  a display name -- otherwise just the bare address, exactly today's existing behavior.
-     *  {@code sender} picks which of the two configured addresses this particular message goes
-     *  out under -- see {@link EmailMessage.Sender}'s own doc for which emails ask for SUPPORT. */
+     *  {@code sender} picks which of the three configured addresses this particular message goes
+     *  out under -- see {@link EmailMessage.Sender}'s own doc for which emails ask for which. */
     private String fromHeader(EmailMessage.Sender sender) {
-        String address = sender == EmailMessage.Sender.SUPPORT
-                ? emailProperties.getSupportFromAddress()
-                : emailProperties.getFromAddress();
+        String address = switch (sender) {
+            case SUPPORT -> emailProperties.getSupportFromAddress();
+            case BILLING -> emailProperties.getBillingFromAddress();
+            case DEFAULT -> emailProperties.getFromAddress();
+        };
         String fromName = emailProperties.getFromName();
         return (fromName != null && !fromName.isBlank())
                 ? fromName + " <" + address + ">"
@@ -241,5 +243,18 @@ public class ResendEmailProvider implements EmailProvider {
                 %s
                 """.formatted(when, SUPPORT_LINE);
         return send(EmailMessage.html(toEmail, "Your Fynora account has been deleted", html));
+    }
+
+    @Override
+    public EmailResult sendSubscriptionActivatedEmail(String toEmail, String fullName, String planName, String billingCycle) {
+        String cadence = "YEARLY".equals(billingCycle) ? "yearly" : "monthly";
+        String html = """
+                <p>Hi %s,</p>
+                <p>Your Fynora <strong>%s</strong> subscription is now active, billed %s.</p>
+                <p>You can review your plan, payment history, or make changes any time from Billing in the app.</p>
+                <p>Questions about this charge? Just reply to this email.</p>
+                """.formatted(fullName, planName, cadence);
+        return send(EmailMessage.html(toEmail, "Your Fynora " + planName + " subscription is active",
+                html, EmailMessage.Sender.BILLING));
     }
 }

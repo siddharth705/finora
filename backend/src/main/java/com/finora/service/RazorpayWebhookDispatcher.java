@@ -5,6 +5,7 @@ import com.finora.entity.Plan;
 import com.finora.entity.Subscription;
 import com.finora.entity.SubscriptionEvent;
 import com.finora.entity.SubscriptionOrder;
+import com.finora.entity.User;
 import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.BillingPriceRepository;
 import com.finora.repository.PaymentRepository;
@@ -12,6 +13,8 @@ import com.finora.repository.PlanRepository;
 import com.finora.repository.SubscriptionEventRepository;
 import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
+import com.finora.repository.UserRepository;
+import com.finora.util.AfterCommit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -40,6 +43,8 @@ public class RazorpayWebhookDispatcher {
     private final BillingPriceRepository billingPriceRepository;
     private final PaymentRepository paymentRepository;
     private final RazorpaySubscriptionGateway gateway;
+    private final UserRepository userRepository;
+    private final EmailProvider emailProvider;
 
     public RazorpayWebhookDispatcher(SubscriptionRepository subscriptionRepository,
                                       SubscriptionOrderRepository subscriptionOrderRepository,
@@ -47,7 +52,9 @@ public class RazorpayWebhookDispatcher {
                                       PlanRepository planRepository,
                                       BillingPriceRepository billingPriceRepository,
                                       PaymentRepository paymentRepository,
-                                      RazorpaySubscriptionGateway gateway) {
+                                      RazorpaySubscriptionGateway gateway,
+                                      UserRepository userRepository,
+                                      EmailProvider emailProvider) {
         this.subscriptionRepository = subscriptionRepository;
         this.subscriptionOrderRepository = subscriptionOrderRepository;
         this.subscriptionEventRepository = subscriptionEventRepository;
@@ -55,6 +62,8 @@ public class RazorpayWebhookDispatcher {
         this.billingPriceRepository = billingPriceRepository;
         this.paymentRepository = paymentRepository;
         this.gateway = gateway;
+        this.userRepository = userRepository;
+        this.emailProvider = emailProvider;
     }
 
     /**
@@ -108,7 +117,16 @@ public class RazorpayWebhookDispatcher {
             return;
         }
         SubscriptionOrder order = maybeOrder.get();
-        if (SubscriptionOrder.STATUS_COMPLETED.equals(order.getStatus())) {
+        // Plan 3 review: was `if (STATUS_COMPLETED.equals(...)) return;`, which only guarded
+        // against re-processing an already-activated order (idempotency). Once Plan 3 gave
+        // STATUS_ABANDONED a real writer (BillingCheckoutService.cancelPendingOrder -- a user
+        // explicitly cancelling a stuck checkout in the Billing Portal), that same narrow guard
+        // meant an abandoned order could still be silently activated here if the Razorpay payment
+        // completed anyway after the user cancelled (a still-open tab, a delayed webhook) --
+        // reactivating a paid plan the user believed they'd backed out of. Requiring PENDING
+        // specifically closes that: COMPLETED (idempotency) and ABANDONED (explicit cancel) both
+        // now correctly stop this from running again.
+        if (!SubscriptionOrder.STATUS_PENDING.equals(order.getStatus())) {
             return;
         }
         order.setStatus(SubscriptionOrder.STATUS_COMPLETED);
@@ -160,6 +178,23 @@ public class RazorpayWebhookDispatcher {
         event.setMetadata(Map.of("planCode", plan.getCode(), "billingCycle", order.getBillingCycle(),
                 "razorpaySubscriptionId", razorpaySubscriptionId));
         subscriptionEventRepository.save(event);
+
+        sendActivationEmail(subscription.getUserId(), plan.getName(), order.getBillingCycle());
+    }
+
+    /** Product decision: a confirmation email on every successful subscription purchase (Plan 3),
+     *  fires for both a first-time paid signup and an upgrade's new subscription. Deferred via
+     *  {@link AfterCommit} for the same two reasons every other post-commit side effect in this
+     *  codebase is: this whole method runs inside {@code dispatch()}'s transaction, and sending an
+     *  email is a network call that must not hold a pooled DB connection nor fire for an
+     *  activation that then rolls back. A missing user row is defensive-only (should be
+     *  unreachable -- the subscription lookup above already required one) and simply skips the
+     *  email rather than failing the whole webhook over a notification. */
+    private void sendActivationEmail(java.util.UUID userId, String planName, String billingCycle) {
+        AfterCommit.run("subscription activated email", () ->
+                userRepository.findById(userId).ifPresent(user ->
+                        emailProvider.sendSubscriptionActivatedEmail(
+                                user.getEmail(), user.getFullName(), planName, billingCycle)));
     }
 
     /** spec §5, §6.4. Renewal is otherwise fully passive — this is also the reconciliation point

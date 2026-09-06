@@ -82,5 +82,12 @@ public class NoOpEmailProvider implements EmailProvider, SilentProductionFallbac
     }
 
     @Override
+    public EmailResult sendSubscriptionActivatedEmail(String toEmail, String fullName, String planName, String billingCycle) {
+        log.info("No email provider configured — would have sent a subscription-activated email ({}/{}) to {}",
+                planName, billingCycle, toEmail);
+        return EmailResult.failure(ProviderType.RESEND, "No email provider configured");
+    }
+
+    @Override
     public String requiredConfigHint() { return "RESEND_API_KEY"; }
 }

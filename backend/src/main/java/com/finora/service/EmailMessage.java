@@ -21,15 +21,23 @@ public record EmailMessage(
         Sender sender
 ) {
     /**
-     * Which configured address a message goes out under -- product decision, 2026-09-06: an email
-     * a customer might reasonably want to reply to and reach a person (held-import/held-statement
-     * notices) goes out as {@code support@}, not {@code noreply@}; everything else (welcome,
-     * password reset/changed, account lifecycle) stays on the existing {@code noreply@} address.
-     * {@link com.finora.config.EmailProperties#getSupportFromAddress} resolves the actual value --
-     * this enum only says which one, never carries an address itself, so a deployment can change
-     * either address without touching a single caller.
+     * Which configured address a message goes out under -- a caller names the BUCKET, never an
+     * address itself, so a deployment can change any of these without touching a single caller.
+     * {@link com.finora.config.EmailProperties} resolves each to the actual value.
+     *
+     * <p>{@code SUPPORT} (product decision, 2026-09-06): an email a customer might reasonably want
+     * to reply to and reach a person (held-import/held-statement notices) goes out as
+     * {@code support@}, not {@code noreply@}; everything else (welcome, password reset/changed,
+     * account lifecycle) stays on {@code DEFAULT} (the existing {@code noreply@} address).
+     *
+     * <p>{@code BILLING} (Subscription Billing V3, merged the same day): billing/subscription
+     * correspondence sends from a distinct, recognizably billing-specific address -- originally
+     * built as a raw {@code String from} override on this record with its own {@code htmlFrom}
+     * factory; folded into this enum instead of kept as a second, parallel "which sender" concept
+     * once the two features landed on the same day and needed reconciling. Behavior for the one
+     * caller ({@code ResendEmailProvider.sendSubscriptionActivatedEmail}) is unchanged.
      */
-    public enum Sender { DEFAULT, SUPPORT }
+    public enum Sender { DEFAULT, SUPPORT, BILLING }
 
     public EmailMessage {
         attachments = attachments == null ? List.of() : attachments;

@@ -12,6 +12,7 @@ import com.finora.integrations.razorpay.RazorpaySubscriptionGateway;
 import com.finora.repository.PlanChangeRepository;
 import com.finora.repository.PlanRepository;
 import com.finora.repository.SubscriptionEventRepository;
+import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,6 +46,7 @@ class SubscriptionServiceTest {
     private UserRepository userRepository;
     private AuditService auditService;
     private RazorpaySubscriptionGateway gateway;
+    private SubscriptionOrderRepository subscriptionOrderRepository;
     private SubscriptionService service;
 
     private final UUID userId = UUID.randomUUID();
@@ -59,8 +61,10 @@ class SubscriptionServiceTest {
         userRepository = mock(UserRepository.class);
         auditService = mock(AuditService.class);
         gateway = mock(RazorpaySubscriptionGateway.class);
+        subscriptionOrderRepository = mock(SubscriptionOrderRepository.class);
         service = new SubscriptionService(subscriptionRepository, subscriptionEventRepository,
-                planChangeRepository, planRepository, userRepository, auditService, gateway);
+                planChangeRepository, planRepository, userRepository, auditService, gateway,
+                subscriptionOrderRepository);
         when(subscriptionRepository.save(any(Subscription.class))).thenAnswer(inv -> {
             Subscription s = inv.getArgument(0);
             if (s.getId() == null) ReflectionTestUtils.setField(s, "id", UUID.randomUUID());
@@ -200,6 +204,26 @@ class SubscriptionServiceTest {
         assertThat(result.content().get(0).planCode()).isEqualTo("PLUS");
     }
 
+    @Test
+    void listAllIncludesThePaymentProviderForEachRow() {
+        UUID planId = UUID.randomUUID();
+        Subscription sub = new Subscription();
+        ReflectionTestUtils.setField(sub, "id", UUID.randomUUID());
+        sub.setUserId(userId);
+        sub.setPlanId(planId);
+        sub.setStatus(Subscription.STATUS_ACTIVE);
+        sub.setPaymentProvider("RAZORPAY");
+        when(subscriptionRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 20)))
+                .thenReturn(new PageImpl<>(List.of(sub)));
+        when(planRepository.findAll()).thenReturn(List.of());
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+
+        PagedResponse<SubscriptionSummaryDto> result = service.listAll(0, 20);
+
+        assertThat(result.content()).hasSize(1);
+        assertThat(result.content().get(0).paymentProvider()).isEqualTo("RAZORPAY");
+    }
+
     /** PageBounds.safePage/safeSize clamp before the query -- a negative page or an oversized
      *  size must never reach PageRequest.of directly (it throws IllegalArgumentException with no
      *  handler, surfacing as an opaque 500), same reasoning as AdminUserService.list. */
@@ -301,5 +325,23 @@ class SubscriptionServiceTest {
         assertThatThrownBy(() -> service.cancelPaidSubscription(userId, adminId))
                 .isInstanceOf(ApiException.class);
         verify(gateway, never()).cancelSubscription(any(), anyBoolean());
+    }
+
+    @Test
+    void healthReportsCountsForEachSubscriptionStatusAndPendingOrders() {
+        when(subscriptionRepository.countByStatus(Subscription.STATUS_ACTIVE)).thenReturn(120L);
+        when(subscriptionRepository.countByStatus(Subscription.STATUS_PAST_DUE)).thenReturn(5L);
+        when(subscriptionRepository.countByStatus(Subscription.STATUS_PAYMENT_FAILED)).thenReturn(3L);
+        when(subscriptionRepository.countByStatus(Subscription.STATUS_CANCELLED)).thenReturn(8L);
+        when(subscriptionOrderRepository.countByStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(2L);
+
+        var health = service.health();
+
+        assertThat(health.activeCount()).isEqualTo(120L);
+        assertThat(health.pastDueCount()).isEqualTo(5L);
+        assertThat(health.paymentFailedCount()).isEqualTo(3L);
+        assertThat(health.cancelledCount()).isEqualTo(8L);
+        assertThat(health.pendingOrderCount()).isEqualTo(2L);
     }
 }
