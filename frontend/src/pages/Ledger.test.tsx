@@ -694,8 +694,11 @@ describe('Ledger — KPI row and category chips', () => {
 });
 
 // Redesign: the new Account column resolves each row's accountId against accountsApi.list(),
-// rendering the bank's own branding and the same masked-number reveal control the rest of the
-// app already uses (MaskedAccountNumber) rather than a bespoke, unmasked rendering.
+// rendering the bank's own branding and its accountNumberMasked outright -- that field is
+// already CsvParser.maskAccountNumber's output ("••••" + only the last 4 real digits), so
+// there's no further-unmasked value left for a reveal-on-click control to ever uncover. A prior
+// version routed this through MaskedAccountNumber (Setup.tsx/Import.tsx's reveal toggle), which
+// just hid this already-safe string behind a second, pointless placeholder -- reported directly.
 describe('Ledger — account column', () => {
   it("shows the row's bank name and masked account number once account data loads", async () => {
     vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
@@ -706,7 +709,7 @@ describe('Ledger — account column', () => {
     vi.mocked(accountsApi.list).mockReset().mockResolvedValue([
       {
         id: 'acc-1', name: 'My HDFC', accountType: 'SAVINGS', balance: 1000,
-        accountNumberMasked: 'XXXXXX4582',
+        accountNumberMasked: '••••4582',
         bank: {
           id: 'hdfc', officialName: 'HDFC Bank', shortName: 'HDFC Bank', colorHex: '#004C8F',
           initials: 'HD', logoPath: '/assets/banks/hdfc.svg', category: 'PRIVATE',
@@ -719,9 +722,8 @@ describe('Ledger — account column', () => {
     renderLedger();
 
     expect(await screen.findByText('HDFC Bank')).toBeInTheDocument();
-    // Hidden behind the same reveal-on-click placeholder as Setup.tsx/Import.tsx -- not the raw
-    // masked string rendered outright.
-    expect(screen.getByText('•••• ••••')).toBeInTheDocument();
+    // Shown directly, no click needed -- see the describe block's own comment for why.
+    expect(screen.getByText('••••4582')).toBeInTheDocument();
   });
 });
 
