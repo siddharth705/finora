@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, AlertTriangle, Loader2, MinusCircle } from 'lucide-react';
 import { importJobsApi, type ImportJobTimeline as Timeline, type ImportTimelineStage } from '../api/endpoints';
-import { isSettled, stageLabel } from '../lib/importJob';
+import { isHeld, isSettled, stageLabel } from '../lib/importJob';
 import { importFailureMessage } from '../api/importFailureMessages';
 import { formatTime } from '../utils/date';
 import { POLL_SCHEDULE_MS } from './ImportProgress';
@@ -118,12 +118,11 @@ export function ImportTimeline({
   // render nothing IN POLLING MODE: a blip mid-poll is not a failed import, and the next
   // scheduled poll will quietly recover. One-shot mode has no next poll coming, so the same
   // silence would strand the person with no error and no hint that Refresh would fix it -- these
-  // two guards below both gate on `!autoRefresh` for exactly that reason. A FAILED job is the one
-  // exception to the "nothing recorded" rule regardless of mode: even with an empty stage list
+  // two guards below both gate on `!autoRefresh` for exactly that reason. A FAILED or HELD_* job is
+  // the exception to the "nothing recorded" rule regardless of mode: even with an empty stage list
   // (the stage recorder tolerates its own write failing without breaking the import, so this does
-  // happen), this must still render the failure reason and the dismiss action -- ImportProgress no
-  // longer offers a way back to the dropzone on its own, so this is the only path left once a job
-  // fails.
+  // happen), this must still render the way back to the dropzone -- ImportProgress no longer offers
+  // one on its own, so this is the only path left once a job fails or holds.
   //
   // Bug fix, caught by review: both guards below used to fire regardless of mode, which leaked
   // this fix into the pre-existing polling callers it was never meant to touch -- a transient
@@ -140,7 +139,8 @@ export function ImportTimeline({
     }
     return null;
   }
-  if (timeline.stages.length === 0 && timeline.status !== 'FAILED' && !(!autoRefresh && pollError)) return null;
+  const dismissible = timeline.status === 'FAILED' || isHeld(timeline);
+  if (timeline.stages.length === 0 && !dismissible && !(!autoRefresh && pollError)) return null;
 
   const failureMessage = timeline.failureCode
     ? importFailureMessage(timeline.failureCode)
@@ -159,26 +159,32 @@ export function ImportTimeline({
         </ol>
       )}
 
-      {timeline.status === 'FAILED' && (
+      {dismissible && (
         <div className="mt-4">
-          {/* warning (amber) for ACTION_REQUIRED, matching the password panel's existing color a
-              few steps earlier in this same flow -- "you can fix this"; danger (red) for a plain
-              FAILED the user cannot fix themselves, matching Import.tsx's own live sync-error
-              banner. Sprint 4 item 22: `userStatus` (Sprint 4 item 20a) is the wire's own answer to
-              which one this is -- no re-deriving it from `failureCode` here. */}
-          <p
-            className={`text-xs ${timeline.userStatus === 'ACTION_REQUIRED' ? 'text-warning' : 'text-danger'}`}
-            data-testid="import-timeline-failure-reason"
-          >
-            {failureMessage ?? "Fynora couldn't complete this import. Please try again."}
-          </p>
+          {timeline.status === 'FAILED' && (
+            /* warning (amber) for ACTION_REQUIRED, matching the password panel's existing color a
+               few steps earlier in this same flow -- "you can fix this"; danger (red) for a plain
+               FAILED the user cannot fix themselves, matching Import.tsx's own live sync-error
+               banner. Sprint 4 item 22: `userStatus` (Sprint 4 item 20a) is the wire's own answer to
+               which one this is -- no re-deriving it from `failureCode` here. */
+            <p
+              className={`text-xs ${timeline.userStatus === 'ACTION_REQUIRED' ? 'text-warning' : 'text-danger'}`}
+              data-testid="import-timeline-failure-reason"
+            >
+              {failureMessage ?? "Fynora couldn't complete this import. Please try again."}
+            </p>
+          )}
           {onDismiss && (
             <button
               type="button"
               onClick={onDismiss}
               className="mt-2 text-xs font-medium text-primary hover:underline"
             >
-              Try a different file
+              {/* Found live in testing: a held job had no way back to the dropzone at all -- the
+                  user was stuck watching "Running additional checks" with nothing else to do.
+                  Unlike a failure, nothing here needs retrying, so the label says what it actually
+                  does instead of implying a retry. */}
+              {timeline.status === 'FAILED' ? 'Try a different file' : 'Import another statement'}
             </button>
           )}
         </div>

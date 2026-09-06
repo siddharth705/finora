@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { isAppleLoginConfigured, loadAppleIdServices } from '../lib/appleIdentity';
 
 interface AppleSignInButtonProps {
@@ -6,6 +6,31 @@ interface AppleSignInButtonProps {
   // very first authorization for this client id, same constraint the native flow already has.
   onCredential: (idToken: string, fullName: string | null) => void | Promise<void>;
   onError: (message: string) => void;
+}
+
+function initAppleAuth(auth: Awaited<ReturnType<typeof loadAppleIdServices>>) {
+  auth.init({
+    clientId: import.meta.env.VITE_APPLE_LOGIN_CLIENT_ID!,
+    scope: 'name email',
+    redirectURI: import.meta.env.VITE_APPLE_LOGIN_REDIRECT_URI!,
+    usePopup: true,
+  });
+}
+
+/**
+ * True only when this page was opened BY another window and isn't that window itself -- the
+ * ordinary way to load /auth (typing the URL, following a link) never satisfies this. The one
+ * realistic way it does is being the usePopup redirect target this component's own eager-load
+ * effect exists for, which is exactly the context where an eager-load failure has nobody around
+ * to see the button's own onError (see that effect's own comment).
+ */
+function isLikelyOAuthPopup(): boolean {
+  try {
+    return Boolean(window.opener) && window.opener !== window;
+  } catch {
+    // Cross-origin window.opener access throws in some browsers rather than returning null.
+    return false;
+  }
 }
 
 /**
@@ -17,22 +42,57 @@ interface AppleSignInButtonProps {
  *
  * Renders nothing when unconfigured -- same "unconfigured is a supported state, degrade silently"
  * posture as GoogleSignInButton.tsx, until the real Apple Developer Portal Services ID exists.
+ *
+ * Also loads and initializes the SDK eagerly on mount, not only on click. usePopup mode's redirect
+ * URI (VITE_APPLE_LOGIN_REDIRECT_URI) points at this same /auth route: when Apple's authorization
+ * server completes the flow, it POSTs to that URI *inside the popup window*, which is a fresh page
+ * load of this same SPA -- nobody clicks a button there. The SDK's own popup-to-opener relay logic
+ * only runs if `appleid.auth.js` is actually loaded and initialized on that page, so waiting for a
+ * click (which never happens in the popup) would leave the relay stuck. The click handler below
+ * still loads/inits again before calling signIn() -- both loadAppleIdServices() and auth.init()
+ * are idempotent, so this is just a safety net if the effect's promise hasn't resolved yet.
+ *
+ * An eager-load failure is silent on a normal page load (the click handler's own retry reports
+ * through onError if the user actually tries) but NOT inside the popup: nobody there is going to
+ * click anything, so a failure there would otherwise never be seen by anyone -- the popup would
+ * just sit on the ordinary sign-in form, doing nothing, with no way for the person looking at it
+ * to know why. `isLikelyOAuthPopup()` is what tells those two cases apart.
  */
 export function AppleSignInButton({ onCredential, onError }: AppleSignInButtonProps) {
   const [loading, setLoading] = useState(false);
+  const [popupLoadFailed, setPopupLoadFailed] = useState(false);
+
+  useEffect(() => {
+    if (!isAppleLoginConfigured()) return;
+    loadAppleIdServices()
+      .then(initAppleAuth)
+      .catch(() => {
+        if (isLikelyOAuthPopup()) setPopupLoadFailed(true);
+      });
+  }, []);
 
   if (!isAppleLoginConfigured()) return null;
+
+  if (popupLoadFailed) {
+    return (
+      <div className="w-full rounded-lg border border-border bg-warning-bg p-3 text-center text-sm text-ink">
+        Sign in with Apple couldn't load. Close this window and try again.
+        <button
+          type="button"
+          onClick={() => window.close()}
+          className="mt-2 block w-full rounded-lg border border-gray-800 bg-black py-2 text-sm font-medium text-white"
+        >
+          Close this window
+        </button>
+      </div>
+    );
+  }
 
   async function handleClick() {
     setLoading(true);
     try {
       const auth = await loadAppleIdServices();
-      auth.init({
-        clientId: import.meta.env.VITE_APPLE_LOGIN_CLIENT_ID!,
-        scope: 'name email',
-        redirectURI: import.meta.env.VITE_APPLE_LOGIN_REDIRECT_URI!,
-        usePopup: true,
-      });
+      initAppleAuth(auth);
       const response = await auth.signIn();
       const idToken = response.authorization?.id_token;
       if (!idToken) {
@@ -52,6 +112,14 @@ export function AppleSignInButton({ onCredential, onError }: AppleSignInButtonPr
   }
 
   return (
+    // py-2.5 (42px) -- a prior pass here shrank this to py-1.5 (34px) against a *synthetic* test
+    // page's reading of Google's 'medium' button (32px). That test used a placeholder client_id;
+    // Google's real GSI button, measured live on app.fynora.net with the actual authorized
+    // client_id/origin, renders 'medium' at 44px, not 32px -- confirmed the synthetic number
+    // wasn't representative of production (a fake client_id on an unauthorized origin skips
+    // Google's real sizing path entirely). 42px is the closest standard Tailwind step to that
+    // real 44px, close enough that the two buttons read as the same height. See
+    // GoogleSignInButton.tsx's own comment for the corresponding real measurement.
     <button
       type="button"
       onClick={() => void handleClick()}

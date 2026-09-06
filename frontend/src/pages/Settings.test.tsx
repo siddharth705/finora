@@ -637,6 +637,31 @@ describe('Settings', () => {
 
       await waitFor(() => expect(window.location.href).toBe('https://accounts.google.com/o/oauth2/auth?x=1'));
     });
+
+    // The bug this guards against: the backend used to refuse EVERY Reconnect click for a
+    // REAUTH_REQUIRED connection with a 409 ("already connected") -- the guard didn't distinguish
+    // a dead grant from a working one. handleGmailConnect's bare `catch {}` then discarded that
+    // 409's own message and showed a generic "please try again", which is actively bad advice for
+    // a failure retrying can never fix. The backend guard is now scoped to CONNECTED only, but this
+    // covers the frontend half on its own: whatever the backend does say should reach the user.
+    it('surfaces the backend message when Reconnect Gmail is refused, instead of a generic one', async () => {
+      const user = userEvent.setup();
+      vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+        connected: false, status: 'REAUTH_REQUIRED', needsReconnect: true, googleEmail: 'amy@gmail.example.test',
+      }));
+      vi.mocked(gmailApi.connect).mockRejectedValue({
+        response: {
+          status: 409,
+          data: { message: 'A Gmail account (amy@gmail.example.test) is already connected. Disconnect it first to connect a different one.' },
+        },
+      });
+
+      renderSettings();
+      await user.click(await screen.findByRole('button', { name: /reconnect gmail/i }));
+
+      expect(await screen.findByText(/disconnect it first to connect a different one/i)).toBeInTheDocument();
+      expect(screen.queryByText(/couldn't start the gmail connection/i)).not.toBeInTheDocument();
+    });
   });
 
   // Phase 3 (animation-polish roadmap): General/Security's fields, Active Sessions, AI, and

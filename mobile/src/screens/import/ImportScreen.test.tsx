@@ -1,11 +1,13 @@
-import { act, render, screen, fireEvent } from '@testing-library/react-native';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import * as DocumentPicker from 'expo-document-picker';
 import { ImportScreen } from './ImportScreen';
 import { accountsApi, categoriesApi, importApi, statementImportsApi } from '../../api/endpoints';
 import type { DetectedAccountInfo, StagedRow } from '../../types';
 
-// Only the re-import arrival path is exercised here, so every staging/upload call is a stub that
-// nothing in this file expects to be reached.
+// The re-import arrival path is exercised by most of this file, so every staging/upload call is a
+// stub those tests never expect to be reached -- stageCsv/stagePdf are configured per-test only by
+// the fresh-upload describe block below.
 jest.mock('../../api/endpoints', () => ({
   accountsApi: { list: jest.fn() },
   categoriesApi: { list: jest.fn() },
@@ -20,8 +22,9 @@ jest.mock('../../api/endpoints', () => ({
   statementImportsApi: { confirmReimport: jest.fn() },
 }));
 
-// This screen calls DocumentPicker only from handlePick, never reached below -- mocked purely so
-// importing statementFile.ts (a static import of ImportScreen.tsx) doesn't touch the native module.
+// Unconfigured by default -- most of this file's tests arrive via the reimport path, never
+// reaching handlePick, so DocumentPicker only needs to exist for statementFile.ts's static import
+// to resolve. The fresh-upload describe block below configures it per test.
 jest.mock('expo-document-picker', () => ({ getDocumentAsync: jest.fn() }));
 
 jest.mock('react-native-safe-area-context', () => ({
@@ -30,10 +33,14 @@ jest.mock('react-native-safe-area-context', () => ({
 
 // A controllable stand-in for useRoute -- StatementHistoryScreen.test.tsx's file-level
 // jest.mock('@react-navigation/native') pattern, extended with the one hook this screen calls that
-// screen didn't.
+// screen didn't. mockNavigate (Track C/C6) is a plain jest.fn(): this screen only ever calls
+// navigate() to leave, never asserts on the result of being navigated TO, so nothing here needs
+// the shared-getParent()-stub shape the More-stack screens' own test files use.
 let mockRouteParams: { reimport?: unknown } | undefined;
+const mockNavigate = jest.fn();
 jest.mock('@react-navigation/native', () => ({
   useRoute: () => ({ params: mockRouteParams }),
+  useNavigation: () => ({ navigate: mockNavigate }),
 }));
 
 const api = {
@@ -103,6 +110,7 @@ async function pressImport() {
 describe('ImportScreen — re-import confirm attempt key', () => {
   beforeEach(() => {
     mockRouteParams = undefined;
+    mockNavigate.mockClear();
     api.accounts.list.mockReset().mockResolvedValue([]);
     api.categories.list.mockReset().mockResolvedValue([]);
     api.import.listSessions.mockReset().mockResolvedValue([]);
@@ -171,5 +179,115 @@ describe('ImportScreen — re-import confirm attempt key', () => {
     // mock's claimedKeys check rejects it exactly as the real backend would.
     expect(secondCall[1].idempotencyKey).not.toBe(firstCall[1].idempotencyKey);
     expect(await screen.findByText('Import complete')).toBeTruthy();
+  });
+});
+
+/**
+ * Track C/C6: depended on C4's Ledger drill-through filters existing at all -- without them this
+ * would land on the whole, unfiltered ledger, no more useful than the Transactions tab a user
+ * could already reach on their own.
+ */
+describe('ImportScreen — "View in Ledger" (Track C/C6)', () => {
+  beforeEach(() => {
+    mockRouteParams = undefined;
+    mockNavigate.mockClear();
+    api.accounts.list.mockReset().mockResolvedValue([]);
+    api.categories.list.mockReset().mockResolvedValue([]);
+    api.import.listSessions.mockReset().mockResolvedValue([]);
+    api.statements.confirmReimport.mockReset();
+  });
+
+  async function reachSummary(summary: Record<string, unknown>) {
+    api.statements.confirmReimport.mockResolvedValue(summary as never);
+    mockRouteParams = reimportParams('stmt-1', 1);
+    render(tree());
+    await pressImport();
+    await screen.findByText('Import complete');
+  }
+
+  it('filters by the confirmed account and the statement\'s own period', async () => {
+    await reachSummary({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [],
+      account: { id: 'acct-1', name: 'HDFC Savings' }, totalCredits: 0, totalDebits: 45,
+      statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: '2026-07-01', statementPeriodEnd: '2026-07-31',
+      importDurationMs: 1, source: 'reimport',
+    });
+
+    fireEvent.press(screen.getByText('View in Ledger'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('Transactions', {
+      filters: expect.objectContaining({
+        accountId: 'acct-1', dateFrom: '2026-07-01', dateTo: '2026-07-31',
+        label: 'HDFC Savings · 2026-07-01 to 2026-07-31',
+      }),
+    });
+  });
+
+  // ImportSummary.account is nullable (see the type's own comment) -- must degrade to an
+  // unfiltered-by-account Ledger rather than crash reading `.id` off null.
+  it('still opens the Ledger when the confirm response carries no account', async () => {
+    await reachSummary({
+      imported: 1, skipped: 0, duplicatesDetected: 0, transfersIdentified: 0, newMerchantsLearned: 0,
+      accountsCreated: [], productsCreated: {}, categoriesAssigned: {}, warnings: [],
+      account: null, totalCredits: 0, totalDebits: 45,
+      statementOpeningBalance: null, statementClosingBalance: null,
+      statementPeriodStart: null, statementPeriodEnd: null,
+      importDurationMs: 1, source: 'reimport',
+    });
+
+    fireEvent.press(screen.getByText('View in Ledger'));
+
+    expect(mockNavigate).toHaveBeenCalledWith('Transactions', {
+      filters: expect.objectContaining({
+        accountId: undefined, dateFrom: undefined, dateTo: undefined, label: 'This import',
+      }),
+    });
+  });
+});
+
+describe('ImportScreen — upload completion dwell', () => {
+  beforeEach(() => {
+    mockRouteParams = undefined;
+    mockNavigate.mockClear();
+    api.accounts.list.mockReset().mockResolvedValue([]);
+    api.categories.list.mockReset().mockResolvedValue([]);
+    api.import.listSessions.mockReset().mockResolvedValue([]);
+    api.import.stageCsv.mockReset().mockResolvedValue({
+      sessionId: 'session-1',
+      multiAccount: false,
+      sections: null,
+      staging: { rows: [], totalParsed: 0, flaggedDuplicates: 0, detectedAccount: detected, unparseableRows: [] },
+    } as never);
+    jest.mocked(DocumentPicker.getDocumentAsync).mockReset().mockResolvedValue({
+      canceled: false,
+      assets: [{ uri: 'file:///statement.csv', name: 'statement.csv' } as never],
+    } as never);
+  });
+
+  // The web app's Import.tsx has the identical UPLOAD_COMPLETE_DWELL_MS pause and the identical
+  // celebrateThenAdvance mechanism; this locks in that this screen's copy of it actually holds the
+  // step on 'upload' (rendering the Completed checkmark) rather than jumping the instant stageCsv
+  // resolves.
+  it('flashes a Completed checkmark before advancing to the review step', async () => {
+    render(tree());
+
+    fireEvent.press(await screen.findByText('Choose a file'));
+    await act(async () => {});
+
+    expect(await screen.findByTestId('upload-completed')).toBeTruthy();
+    expect(screen.queryByText('Choose a file')).toBeNull();
+    // Bug fix: "Cancel upload" used to stay on screen through the whole dwell -- uploadProgress
+    // (what its old visibility check read) isn't reset to null until the dwell timer fires, so it
+    // outlived the request it was meant to cancel. Pressing it did nothing by then (the abort
+    // controller is already null), which is a dead button sitting next to a success checkmark.
+    expect(screen.queryByText('Cancel upload')).toBeNull();
+
+    // ...and then it actually does move on to the review step, on its own, with no further
+    // interaction. A longer timeout than the default 1000ms: UPLOAD_COMPLETE_DWELL_MS alone is
+    // 900ms, real (not faked) timers here, same as every other test in this file.
+    await waitFor(() => expect(screen.queryByTestId('upload-completed')).toBeNull(), { timeout: 3000 });
+    expect(await screen.findByText(/^Import \d+ transaction/)).toBeTruthy();
   });
 });

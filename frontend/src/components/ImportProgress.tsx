@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Ban, Clock, Loader2 } from 'lucide-react';
 import { importJobsApi, type ImportJobProgress } from '../api/endpoints';
-import { detail, isCancellable, isSettled, label, percent } from '../lib/importJob';
+import { detail, isCancellable, isHeld, isSettled, label, percent } from '../lib/importJob';
 
 /**
  * A queued import, while it happens.
@@ -149,7 +149,7 @@ export function ImportProgress({
   // Both holds, because the fallback below is the cancelled icon: a settled job that is not FAILED
   // and not recognised here renders a Ban glyph next to "Running additional checks", which tells
   // the user their import was cancelled and that it is still being worked on, at the same time.
-  const held = job?.status === 'HELD_FOR_REVIEW' || job?.status === 'HELD_FOR_TRUST_REVIEW';
+  const held = job ? isHeld(job) : false;
 
   return (
     <div className="bg-card rounded-xl2 shadow-card border border-border p-6" data-testid="import-progress">

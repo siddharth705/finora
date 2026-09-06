@@ -6,6 +6,7 @@ import { setSessionCallbacks } from '../api/client';
 import { safeStorage } from '../lib/safeStorage';
 import { clearPersistedNavigationState } from '../navigation/useNavigationStatePersistence';
 import { clearPersistedQueryCache, pauseQueryPersistence } from '../api/queryClient';
+import { sweepFileCache } from '../lib/fileCacheSweep';
 import { signOutOfGoogle } from '../lib/googleSession';
 import { registerDeviceToken, revokeDeviceToken } from '../lib/pushRegistration';
 
@@ -34,7 +35,8 @@ interface AuthState {
     email: string,
     password: string,
     fullName: string,
-    phoneNumber: string
+    phoneNumber: string,
+    referralCode?: string
   ) => Promise<{ phoneVerified: boolean }>;
   // D-23 Phase 2. Mirrors frontend/src/context/AuthContext.tsx's own loginWithGoogle exactly --
   // same contract, same persist() reuse.
@@ -155,6 +157,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // the previous person's account without a picker ever appearing. Fire-and-forget -- the local
     // state above must not wait on a native call, and signOutOfGoogle never rejects.
     void signOutOfGoogle();
+    // Bug found in review (Track D/D2): App.tsx's own sweepFileCache() call only runs once per
+    // JS process lifetime (an empty-deps effect on the root component, which does not remount on
+    // backgrounding), so a device that's rarely force-quit could otherwise go a long time between
+    // sweeps. Sign-out is the same convergence point as every other cleanup above, and the one
+    // moment this app can say for certain that whatever a picked statement or ticket attachment
+    // was sitting in the cache for is over -- worth clearing now rather than waiting out the rest
+    // of sweepFileCache's own one-hour age margin.
+    sweepFileCache();
   }, [queryClient]);
 
   // The API client can't import navigation or this context (it's imported BY both), so it calls
@@ -257,9 +267,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     regEmail: string,
     password: string,
     name: string,
-    phoneNumber: string
+    phoneNumber: string,
+    referralCode?: string
   ): Promise<{ phoneVerified: boolean }> {
-    const res = await authApi.register(regEmail, password, name, phoneNumber);
+    const res = await authApi.register(regEmail, password, name, phoneNumber, referralCode);
     await persist(res.data);
     // VerifyPhoneScreen fetches the account's real phone number itself (userApi.get(), now that
     // it's authenticated) rather than being handed it through navigation params.

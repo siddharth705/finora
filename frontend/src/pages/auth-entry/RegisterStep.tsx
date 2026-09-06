@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom';
 import { ShieldCheck, User, Mail, CheckCircle2, ArrowRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PasswordInput } from '../../components/PasswordInput';
-import { GoogleSignInButton } from '../../components/GoogleSignInButton';
-import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { SocialSignInButtons } from '../../components/SocialSignInButtons';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
 import { AuthDivider } from './AuthDivider';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
@@ -55,6 +54,12 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
   const [loading, setLoading] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [reactivationToken, setReactivationToken] = useState<string | null>(null);
+  // Seeded at 420 -- Google's own real rendered button width, measured live on production (see
+  // SocialSignInButtons.tsx) -- rather than the form's natural full width, so the form narrows to
+  // match Google/Apple from the first paint instead of flashing full-width and then snapping
+  // narrower once Google's script actually reports back. onWidthKnown corrects this if Google
+  // ever renders differently.
+  const [formWidth, setFormWidth] = useState(420);
 
   const trimmedName = fullName.trim();
   const fullNameValid = trimmedName.length >= 2 && FULL_NAME_PATTERN.test(trimmedName);
@@ -150,11 +155,21 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
+    <form onSubmit={handleSubmit} noValidate style={{ maxWidth: formWidth, marginInline: 'auto' }}>
       <h2 className="font-display text-2xl font-bold text-ink mb-1">Create your account</h2>
       <p className="text-sm text-muted mb-6">Start your journey towards financial clarity</p>
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
+
+      <SocialSignInButtons
+        googleText="signup_with"
+        onGoogleCredential={handleGoogleCredential}
+        onAppleCredential={handleAppleCredential}
+        onError={setError}
+        onWidthKnown={setFormWidth}
+      />
+
+      <AuthDivider />
 
       <label htmlFor="register-fullname" className="block text-xs font-medium text-muted mb-1">Full name</label>
       <div className="relative mb-1">
@@ -291,18 +306,11 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
       <button
         type="submit"
         disabled={loading || !formValid}
-        className="w-full bg-primary hover:bg-primary-dark text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
+        className="w-full bg-primary hover:bg-primary-dark active:scale-[0.98] transition-transform text-on-primary rounded-lg py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5 disabled:opacity-50"
       >
         {loading ? 'Creating account…' : 'Create account'}
         {!loading && <ArrowRight size={15} />}
       </button>
-
-      <AuthDivider />
-
-      <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
     </form>
   );
 }

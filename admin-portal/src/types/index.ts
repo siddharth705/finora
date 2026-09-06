@@ -145,21 +145,6 @@ export interface ActivityTrendPointDto {
 
 /** D-28 PR4-A. Mirrors backend BillingDtos.SubscriptionSummaryDto exactly -- one row per user's
  *  current subscription, joined with their plan and account details for the admin list. */
-/** D-28 PR4-C. Mirrors backend ReferralDtos.AdminReferralSummaryDto exactly -- one row per
- *  referral, both parties identified for abuse review. */
-export interface AdminReferralSummaryDto {
-  referralId: string;
-  referrerUserId: string;
-  referrerEmail: string | null;
-  referrerFullName: string | null;
-  referredUserId: string;
-  referredEmail: string | null;
-  referredFullName: string | null;
-  status: string;
-  reward: number | null;
-  createdAt: string;
-}
-
 export interface SubscriptionSummaryDto {
   subscriptionId: string;
   userId: string;
@@ -168,9 +153,22 @@ export interface SubscriptionSummaryDto {
   planCode: string | null;
   planName: string | null;
   status: string;
+  // Plan 3. "RAZORPAY" means a live Razorpay mandate exists -- the plain plan dropdown must not
+  // fire directly; "ADMIN_GRANT" or null means it's safe to.
+  paymentProvider: string | null;
   startDate: string;
   endDate: string | null;
   renewalDate: string | null;
+}
+
+/** Plan 3 review. Mirrors backend BillingDtos.SubscriptionHealthDto exactly -- see that record's
+ *  own doc comment for why these five counts and not more. */
+export interface SubscriptionHealthDto {
+  activeCount: number;
+  pastDueCount: number;
+  paymentFailedCount: number;
+  cancelledCount: number;
+  pendingOrderCount: number;
 }
 
 export interface SystemHealthDto {
@@ -1231,9 +1229,12 @@ export interface HeldStatementEvent {
 }
 
 /** The summary plus the evidence behind `triggerSummary` and the hold's own history. Still no
- *  statement content -- opening the document is `/document`, gated and audited separately. */
+ *  statement content -- opening the document is `/document`, gated and audited separately.
+ *  `fileName` is the original upload's real name (with its real extension), for the download
+ *  button to save under -- null in the rare case the underlying ImportJob no longer exists. */
 export interface HeldStatementDetail {
   summary: HeldStatementRow;
+  fileName: string | null;
   findings: HeldStatementFinding[];
   timeline: HeldStatementEvent[];
 }

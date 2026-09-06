@@ -152,6 +152,19 @@ public enum ErrorCode {
             "We checked this statement and could not read it accurately enough to import it. "
                     + "Nothing was added to your accounts.", true),
 
+    // Thrown by ImportSessionService.claimForConfirmation when the session's job is
+    // HELD_FOR_TRUST_REVIEW -- TrustPredicate found a reason not to trust the extraction, and the
+    // whole point of that hold is that it is withheld from this exact step until an operator
+    // decides (see HoldDecision's own doc comment). Without this check, confirmSession/
+    // confirmMultiSection had no awareness of the hold at all and would write the staged rows to
+    // the ledger anyway -- confirmed against a real held session in manual end-to-end testing.
+    // CONFLICT rather than UNPROCESSABLE_ENTITY: the statement itself is not the problem (unlike
+    // IMPORT_TRUST_REVIEW_REJECTED), the request is just premature -- the same distinction
+    // IMPORT_SESSION_ALREADY_CONFIRMED draws for "already confirmed".
+    IMPORT_SESSION_HELD_FOR_REVIEW("IMPORT_016", HttpStatus.CONFLICT,
+            "This statement is being reviewed for accuracy and can't be confirmed yet. "
+                    + "We'll let you know when it's ready.", true),
+
     // Accounts
     ACCOUNT_NOT_FOUND("ACC_001", HttpStatus.NOT_FOUND, "Account not found"),
 
@@ -215,6 +228,19 @@ public enum ErrorCode {
     // off (default), so the feature is unreachable end to end rather than merely undocumented.
     AUTH_MFA_NOT_AVAILABLE("AUTH_010", HttpStatus.NOT_FOUND,
             "Admin MFA is not available yet."),
+
+    // Billing / entitlements (com.finora.service.EntitlementService)
+    //
+    // The first ErrorCode ever thrown from an EntitlementService.hasEntitlement() check --
+    // ADVANCED_REPORTS (AnalyticsController's self-service views) is the first FeatureEntitlement
+    // key any endpoint actually enforces; every other seeded key (BASIC_DASHBOARD, EXTENDED_HISTORY,
+    // INVESTMENT_INSIGHTS, FINO_AI, PRIORITY_SUPPORT) still has zero enforcing call sites. Carries
+    // its own code rather than a bare AUTH_FORBIDDEN for the same reason AUTH_MFA_REQUIRED does:
+    // the frontend has to TELL THEM APART -- a plan-gated 403 should open PremiumFeatureGate's
+    // upgrade prompt, not the generic "you don't have permission" dead end a real authorization
+    // failure gets.
+    ENTITLEMENT_REQUIRED("ENTITLEMENT_001", HttpStatus.FORBIDDEN,
+            "This feature isn't included in your current plan."),
 
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),

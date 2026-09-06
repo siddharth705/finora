@@ -2,6 +2,7 @@ package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
 import com.finora.dto.BillingDtos.ChangePlanRequest;
+import com.finora.dto.BillingDtos.SubscriptionHealthDto;
 import com.finora.dto.BillingDtos.SubscriptionSummaryDto;
 import com.finora.dto.PagedResponse;
 import com.finora.security.CurrentUser;
@@ -35,10 +36,23 @@ public class AdminSubscriptionController {
         return ApiResponse.ok(subscriptionService.listAll(page, size));
     }
 
+    @GetMapping("/health")
+    @PreAuthorize("hasAuthority('SUBSCRIPTION_MANAGEMENT_VIEW')")
+    public ApiResponse<SubscriptionHealthDto> health() {
+        return ApiResponse.ok(subscriptionService.health());
+    }
+
     @PutMapping("/{userId}/plan")
     @PreAuthorize("hasAuthority('SUBSCRIPTION_MANAGEMENT_MANAGE')")
     public ApiResponse<Void> changePlan(@PathVariable UUID userId, @Valid @RequestBody ChangePlanRequest request) {
         subscriptionService.changePlan(userId, request.planCode(), request.reason(), currentUser.id());
         return ApiResponse.ok(null, "Plan updated");
+    }
+
+    @PostMapping("/{userId}/cancel-paid-subscription")
+    @PreAuthorize("hasAuthority('SUBSCRIPTION_MANAGEMENT_MANAGE')")
+    public ApiResponse<Void> cancelPaidSubscription(@PathVariable UUID userId) {
+        subscriptionService.cancelPaidSubscription(userId, currentUser.id());
+        return ApiResponse.ok(null, "Paid subscription cancelled");
     }
 }

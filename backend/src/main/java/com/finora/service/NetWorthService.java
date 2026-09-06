@@ -59,26 +59,39 @@ public class NetWorthService {
      *  {@code catch (DataIntegrityViolationException)} that re-found and re-saved the winner's row
      *  on a lost race -- the exact "insert, catch, re-query inside the same call" shape that turned
      *  out to poison an ambient transaction in {@code addAlias}. It never actually did so HERE,
-     *  purely because this method carries no {@code @Transactional} and its only caller ({@code
-     *  NetWorthController}) doesn't either, so every repository call already ran in its own
-     *  self-contained transaction -- the same accident of omission {@code BootstrapService.run}
+     *  purely because this method carries no {@code @Transactional}, and at the time neither did
+     *  its only caller ({@code NetWorthController}), so every repository call already ran in its
+     *  own self-contained transaction -- the same accident of omission {@code BootstrapService.run}
      *  documents relying on deliberately. Relying on "nobody has added @Transactional yet" is not a
      *  guarantee, so this is now {@link NetWorthSnapshotRepository#upsertForToday}, an
      *  {@code INSERT ... ON CONFLICT DO UPDATE}: the database resolves the race atomically, so
      *  there is no exception to catch and no ambient transaction that could be poisoned regardless
-     *  of what this method or its caller are annotated with in the future. */
+     *  of what this method or ANY caller are annotated with -- {@code
+     *  NetWorthSnapshotSweepService.sweep()} is now a second caller, from a background thread with
+     *  no ambient transaction of its own either, and the guarantee above holds for it exactly the
+     *  same way. */
     public NetWorthDto saveSnapshotForToday(UUID userId) {
+        String timezone = userRepository.findById(userId).map(User::getTimezone).orElse(null);
+        snapshotForTodayOnly(userId, timezone);
+        return current(userId);
+    }
+
+    /** Same computation and upsert as {@link #saveSnapshotForToday}, without the closing {@link
+     *  #current} read-back. For {@code NetWorthSnapshotSweepService}, which already has each
+     *  user's timezone from its own batch query and has no use for the returned {@code
+     *  NetWorthDto} -- routing it through {@code saveSnapshotForToday} instead would cost every
+     *  swept user a duplicate {@code accountRepository.findByUserId} call and a fetch of their
+     *  entire, unbounded snapshot history just to discard both. */
+    public void snapshotForTodayOnly(UUID userId, String timezone) {
         List<Account> accounts = accountRepository.findByUserId(userId);
         BigDecimal liquid = sum(accounts, Account.Type.SAVINGS).add(sum(accounts, Account.Type.WALLET));
         BigDecimal investments = sum(accounts, Account.Type.INVESTMENT);
         BigDecimal liabilities = sum(accounts, Account.Type.CREDIT_CARD);
         BigDecimal totalAssets = liquid.add(investments);
         BigDecimal netWorth = netWorthOf(accounts);
-        LocalDate today = LocalDate.now(safeZoneId(userRepository.findById(userId).map(User::getTimezone).orElse(null)));
+        LocalDate today = LocalDate.now(safeZoneId(timezone));
 
         snapshotRepository.upsertForToday(userId, today, totalAssets, liabilities, netWorth);
-
-        return current(userId);
     }
 
     /** Delegates to {@link com.finora.util.UserZone} -- this was one of four hand-copied

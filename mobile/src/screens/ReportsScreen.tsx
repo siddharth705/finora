@@ -3,15 +3,21 @@ import {
   Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { SkeletonCard } from '../components/skeletons/Skeletons';
 import { OptionPickerModal } from '../components/OptionPickerModal';
 import { ProgressBar } from '../components/ProgressBar';
 import { reportsApi } from '../api/endpoints';
 import { toUserMessage } from '../lib/apiError';
-import { fmtCurrency, monthLabel } from '../lib/format';
+import {
+  fmtCurrency, monthDateRange, monthLabel, monthLabelLong,
+} from '../lib/format';
 import { shareCsv, sharePdf } from '../lib/reportExport';
 import { radius, spacing, useTheme } from '../theme';
+import type { AppTabParamList } from '../navigation/types';
 
 type Exporting = 'csv' | 'pdf' | null;
 
@@ -42,8 +48,15 @@ function ReportBodySkeleton() {
  * already loaded opens instantly here instead of being fetched a second time.
  */
 export function ReportsScreen() {
+  // D3 (Track D security cleanup). Category breakdowns and totals are financial figures like any
+  // other -- same screenshot/screen-recording exposure Dashboard/Accounts/Statement History
+  // already guard against.
+  usePreventScreenCapture();
   const c = useTheme();
   const queryClient = useQueryClient();
+  // Lives inside the More stack, not on the tab bar itself -- see BudgetsScreen's identical
+  // comment (Track C/C4).
+  const navigation = useNavigation();
   // Null means "whatever the latest month is", not "none" -- see `month` below. Storing the
   // user's explicit pick rather than a resolved value is what lets the default keep tracking the
   // newest month as data arrives, without ever overriding a choice they made.
@@ -191,7 +204,7 @@ export function ReportsScreen() {
       ) : reportError || !report ? (
         <Card style={styles.section}>
           <Text style={[styles.error, { color: c.danger }]}>
-            Couldn&apos;t load this month&apos;s report — pull down to try again.
+            Couldn&apos;t load {monthLabelLong(month as string)}&apos;s report — pull down to try again.
           </Text>
         </Card>
       ) : (
@@ -224,18 +237,33 @@ export function ReportsScreen() {
           <Card style={styles.section}>
             <SectionHeading title="Category Breakdown" />
             {report.categories.length === 0 ? (
-              <EmptyState message="No expenses recorded this month." />
+              <EmptyState message={`No expenses recorded in ${monthLabelLong(month as string)}.`} />
             ) : (
               report.categories.map((cat) => {
                 const pct = categoryTotal > 0 ? (cat.amount / categoryTotal) * 100 : 0;
                 return (
-                  <View
+                  // Track C/C4. A Pressable rather than the plain View this used to be -- `month`
+                  // can't be null here (this whole branch is gated on `report`, which only exists
+                  // once `month !== null`), so this row always has a real period to drill into.
+                  <Pressable
                     key={cat.category}
                     style={styles.categoryRow}
-                    accessible
+                    accessibilityRole="button"
                     accessibilityLabel={`${cat.category}: ${fmtCurrency(cat.amount)}, ${pct.toFixed(
                       0
-                    )} percent of this month's spending`}
+                    )} percent of ${monthLabelLong(month as string)}'s spending`}
+                    accessibilityHint="Opens these transactions"
+                    android_ripple={{ color: c.border }}
+                    onPress={() => {
+                      const { dateFrom, dateTo } = monthDateRange(month!);
+                      navigation.getParent<BottomTabNavigationProp<AppTabParamList>>()?.navigate('Transactions', {
+                        filters: {
+                          categoryName: cat.category, dateFrom, dateTo,
+                          label: `${cat.category} · ${monthLabel(month!)}`,
+                          nonce: Date.now(),
+                        },
+                      });
+                    }}
                   >
                     <View style={styles.categoryHeader}>
                       <Text style={[styles.categoryName, { color: c.ink }]} numberOfLines={1}>
@@ -244,7 +272,7 @@ export function ReportsScreen() {
                       <Text style={[styles.categoryAmount, { color: c.muted }]}>{fmtCurrency(cat.amount)}</Text>
                     </View>
                     <ProgressBar pct={pct} color={c.primary} />
-                  </View>
+                  </Pressable>
                 );
               })
             )}

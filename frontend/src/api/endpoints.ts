@@ -930,10 +930,11 @@ export const deviceApi = {
 
 // --- Import statistics ---
 //
-// The only analytics view still exposed to end users -- merchant/rule/relationship/learning
-// management and the rest of the analytics views are admin-only now (see the admin portal's
-// UserDetail page and the backend's AdminUser*Controller family). This one stays because
-// Settings.tsx's Account section shows the signed-in user their own import totals.
+// importStatistics stays open to every plan -- Settings.tsx's Account section shows the
+// signed-in user their own import totals regardless of entitlement. The five views below it
+// (topMerchants/trend/categoryConfidence/topCategories/learningGrowth) are the ones that were
+// admin-only until AnalyticsController restored them as the first real ADVANCED_REPORTS gate --
+// see AdvancedReports.tsx, the customer-facing page built around them.
 
 export interface ImportStatistics {
   totalStatements: number;
@@ -941,9 +942,28 @@ export interface ImportStatistics {
   totalTransactionsSkipped: number;
   lastImportedAt: string | null;
 }
+
+// Mirrors backend AnalyticsDto exactly.
+export interface TopMerchant { merchantId: string; merchantName: string; totalSpend: number; transactionCount: number; }
+export interface TrendPoint { month: string; totalSpend: number; }
+export interface CategoryConfidencePoint { category: string; avgConfidence: number; merchantCount: number; }
+export interface TopCategory { categoryId: string; categoryName: string; totalSpend: number; transactionCount: number; }
+export interface LearningGrowthPoint { month: string; learnedCount: number; correctedCount: number; }
+
 export const analyticsApi = {
   importStatistics: () =>
     api.get<ImportStatistics>('/analytics/merchants', { params: { view: 'importStatistics' } }).then((r) => r.data),
+  // month is "YYYY-MM"; omitted means all-time for topMerchants/topCategories, and the trailing
+  // 6-month window ending this month for trend -- see AnalyticsService's own doc comments.
+  topMerchants: (month?: string) =>
+    api.get<TopMerchant[]>('/analytics/top-merchants', { params: month ? { month } : {} }).then((r) => r.data),
+  trend: () => api.get<TrendPoint[]>('/analytics/trend').then((r) => r.data),
+  categoryConfidence: () =>
+    api.get<CategoryConfidencePoint[]>('/analytics/category-confidence').then((r) => r.data),
+  topCategories: (month?: string) =>
+    api.get<TopCategory[]>('/analytics/top-categories', { params: month ? { month } : {} }).then((r) => r.data),
+  learningGrowth: () =>
+    api.get<LearningGrowthPoint[]>('/analytics/learning-growth').then((r) => r.data),
 };
 
 // --- Financial Intelligence Workspace: Dashboard ---
@@ -1015,8 +1035,9 @@ export const entitlementsApi = {
   mine: () => api.get<EntitlementsDto>('/entitlements').then((r) => r.data),
 };
 
-// D-28 PR4-B. The user's own billing history (proposal §3.4) -- empty for everyone today, since
-// no payment gateway exists yet (§10). Mirrors backend BillingDtos.BillingHistoryEntryDto exactly.
+// D-28 PR4-B, extended by subscription billing V1/V2/V3. The user's own billing surface: history
+// (Plan 1, always existed), and now the active subscription plus the actions that change it.
+// Mirrors backend BillingDtos.BillingHistoryEntryDto exactly.
 export interface BillingHistoryEntry {
   id: string;
   amount: number;
@@ -1026,22 +1047,59 @@ export interface BillingHistoryEntry {
   createdAt: string;
 }
 
-export const billingApi = {
-  history: () => api.get<BillingHistoryEntry[]>('/billing/history').then((r) => r.data),
-};
-
-// D-28 PR4-C. The referral program (proposal §4) -- mirrors backend ReferralDtos exactly.
-export interface MyReferralEntry {
-  referralId: string;
-  referredUserFullName: string | null;
+// Mirrors backend BillingDtos.MySubscriptionDto exactly.
+export interface PendingPlanChange {
+  toPlanCode: string;
+  toPlanName: string;
+  effectiveAt: string;
+}
+// A stuck or in-flight checkout the Billing Portal can offer to resume or cancel (Plan 3 review) --
+// razorpaySubscriptionId/keyId are the SAME values a fresh checkout() call would return, safe to
+// hand straight to openRazorpayCheckout with no other change.
+export interface PendingOrder {
+  planCode: string;
+  planName: string;
+  billingCycle: string;
+  razorpaySubscriptionId: string;
+  keyId: string;
+}
+export interface MySubscription {
+  planCode: string;
+  planName: string;
+  billingCycle: string | null;
   status: string;
-  reward: number | null;
-  createdAt: string;
+  renewalDate: string | null;
+  autoRenew: boolean;
+  hasBillingSubscription: boolean;
+  pendingChange: PendingPlanChange | null;
+  pendingOrder: PendingOrder | null;
 }
 
+// Mirrors backend BillingDtos.CheckoutResponseDto exactly. `null` from changePlan() means the
+// requested change (a downgrade, or a same-plan no-op) needed no further client action -- see
+// that endpoint's own doc comment on the backend.
+export interface CheckoutResponse {
+  razorpaySubscriptionId: string;
+  keyId: string;
+}
+
+export const billingApi = {
+  history: () => api.get<BillingHistoryEntry[]>('/billing/history').then((r) => r.data),
+  mySubscription: () => api.get<MySubscription>('/billing/subscription').then((r) => r.data),
+  checkout: (planCode: string, billingCycle: string) =>
+    api.post<CheckoutResponse>('/billing/checkout', { planCode, billingCycle }).then((r) => r.data),
+  cancel: () => api.post<{ message: string }>('/billing/cancel').then((r) => r.data),
+  changePlan: (planCode: string, billingCycle: string) =>
+    api.post<CheckoutResponse | null>('/billing/change-plan', { planCode, billingCycle }).then((r) => r.data),
+  // Plan 3 review. Clears a stuck PENDING order so a different plan/cycle can be checked out.
+  // Never calls Razorpay itself; see the backend's cancelPendingOrder for why that's correct.
+  cancelPendingOrder: () => api.post<{ message: string }>('/billing/pending-order/cancel').then((r) => r.data),
+};
+
+// Refer & Earn MVP -- mirrors backend ReferralDtos exactly. Just a code and a count.
 export interface MyReferralsDto {
-  referrals: MyReferralEntry[];
-  walletBalance: number;
+  code: string;
+  referralCount: number;
 }
 
 export const referralsApi = {

@@ -4,6 +4,7 @@ import {
   useWindowDimensions, View,
 } from 'react-native';
 import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Button } from '../components/Button';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { DonutChart, type Slice } from '../components/charts/DonutChart';
@@ -43,6 +44,10 @@ function depositTerms(holding: Account): string | null {
 
 /** Port of frontend/src/pages/Investments.tsx. */
 export function InvestmentsScreen() {
+  // D3 (Track D security cleanup). Holdings and net worth are the single most sensitive figures
+  // in the app -- same screenshot/screen-recording exposure Dashboard/Accounts/Statement History
+  // already guard against.
+  usePreventScreenCapture();
   const c = useTheme();
   const { width } = useWindowDimensions();
   const queryClient = useQueryClient();
@@ -316,7 +321,10 @@ export function InvestmentsScreen() {
             Could not load your net worth history.
           </Text>
         ) : history.length < 2 ? (
-          <EmptyState message="Save a snapshot periodically to build a trend — history starts from the first one you save." />
+          // Track C/C8: a snapshot is now taken automatically every day (NetWorthSnapshotSweepService),
+          // so this is no longer "the first one you save" -- it just hasn't been a day or two yet.
+          // "Save snapshot" above still exists as a same-day override, not the only way history starts.
+          <EmptyState message="Building your net worth trend — check back in a day or two, or save today's snapshot now to add a point right away." />
         ) : (
           <TrendChart
             points={history.map((h) => ({ date: h.date, value: h.netWorth }))}

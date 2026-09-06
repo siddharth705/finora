@@ -9,8 +9,67 @@
  * ArrayBuffer even for a failed request's JSON error body (responseType: 'arraybuffer' applies to
  * error responses too), so the envelope has to be decoded back into text before it can be parsed.
  */
-export function decodeUtf8(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
+/**
+ * Encodes a string into UTF-8 bytes -- decodeUtf8's inverse, and written out for the identical
+ * reason: no spec-compliant TextEncoder under Hermes without a polyfill this project doesn't have.
+ *
+ * Used by queryCacheCipher.ts (D4, Track D security cleanup): expo-crypto's aesEncryptAsync takes
+ * raw bytes, not a JS string, for the JSON payload being encrypted before it reaches AsyncStorage.
+ */
+export function encodeUtf8(str: string): Uint8Array {
+  const bytes: number[] = [];
+
+  for (let i = 0; i < str.length; i++) {
+    let codePoint = str.charCodeAt(i);
+
+    // A UTF-16 surrogate pair represents one codepoint above the BMP -- decodeUtf8's 4-byte
+    // branch run in reverse, combined back into the single codepoint it actually encodes.
+    if (codePoint >= 0xd800 && codePoint <= 0xdbff && i + 1 < str.length) {
+      const low = str.charCodeAt(i + 1);
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        codePoint = 0x10000 + ((codePoint - 0xd800) << 10) + (low - 0xdc00);
+        i += 1;
+      }
+    }
+
+    if (codePoint < 0x80) {
+      bytes.push(codePoint);
+    } else if (codePoint < 0x800) {
+      bytes.push(0xc0 | (codePoint >> 6), 0x80 | (codePoint & 0x3f));
+    } else if (codePoint < 0x10000) {
+      bytes.push(
+        0xe0 | (codePoint >> 12),
+        0x80 | ((codePoint >> 6) & 0x3f),
+        0x80 | (codePoint & 0x3f)
+      );
+    } else {
+      bytes.push(
+        0xf0 | (codePoint >> 18),
+        0x80 | ((codePoint >> 12) & 0x3f),
+        0x80 | ((codePoint >> 6) & 0x3f),
+        0x80 | (codePoint & 0x3f)
+      );
+    }
+  }
+
+  return Uint8Array.from(bytes);
+}
+
+/**
+ * Bug found in review (Track D/D4): queryCacheCipher.ts calls this with `someUint8Array.buffer`,
+ * not the view itself. `.buffer` is the view's UNDERLYING ArrayBuffer, which can be larger than
+ * the view when the view has a non-zero byteOffset or a byteLength short of the buffer's own
+ * (a subarray, or a view expo-crypto handed back into some larger pooled buffer) -- `new
+ * Uint8Array(buffer)` ignores both and would decode whatever surrounds the intended bytes instead
+ * of just them. Accepting the view directly and reading its own byteOffset/byteLength keeps this
+ * correct regardless of what the caller passes; `ArrayBufferLike` is kept for
+ * statementImportsApi.downloadFile's use, which already has a real top-level ArrayBuffer with no
+ * view to speak of.
+ */
+export function decodeUtf8(input: ArrayBufferLike | ArrayBufferView): string {
+  const bytes = ArrayBuffer.isView(input)
+    ? new Uint8Array(input.buffer, input.byteOffset, input.byteLength)
+    : new Uint8Array(input);
   let out = '';
   let i = 0;
 

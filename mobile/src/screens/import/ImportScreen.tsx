@@ -1,13 +1,15 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useRoute, type RouteProp } from '@react-navigation/native';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button } from '../../components/Button';
 import { Card, SectionHeading } from '../../components/Card';
 import { OptionPickerModal } from '../../components/OptionPickerModal';
+import { UploadProgressPanel, type UploadPanelState } from '../../components/UploadProgressPanel';
 import { StagedRowCard } from './StagedRowCard';
 import { accountsApi, categoriesApi, importApi, statementImportsApi, type RNFile, type StagingResult } from '../../api/endpoints';
 import { PDF_PASSWORD_INVALID, PDF_PASSWORD_REQUIRED } from '../../api/errorCodes';
@@ -37,16 +39,31 @@ import type { DetectedAccountInfo, ImportSummary, StagedRow, UnparseableRow } fr
 type Step = 'upload' | 'review' | 'summary';
 type AccountChoice = 'existing' | 'new';
 
+// How long the "Completed" checkmark stays on screen before the step actually advances -- same
+// value and same reasoning as the web app's Import.tsx (UPLOAD_COMPLETE_DWELL_MS): long enough to
+// register as a real confirmation, short enough not to feel like a delay.
+export const UPLOAD_COMPLETE_DWELL_MS = 900;
+
 export function ImportScreen() {
   const c = useTheme();
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const route = useRoute<RouteProp<AppTabParamList, 'Import'>>();
+  const navigation = useNavigation<BottomTabNavigationProp<AppTabParamList>>();
   const reimportParam = route.params?.reimport;
 
   const [step, setStep] = useState<Step>('upload');
   const [error, setError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  // True for a brief dwell after a stage call succeeds, before the step actually advances to
+  // 'review' -- see celebrateThenAdvance below. Deliberately not derived from uploadProgress: it
+  // needs to survive uploadProgress being reset back to null when the dwell ends, or the completed
+  // panel would flash back to idle for one frame before 'review' renders.
+  const [uploadCompleted, setUploadCompleted] = useState(false);
+  const completionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (completionTimer.current) clearTimeout(completionTimer.current);
+  }, []);
   const [confirming, setConfirming] = useState(false);
   const singleFlight = useSingleFlight();
   const [resumingId, setResumingId] = useState<string | null>(null);
@@ -341,9 +358,31 @@ export function ImportScreen() {
     }
   }
 
+  // Holds the panel on 'completed' for UPLOAD_COMPLETE_DWELL_MS before running `advance` (a
+  // setStep call) -- the pause that makes the checkmark a real, noticeable state rather than a
+  // single frame between "100%" and the review screen. uploadProgress is reset here, not in
+  // upload()'s finally, so the panel doesn't fall back to 'idle' for a frame while `uploadCompleted`
+  // is still true (see that state's own doc comment).
+  function celebrateThenAdvance(advance: () => void) {
+    // Defensive, not currently reachable: every caller of upload() already refuses to run while
+    // `uploading` (which covers uploadCompleted too) is true, so this can't yet fire twice before
+    // the first timer completes. Guards against that invariant quietly breaking later, rather than
+    // leaking the earlier timer and calling `advance` twice.
+    if (completionTimer.current) clearTimeout(completionTimer.current);
+    setUploadCompleted(true);
+    completionTimer.current = setTimeout(() => {
+      setUploadCompleted(false);
+      setUploadProgress(null);
+      advance();
+    }, UPLOAD_COMPLETE_DWELL_MS);
+  }
+
   async function upload(file: RNFile, isPdf: boolean, password: string | undefined) {
     setError(null);
     setUploadProgress(0);
+    // Set once the stage call succeeds, so the finally block below skips its usual reset and
+    // leaves uploadProgress/uploadCompleted for celebrateThenAdvance to clear itself.
+    let holdForCompletion = false;
     const controller = new AbortController();
     uploadAbort.current = controller;
     try {
@@ -372,7 +411,8 @@ export function ImportScreen() {
 
       const staging = (res as { staging: NonNullable<typeof res.staging> }).staging;
       hydrateReviewFrom(staging);
-      setStep('review');
+      holdForCompletion = true;
+      celebrateThenAdvance(() => setStep('review'));
     } catch (e) {
       // A cancel is the user getting what they asked for, not a failure -- no error banner. Checked
       // before everything else because a cancelled request otherwise reads as a network error
@@ -389,7 +429,7 @@ export function ImportScreen() {
       }
     } finally {
       uploadAbort.current = null;
-      setUploadProgress(null);
+      if (!holdForCompletion) setUploadProgress(null);
     }
   }
 
@@ -466,6 +506,11 @@ export function ImportScreen() {
   // ---- upload ----
   if (step === 'upload') {
     const uploading = uploadProgress !== null;
+    // Same priority order the screen already had: an in-flight (or just-finished) upload takes
+    // over the card's content regardless of whether a PDF password is pending, and the password
+    // panel only reappears once neither is true (e.g. after a wrong password bounced it back).
+    const panelState: UploadPanelState = uploadCompleted ? 'completed' : uploading ? 'uploading' : 'idle';
+    const showPasswordPanel = !uploading && !uploadCompleted && !!pendingPdf;
     return (
       <View style={[styles.flex, { backgroundColor: c.bg, paddingTop: insets.top + spacing.md }]}>
         {/* ScrollView, not the plain View this used to be: the unfinished-import list below is
@@ -480,25 +525,26 @@ export function ImportScreen() {
               anything is added.
             </Text>
 
-            {uploading ? (
-              <View style={styles.progressWrap}>
-                <View style={[styles.progressTrack, { backgroundColor: c.border }]}>
-                  <View
-                    style={[styles.progressFill, { width: `${uploadProgress}%`, backgroundColor: c.primary }]}
-                  />
-                </View>
-                {/* 100% means the bytes finished sending, not that the server finished reading
-                    them -- see ProgressCallback's own comment in endpoints.ts. */}
-                <Text style={[styles.progressText, { color: c.muted }]}>
-                  {uploadProgress === 100 ? 'Reading statement…' : `Uploading… ${uploadProgress}%`}
-                </Text>
+            {showPasswordPanel ? null : (
+              <>
+                <UploadProgressPanel
+                  state={panelState}
+                  progress={uploadProgress ?? 0}
+                  idle={<Button label="Choose a file" onPress={handlePick} />}
+                />
                 {/* The only way out of this screen while an upload is in flight. It matters most
                     on the request that can never time out on its own (see toUploadProgressConfig):
                     on a dead connection the bar simply freezes, and without this the user is stuck
-                    watching it. */}
-                <Button label="Cancel upload" variant="link" onPress={cancelUpload} />
-              </View>
-            ) : pendingPdf ? (
+                    watching it.
+                    Bug fix: gated on panelState, not `uploading` -- uploadProgress (what `uploading`
+                    reads) isn't reset to null until celebrateThenAdvance's dwell timer fires, so
+                    `uploading` stays true for the whole 'completed' checkmark too. This button was
+                    sitting there through the entire dwell, doing nothing (cancelUpload's abort
+                    controller is already null by then -- upload() already succeeded). */}
+                {panelState === 'uploading' && <Button label="Cancel upload" variant="link" onPress={cancelUpload} />}
+              </>
+            )}
+            {showPasswordPanel && pendingPdf && (
               <View style={styles.passwordWrap} testID="pdf-password-panel">
                 <Text style={[styles.body, { color: c.ink, fontWeight: '600' }]} numberOfLines={2}>
                   {pendingPdf.name}
@@ -543,8 +589,6 @@ export function ImportScreen() {
                   }}
                 />
               </View>
-            ) : (
-              <Button label="Choose a file" onPress={handlePick} />
             )}
           </Card>
 
@@ -635,6 +679,31 @@ export function ImportScreen() {
             ) : null}
             <View style={styles.actions}>
               <Button label="Import another" onPress={resetToUpload} />
+              {/* Track C/C6. Depended on C4's Ledger filters existing at all -- without them this
+                  would land on the whole, unfiltered ledger, no more useful than the Transactions
+                  tab a user could already reach on their own. account can genuinely be null (see
+                  ImportSummary's own type); the period alone still narrows down to this import
+                  when it is. */}
+              <View style={styles.viewInLedger}>
+                <Button
+                  label="View in Ledger"
+                  variant="link"
+                  onPress={() => {
+                    const period = summary.statementPeriodStart && summary.statementPeriodEnd
+                      ? ` · ${summary.statementPeriodStart} to ${summary.statementPeriodEnd}`
+                      : '';
+                    navigation.navigate('Transactions', {
+                      filters: {
+                        accountId: summary.account?.id,
+                        dateFrom: summary.statementPeriodStart ?? undefined,
+                        dateTo: summary.statementPeriodEnd ?? undefined,
+                        label: `${summary.account?.name ?? 'This import'}${period}`,
+                        nonce: Date.now(),
+                      },
+                    });
+                  }}
+                />
+              </View>
             </View>
           </Card>
         </View>
@@ -913,10 +982,6 @@ const styles = StyleSheet.create({
   // to its input rather than floating midway between it and the filename above.
   passwordWrap: { marginTop: spacing.sm, gap: spacing.sm },
   helpText: { fontSize: 12, lineHeight: 17 },
-  progressWrap: { marginTop: spacing.sm },
-  progressTrack: { height: 6, borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: 6, borderRadius: 3 },
-  progressText: { fontSize: 12, marginTop: 6, textAlign: 'center' },
   formatBadge: {
     fontSize: 10,
     fontWeight: '700',
@@ -983,6 +1048,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   cancel: { marginTop: spacing.sm },
+  viewInLedger: { marginTop: spacing.sm },
   statRow: { flexDirection: 'row', gap: spacing.md, marginBottom: spacing.sm },
   stat: { flex: 1 },
   statValue: { fontSize: 20, fontWeight: '700' },

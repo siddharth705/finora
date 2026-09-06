@@ -1,4 +1,5 @@
 import axios from 'axios';
+import * as SecureStore from 'expo-secure-store';
 import { safeStorage } from '../lib/safeStorage';
 import { APP_VERSION, PLATFORM_HEADER, VERSION_HEADER, clientPlatform } from '../lib/clientIdentity';
 
@@ -138,6 +139,17 @@ let refreshInFlight: Promise<{ token: string; refreshToken: string }> | null = n
  * Reading the token in here rather than accepting it as an argument closes the same window from the
  * other side: a caller that read storage before joining would otherwise hand in a value that was
  * already stale by the time it was used.
+ *
+ * The two persistence writes below use SecureStore directly, NOT safeStorage -- safeStorage's
+ * setItem deliberately never throws (a failed write is a silent no-op, the right contract for an
+ * ordinary storage call). That contract is wrong here: the server has already rotated the refresh
+ * token by the time these writes run, so if the access-token write lands but the refresh-token
+ * write then fails (a transient keychain/Keystore error), a swallowed failure would leave storage
+ * holding a new access token paired with the OLD, already-invalidated refresh token -- invisible
+ * until the next ordinary refresh presents that stale token again, which the server reads as theft
+ * and revokes every session for the user on every device. Letting the write throw here routes that
+ * failure into the same catch below as a rejected refresh: clearSessionAndRedirect() wipes both
+ * keys, so no mismatched pair is left behind for a later request to find.
  */
 function refreshAccessToken(): Promise<{ token: string; refreshToken: string }> {
   if (!refreshInFlight) {
@@ -146,8 +158,8 @@ function refreshAccessToken(): Promise<{ token: string; refreshToken: string }> 
       if (!stored) throw new Error('No refresh token stored');
       const { authApi } = await import('./endpoints');
       const refreshed = await authApi.refresh(stored);
-      await safeStorage.setItem(TOKEN_KEY, refreshed.token);
-      await safeStorage.setItem(REFRESH_TOKEN_KEY, refreshed.refreshToken);
+      await SecureStore.setItemAsync(TOKEN_KEY, refreshed.token);
+      await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshed.refreshToken);
       return refreshed;
     })().finally(() => {
       refreshInFlight = null;

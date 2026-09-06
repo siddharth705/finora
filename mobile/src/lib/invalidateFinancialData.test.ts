@@ -41,6 +41,15 @@ const NON_FINANCIAL_KEYS = new Set([
   // right after creating a new ticket.
   'support-tickets-mine',
   'support-ticket-detail',
+  // Track C/C7. Which statement row a transaction came from is fixed at import time -- editing
+  // this transaction's (or any other transaction's) category, amount, or notes never changes
+  // which file/row it was originally read from. Same reasoning as 'statement-import-transactions'
+  // above.
+  'transaction-source',
+  // Refer & Earn MVP. A referral relationship (and the resulting count) only changes when someone
+  // else signs up with this user's code -- no transaction, account, or import write moves it. Same
+  // reasoning as 'support-tickets-mine' above.
+  'referrals-mine',
 ]);
 
 function sourceFiles(dir: string): string[] {

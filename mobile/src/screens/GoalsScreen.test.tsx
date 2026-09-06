@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { GoalsScreen } from './GoalsScreen';
 import { goalsApi } from '../api/endpoints';
 import type { Goal } from '../types';
@@ -193,5 +194,15 @@ describe('GoalsScreen — the list', () => {
     renderScreen();
 
     expect(await screen.findByText(/No goals yet/)).toBeTruthy();
+  });
+});
+
+// D3 (Track D security cleanup). Savings-goal targets/progress are as screenshot-attractive as
+// anything on the Dashboard or Accounts screen, which already guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });

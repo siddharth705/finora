@@ -80,7 +80,7 @@ describe('Investments — loading states', () => {
 
     expect(screen.queryByText('No holdings yet')).not.toBeInTheDocument();
     expect(screen.queryByText('No investments yet')).not.toBeInTheDocument();
-    expect(screen.queryByText('Start tracking your trend')).not.toBeInTheDocument();
+    expect(screen.queryByText('Building your net worth trend')).not.toBeInTheDocument();
   });
 
   /**
@@ -180,7 +180,7 @@ describe('Investments — loading states', () => {
     expect(await screen.findByText('Could not load investments.')).toBeInTheDocument();
     expect(screen.queryByText('No holdings yet')).not.toBeInTheDocument();
     expect(screen.queryByText('No investments yet')).not.toBeInTheDocument();
-    expect(screen.queryByText('Start tracking your trend')).not.toBeInTheDocument();
+    expect(screen.queryByText('Building your net worth trend')).not.toBeInTheDocument();
   });
 
   it('keeps the Add button spinning until the refetched list is on screen', async () => {

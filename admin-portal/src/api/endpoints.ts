@@ -2,7 +2,7 @@ import { api, rawApi, type ApiEnvelope } from './client';
 import { downloadBlob } from '../lib/download';
 import type {
 
-  AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminReferralSummaryDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
+  AccountDto, ActivationFunnelDto, ActivityTrendPointDto, AdminUpdateUserRequest, AuditLogDto, BankDto, CategoryConfidencePoint,
   CoverageDto,
   HeldImportRow, HeldImportDetail, HeldImportSummary,
   HeldStatementRow, HeldStatementQuery, HeldStatementDetail, HeldStatementRerunResult,
@@ -17,7 +17,7 @@ import type {
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
   PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
   RelationshipDto, RelationshipMergeRequest, RoleDto, RuleDto,
-  SearchResultDto, SubscriptionSummaryDto, SystemHealthDto,
+  SearchResultDto, SubscriptionHealthDto, SubscriptionSummaryDto, SystemHealthDto,
   TestMerchantTemplateRequest, TestMerchantTemplateResult, TestRuleRequest, TestRuleResult,
   TopCategoryPoint, TopMerchantPoint, TransactionDto, TrendPoint,
   UpdateBankRequest, UpdateFeatureFlagRequest, UpdateMerchantTemplateRequest,
@@ -309,14 +309,12 @@ export const adminSubscriptionsApi = {
     api.get<PagedResponse<SubscriptionSummaryDto>>('/admin/subscriptions', { params: { page, size } }).then((r) => r.data),
   changePlan: (userId: string, planCode: string, reason: string) =>
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
-};
-
-// D-28 PR4-C. REFERRAL_MANAGEMENT_VIEW/_MANAGE-gated (V101), same split as adminSubscriptionsApi.
-export const adminReferralsApi = {
-  list: (page: number, size: number) =>
-    api.get<PagedResponse<AdminReferralSummaryDto>>('/admin/referrals', { params: { page, size } }).then((r) => r.data),
-  creditReward: (referralId: string, amount: number, reason: string) =>
-    api.post(`/admin/referrals/${referralId}/credit`, { amount, reason }),
+  // Plan 3 / design spec §6.6 -- releases a live Razorpay mandate immediately (not at cycle end;
+  // this is an admin support action) so changePlan above can then succeed.
+  cancelPaidSubscription: (userId: string) =>
+    api.post(`/admin/subscriptions/${userId}/cancel-paid-subscription`),
+  // Plan 3 review -- platform-wide counts for the Subscription Health stat row.
+  health: () => api.get<SubscriptionHealthDto>('/admin/subscriptions/health').then((r) => r.data),
 };
 
 export const adminSystemApi = {
@@ -384,6 +382,18 @@ export const adminHeldImportApi = {
     api.post<{ reprocessed: number }>('/admin/held-imports/reprocess-all').then((r) => r.data),
   resolve: (jobId: string, reason: string) =>
     api.post<HeldImportRow>(`/admin/held-imports/${jobId}/resolve`, { reason }).then((r) => r.data),
+  // Same pattern as adminHeldStatementApi.download -- a plain <a href> can't carry the Bearer
+  // token, so this rides the authenticated axios instance and triggers the browser download
+  // client-side. Uses the statement's real fileName (available from the already-loaded detail),
+  // unlike the trust-review sibling's hardcoded ".pdf" -- CSV imports can be held too.
+  download: async (jobId: string, fileName: string) => {
+    try {
+      const res = await api.get(`/admin/held-imports/${jobId}/document`, { responseType: 'blob' });
+      downloadBlob(res.data as Blob, fileName);
+    } catch (err) {
+      throw await withBlobErrorMessage(err);
+    }
+  },
 };
 
 /** The trust-review queue -- statements the pipeline held back because the extraction's own
@@ -416,10 +426,17 @@ export const adminHeldStatementApi = {
   // A plain <a href> can't carry the Bearer token, so this goes through the same authenticated
   // axios instance as everything else and triggers the browser download client-side instead --
   // same pattern as the user frontend's statementImportsApi.downloadFile.
-  download: async (heldId: string) => {
+  //
+  // fileName comes from the caller (the already-loaded detail's own fileName), not parsed back out
+  // of the response's Content-Disposition header -- nothing else in this codebase parses that
+  // header either (see accountLifecycleApi.exportData's identical comment on the user frontend).
+  // Found in review: this used to hardcode `${heldId}.pdf`, which was wrong for every CSV-sourced
+  // hold -- the download still worked (the bytes and content-type were always correct), but saved
+  // under a misleading filename and extension.
+  download: async (heldId: string, fileName: string) => {
     try {
       const res = await api.get(`/admin/held-statements/${heldId}/document`, { responseType: 'blob' });
-      downloadBlob(res.data as Blob, `${heldId}.pdf`);
+      downloadBlob(res.data as Blob, fileName);
     } catch (err) {
       throw await withBlobErrorMessage(err);
     }

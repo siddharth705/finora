@@ -271,6 +271,48 @@ describe('Import — file-type routing', () => {
     expect(screen.queryByTestId('pdf-password-panel')).not.toBeInTheDocument();
   });
 
+  it('flashes a Completed checkmark before advancing to the review step', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    // The step doesn't jump straight from "uploading" to "review" -- there's a real, brief
+    // Completed state in between (UPLOAD_COMPLETE_DWELL_MS in Import.tsx), not just a fast-enough
+    // transition that happens to never get caught mid-flight.
+    expect(await screen.findByTestId('upload-completed')).toBeInTheDocument();
+    // Still the same dropzone container -- only its inner content morphed -- so the drag-and-drop
+    // prompt it showed a moment ago is what's gone, not the container itself.
+    expect(screen.queryByText(/click to upload/i)).not.toBeInTheDocument();
+
+    // ...and then it actually does move on to the review step, on its own, with no further
+    // interaction.
+    expect(await screen.findByRole('button', { name: /confirm import/i })).toBeInTheDocument();
+    expect(screen.queryByTestId('upload-completed')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Bug fix: pendingPdf used to clear the instant stagePdf resolved, which made showUploadPicker
+   * (`!pendingPdf`) true for the whole Completed dwell -- swapping the password panel out for the
+   * dropzone, a different element further down the page, with "Continue previous import"/the retry
+   * banner able to render ABOVE it. The checkmark appeared in a box the user wasn't looking at,
+   * with unrelated content flashing in alongside it. The fix keeps pendingPdf (and this panel)
+   * mounted through the dwell so the PDF path's checkmark appears where its own progress bar just
+   * was, exactly like the dropzone already does for a CSV.
+   */
+  it('shows the Completed checkmark inside the PDF password panel, not the dropzone', async () => {
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+
+    expect(await screen.findByTestId('upload-completed')).toBeInTheDocument();
+    expect(screen.getByTestId('pdf-password-panel')).toBeInTheDocument();
+    expect(screen.queryByTestId('statement-dropzone')).not.toBeInTheDocument();
+
+    expect(await screen.findByRole('button', { name: /confirm import/i })).toBeInTheDocument();
+  });
+
   it('rejects an unsupported file type dropped onto the dropzone, without calling either staging endpoint', async () => {
     renderImport();
 
@@ -350,7 +392,7 @@ describe('Import — discarding the current review to force a fresh parse', () =
     await user.upload(screen.getByTestId('statement-file-input'), csvFile());
     await screen.findByText(/which account is this statement for/i);
 
-    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    await user.click(screen.getByRole('button', { name: /cancel import/i }));
     expect(await screen.findByText('Discard this import and start over?')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Discard' }));
 
@@ -366,7 +408,7 @@ describe('Import — discarding the current review to force a fresh parse', () =
     await user.upload(screen.getByTestId('statement-file-input'), csvFile());
     await screen.findByText(/which account is this statement for/i);
 
-    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    await user.click(screen.getByRole('button', { name: /cancel import/i }));
     await screen.findByText('Discard this import and start over?');
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
@@ -382,7 +424,7 @@ describe('Import — discarding the current review to force a fresh parse', () =
     await user.upload(screen.getByTestId('statement-file-input'), csvFile());
     await screen.findByText(/which account is this statement for/i);
 
-    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    await user.click(screen.getByRole('button', { name: /cancel import/i }));
     await screen.findByText('Discard this import and start over?');
     await user.click(screen.getByRole('button', { name: 'Discard' }));
 
@@ -414,12 +456,103 @@ describe('Import — discarding the current review to force a fresh parse', () =
     await pickAndUploadPdf(user);
     await screen.findByText(/this statement covers 2 accounts/i);
 
-    await user.click(screen.getByRole('button', { name: /discard and start over/i }));
+    await user.click(screen.getByRole('button', { name: /cancel import/i }));
     expect(await screen.findByText('Discard this import and start over?')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Discard' }));
 
     expect(importApi.discardSession).toHaveBeenCalledWith('sess-multi-9');
     expect(await screen.findByTestId('statement-dropzone')).toBeInTheDocument();
+  });
+});
+
+describe('Import — paginates the review table', () => {
+  function stagedRow(description: string) {
+    return {
+      date: '2026-07-10',
+      description,
+      amount: 100,
+      type: 'EXPENSE' as const,
+      suggestedCategory: 'Other',
+      categorySource: 'rule' as const,
+      ruleId: null,
+      likelyDuplicate: false,
+      referenceNumber: null,
+      balanceAfter: null,
+      duplicateMatch: null,
+    };
+  }
+
+  function stageRows(count: number) {
+    const rows = Array.from({ length: count }, (_, i) => stagedRow(`ROW ${String(i + 1).padStart(3, '0')}`));
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-pagination',
+      multiAccount: false,
+      sections: null,
+      staging: { rows, totalParsed: rows.length, flaggedDuplicates: 0, detectedAccount, unparseableRows: [] },
+    } as never);
+  }
+
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows no pagination controls when there are 10 rows or fewer', async () => {
+    stageRows(10);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText('ROW 001');
+
+    expect(screen.getByText('ROW 010')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/next page/i)).not.toBeInTheDocument();
+  });
+
+  it('shows 10 rows per page and paginates through the rest, preserving each row\'s identity', async () => {
+    stageRows(23);
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await screen.findByText('ROW 001');
+
+    // Page 1: exactly rows 1-10, nothing from later pages leaked in.
+    expect(screen.getByText('ROW 010')).toBeInTheDocument();
+    expect(screen.queryByText('ROW 011')).not.toBeInTheDocument();
+    expect(screen.getByText(/showing/i).textContent).toMatch(/1.*10.*23/s);
+    expect(screen.getByText('Page 1 of 3')).toBeInTheDocument();
+    expect(screen.getByLabelText(/previous page/i)).toBeDisabled();
+
+    // Every row starts included by default (only a flagged duplicate starts excluded) -- so
+    // this click UNCHECKS row 3. A checkbox toggled on page 1 must target that row
+    // specifically, not whichever row happens to sit at the same on-page position after
+    // paginating -- this is the exact bug a page-relative index (instead of the row's
+    // original index) would produce.
+    expect(screen.getByLabelText('Include ROW 003')).toBeChecked();
+    await user.click(screen.getByLabelText('Include ROW 003'));
+    expect(screen.getByLabelText('Include ROW 003')).not.toBeChecked();
+
+    await user.click(screen.getByLabelText(/next page/i));
+    expect(await screen.findByText('ROW 011')).toBeInTheDocument();
+    expect(screen.getByText('ROW 020')).toBeInTheDocument();
+    expect(screen.queryByText('ROW 001')).not.toBeInTheDocument();
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument();
+    expect(screen.getByLabelText(/previous page/i)).toBeEnabled();
+
+    await user.click(screen.getByLabelText(/next page/i));
+    expect(await screen.findByText('ROW 021')).toBeInTheDocument();
+    expect(screen.getByText('ROW 023')).toBeInTheDocument();
+    expect(screen.getByText('Page 3 of 3')).toBeInTheDocument();
+    expect(screen.getByLabelText(/next page/i)).toBeDisabled();
+
+    // Back to page 1: ROW 003 is still the one unchecked, and ROW 001 -- never touched -- is
+    // still checked. The toggle from page 1 landed on the right row, not on whatever occupied
+    // that table position when it fired.
+    await user.click(screen.getByLabelText(/previous page/i));
+    await user.click(screen.getByLabelText(/previous page/i));
+    expect(await screen.findByLabelText('Include ROW 003')).not.toBeChecked();
+    expect(screen.getByLabelText('Include ROW 001')).toBeChecked();
   });
 });
 
@@ -959,13 +1092,13 @@ describe('Import — duplicate review gates the import', () => {
    * Phase 4b regression test. Collapsing the summary step's two early `return`s into one
    * AnimatePresence tree removed the structural guarantee that the discard-confirmation dialog
    * could never render alongside the summary screen -- every step now shares one render tree, and
-   * that dialog sits outside it as persistent chrome. Without `disabled={confirming}` on the link,
-   * a user who has second thoughts and clicks "Discard and start over" while their confirm is
+   * that dialog sits outside it as persistent chrome. Without `disabled={confirming}` on the
+   * button, a user who has second thoughts and clicks "Cancel Import" while their confirm is
    * already in flight ends up with the discard dialog stacked on top of the success screen that
    * confirm just produced -- and answering it fires discardSession() against a session the backend
    * has already finalized. Caught by adversarial review, not by the suite as it stood.
    */
-  it('blocks "Discard and start over" while the confirm request is in flight', async () => {
+  it('blocks "Cancel Import" while the confirm request is in flight', async () => {
     stageRows([stagedRow('BLINKIT GROCERIES 9982', false)]);
     let resolveConfirm: (r: Awaited<ReturnType<typeof importApi.confirm>>) => void;
     vi.mocked(importApi.confirm).mockReset().mockReturnValue(
@@ -977,13 +1110,13 @@ describe('Import — duplicate review gates the import', () => {
     await pickAndUploadPdf(user);
     await waitFor(() => expect(confirmButton()).toBeEnabled());
 
-    const discardLink = screen.getByRole('button', { name: /discard and start over/i });
-    expect(discardLink).toBeEnabled();
+    const cancelButton = screen.getByRole('button', { name: /cancel import/i });
+    expect(cancelButton).toBeEnabled();
 
     await user.click(confirmButton());
-    expect(discardLink).toBeDisabled();
+    expect(cancelButton).toBeDisabled();
     // The click a real user would make anyway -- it must not open the dialog.
-    await user.click(discardLink);
+    await user.click(cancelButton);
     expect(screen.queryByText('Discard this import and start over?')).not.toBeInTheDocument();
 
     resolveConfirm!({
@@ -1249,7 +1382,7 @@ describe('Import — multi-account statements get the same duplicate review', ()
    * Same failure both guards prevent: the discard dialog opening over the summary screen mid-
    * confirm, where answering it would discard a session the backend has already finalized.
    */
-  it('blocks "Discard and start over" while the multi-account confirm is in flight', async () => {
+  it('blocks "Cancel Import" while the multi-account confirm is in flight', async () => {
     stageSections(savingsAndCard());
     let resolveConfirm: (r: Awaited<ReturnType<typeof importApi.confirmMulti>>) => void;
     vi.mocked(importApi.confirmMulti).mockReset().mockReturnValue(
@@ -1265,12 +1398,12 @@ describe('Import — multi-account statements get the same duplicate review', ()
     await user.click(within(card(0)).getByRole('button', { name: 'Import anyway' }));
     await user.click(within(card(1)).getByRole('button', { name: 'Skip this row' }));
 
-    const discardLink = screen.getByRole('button', { name: /discard and start over/i });
-    expect(discardLink).toBeEnabled();
+    const cancelButton = screen.getByRole('button', { name: /cancel import/i });
+    expect(cancelButton).toBeEnabled();
 
     await user.click(confirmAll());
-    expect(discardLink).toBeDisabled();
-    await user.click(discardLink);
+    expect(cancelButton).toBeDisabled();
+    await user.click(cancelButton);
     expect(screen.queryByText('Discard this import and start over?')).not.toBeInTheDocument();
 
     resolveConfirm!({ perAccount: [] } as never);
@@ -1825,6 +1958,60 @@ describe('Import — queued imports', () => {
     expect(screen.getByTestId('import-progress')).toBeInTheDocument();
 
     await user.click(await screen.findByRole('button', { name: 'Try a different file' }));
+
+    // Actually back to the dropzone -- not just that the button existed and was clickable.
+    await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
+    expect(screen.getByTestId('statement-file-input')).toBeInTheDocument();
+  });
+
+  /**
+   * The bug found during live testing (2026-09-05): a held job settles in the same polling tick
+   * that would show it, so ImportProgress used to unmount itself before the "additional checks"
+   * message could ever paint -- the screen just reverted to the blank dropzone with no
+   * explanation. Only FAILED was ever exempted from the reset; the two HELD_* statuses were not.
+   */
+  it('keeps the progress panel on screen (not the blank dropzone) when a job is held for review', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'HELD_FOR_REVIEW' }));
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+
+    expect(await screen.findByText('Running additional checks')).toBeInTheDocument();
+    expect(await screen.findByText(/We'll notify you once it's ready/)).toBeInTheDocument();
+    // Actually still there, not just rendered once before an immediate unmount.
+    expect(screen.getByTestId('import-progress')).toBeInTheDocument();
+    expect(screen.queryByTestId('statement-file-input')).not.toBeInTheDocument();
+  });
+
+  /**
+   * Found live in testing (2026-09-06): once a statement is held, there was no way back to the
+   * dropzone at all -- the fix above keeps the "Running additional checks" screen up, but that
+   * screen offered nothing clickable, so a person who wanted to upload a second, unrelated
+   * statement had no way to do it short of leaving the page. This is the end-to-end proof: the
+   * button actually returns to the dropzone, not just that it renders.
+   */
+  it('lets the user import another statement while one is held for review', async () => {
+    vi.mocked(importJobsApi.progress).mockResolvedValue(queuedJob({ status: 'HELD_FOR_REVIEW' }));
+    vi.mocked(importJobsApi.timeline).mockResolvedValue({
+      jobId: 'job-1',
+      status: 'HELD_FOR_REVIEW',
+      userStatus: 'PROCESSING',
+      failureCode: null,
+      stages: [
+        { stage: 'PARSING', attempt: 1, outcome: 'COMPLETED', startedAt: '2026-08-08T09:00:00Z', endedAt: '2026-08-08T09:00:01Z', durationMs: 1000 },
+        { stage: 'ANALYZING', attempt: 1, outcome: 'FAILED', startedAt: '2026-08-08T09:00:01Z', endedAt: '2026-08-08T09:00:02Z', durationMs: 1000 },
+      ],
+    });
+    const user = userEvent.setup();
+    renderImport();
+    await waitFor(() => expect(importJobsApi.availability).toHaveBeenCalled());
+
+    await user.upload(screen.getByTestId('statement-file-input'), csvFile());
+    await screen.findByText('Running additional checks');
+
+    await user.click(await screen.findByRole('button', { name: 'Import another statement' }));
 
     // Actually back to the dropzone -- not just that the button existed and was clickable.
     await waitFor(() => expect(screen.queryByTestId('import-progress')).not.toBeInTheDocument());
@@ -2414,7 +2601,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     expect(await screen.findByText('Statement Check')).toBeInTheDocument();
     expect(screen.getByText(/Sunil Verma/)).toBeInTheDocument();
@@ -2428,7 +2618,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
     await screen.findByText('Statement Check');
     await user.click(screen.getByRole('button', { name: 'Continue Import' }));
 
@@ -2444,7 +2637,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
     await screen.findByText('Statement Check');
     await user.click(screen.getByRole('button', { name: 'Upload Different Statement' }));
 
@@ -2458,7 +2654,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
@@ -2473,7 +2672,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();
@@ -2490,7 +2692,10 @@ describe('Import — ownership name-mismatch warning', () => {
     renderImport();
 
     await pickAndUploadPdf(user);
-    await user.click(screen.getByRole('button', { name: /confirm import/i }));
+    // findByRole, not getByRole: the review step no longer appears the instant stagePdf resolves --
+    // there's a brief real "Completed" checkmark dwell first (UPLOAD_COMPLETE_DWELL_MS in
+    // Import.tsx) before the step actually advances.
+    await user.click(await screen.findByRole('button', { name: /confirm import/i }));
 
     await waitFor(() => expect(importApi.confirm).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('Statement Check')).not.toBeInTheDocument();

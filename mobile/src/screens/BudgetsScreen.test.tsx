@@ -1,7 +1,10 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { useNavigation } from '@react-navigation/native';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { BudgetsScreen } from './BudgetsScreen';
 import { budgetsApi, categoriesApi } from '../api/endpoints';
+import { currentYearMonth, monthDateRange, monthLabel } from '../lib/format';
 import { hapticError, hapticSuccess, hapticWarning } from '../lib/haptics';
 import type { Budget } from '../types';
 
@@ -70,8 +73,10 @@ describe('BudgetsScreen', () => {
 
     fireEvent.press(screen.getByLabelText('Choose a category'));
     await settle();
-    // By role: the category also appears as a budget row below, which is not a button.
-    fireEvent.press(screen.getByRole('button', { name: 'Groceries' }));
+    // By testID, not role/name: the category also appears as a budget row below, which is now
+    // ALSO a button whose accessible name (Track C/C4's drill-through label) CONTAINS "Groceries"
+    // as a substring -- getByRole's name match isn't exact, so it matched both.
+    fireEvent.press(screen.getByTestId('option-Groceries'));
     await settle();
     fireEvent.changeText(screen.getByLabelText(/Monthly limit/i), '12000');
     fireEvent.press(screen.getByText('Set Budget'));
@@ -91,7 +96,7 @@ describe('BudgetsScreen', () => {
 
     fireEvent.press(screen.getByLabelText('Choose a category'));
     await settle();
-    fireEvent.press(screen.getByRole('button', { name: 'Groceries' }));
+    fireEvent.press(screen.getByTestId('option-Groceries'));
     await settle();
     fireEvent.changeText(screen.getByLabelText(/Monthly limit/i), '12000');
     fireEvent.press(screen.getByText('Set Budget'));
@@ -124,8 +129,10 @@ describe('BudgetsScreen', () => {
 
     fireEvent.press(screen.getByLabelText('Choose a category'));
     await settle();
-    // By role: the category also appears as a budget row below, which is not a button.
-    fireEvent.press(screen.getByRole('button', { name: 'Groceries' }));
+    // By testID, not role/name: the category also appears as a budget row below, which is now
+    // ALSO a button whose accessible name (Track C/C4's drill-through label) CONTAINS "Groceries"
+    // as a substring -- getByRole's name match isn't exact, so it matched both.
+    fireEvent.press(screen.getByTestId('option-Groceries'));
     await settle();
 
     for (const bad of ['0', '-1', 'abc']) {
@@ -144,6 +151,25 @@ describe('BudgetsScreen', () => {
 
     expect(await screen.findByText(/No budgets set yet/)).toBeTruthy();
   });
+
+  describe('drill-through into the ledger (Track C/C4)', () => {
+    it('opens Transactions filtered to this category and the current calendar month', async () => {
+      renderScreen();
+      await screen.findByText('₹6,000 left this month');
+      const { navigate } = useNavigation<never>() as unknown as { navigate: jest.Mock };
+      navigate.mockClear();
+
+      fireEvent.press(screen.getByLabelText(/Groceries: ₹4,000 spent/));
+
+      const month = currentYearMonth();
+      const { dateFrom, dateTo } = monthDateRange(month);
+      expect(navigate).toHaveBeenCalledWith('Transactions', {
+        filters: expect.objectContaining({
+          categoryId: 'c-1', dateFrom, dateTo, label: `Groceries · ${monthLabel(month)}`,
+        }),
+      });
+    });
+  });
 });
 
 describe('skeleton loading', () => {
@@ -157,5 +183,15 @@ describe('skeleton loading', () => {
     expect(screen.getByLabelText('Choose a category')).toBeTruthy();
     expect(screen.getByText('Set Budget')).toBeTruthy();
     expect(screen.getAllByTestId('skeleton-budget-card', { hidden: true }).length).toBeGreaterThan(0);
+  });
+});
+
+// D3 (Track D security cleanup). Budget amounts are as screenshot-attractive as anything on the
+// Dashboard or Accounts screen, which already guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });

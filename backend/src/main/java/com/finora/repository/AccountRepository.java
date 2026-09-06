@@ -40,4 +40,11 @@ public interface AccountRepository extends JpaRepository<Account, UUID> {
     // soft-deleted rows too, so this goes around the restriction via raw SQL instead.
     @Query(value = "SELECT * FROM accounts WHERE user_id = :userId", nativeQuery = true)
     List<Account> findByUserIdIncludingDeleted(@Param("userId") UUID userId);
+
+    // Track C/C8's net-worth snapshot sweep -- exactly the users who have something to snapshot.
+    // A plain JPQL @Query, unlike findByUserIdIncludingDeleted above, so Account's own
+    // @SQLRestriction(deleted_at IS NULL) still applies: a user whose only account was deleted
+    // does not get a pointless daily $0 snapshot.
+    @Query("SELECT DISTINCT a.userId FROM Account a")
+    List<UUID> findDistinctUserIds();
 }

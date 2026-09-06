@@ -1,10 +1,19 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import { DEFAULT_LEDGER_FILTERS, LEDGER_PAGE_SIZE, LedgerScreen, getLedgerNextPageParam } from './LedgerScreen';
 import { categoriesApi, transactionsApi } from '../api/endpoints';
 import { hapticImpact } from '../lib/haptics';
 import { invalidateFinancialData } from '../lib/invalidateFinancialData';
+import type { LedgerDrillThroughFilters } from '../navigation/types';
 import type { Transaction } from '../types';
+
+// Controllable stand-in for useRoute, same pattern ImportScreen.test.tsx uses for its own
+// reimport-arrival params (Track C/C4).
+let mockRouteParams: { filters?: LedgerDrillThroughFilters } | undefined;
+jest.mock('@react-navigation/native', () => ({
+  useRoute: () => ({ params: mockRouteParams }),
+}));
 
 /**
  * Three outcomes of the same request must stay visibly different:
@@ -24,7 +33,7 @@ import type { Transaction } from '../types';
  */
 
 jest.mock('../api/endpoints', () => ({
-  transactionsApi: { search: jest.fn(), remove: jest.fn(), updateCategory: jest.fn() },
+  transactionsApi: { search: jest.fn(), remove: jest.fn(), updateCategory: jest.fn(), source: jest.fn() },
   categoriesApi: { list: jest.fn() },
 }));
 
@@ -79,6 +88,7 @@ function renderScreen() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockRouteParams = undefined;
   categories.list.mockResolvedValue([
     { id: 'c-1', name: 'Food', isSystem: true },
     { id: 'c-2', name: 'Travel', isSystem: true },
@@ -367,5 +377,178 @@ describe('correcting a category from the ledger', () => {
     // category sheet on top of a delete confirmation.
     expect(screen.queryByText('Change category')).toBeNull();
     expect(hapticImpact).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Track C/C4: a drill-through arriving from a donut legend row, a budget card, an insight/mover
+ * row, or a report's category breakdown. This tab stays mounted like every other one, so the
+ * nonce/re-arrival tests below matter for the same reason ImportScreen's own reimport-arrival
+ * tests do -- a second drill-through must be told apart from the first still sitting in state.
+ */
+describe('drill-through filters (Track C/C4)', () => {
+  function filters(over: Partial<LedgerDrillThroughFilters> = {}): LedgerDrillThroughFilters {
+    return { label: 'Dining', nonce: 1, ...over };
+  }
+
+  beforeEach(() => {
+    transactions.search.mockResolvedValue(page([]) as never);
+  });
+
+  it('applies an incoming categoryId directly, with no lookup needed', async () => {
+    mockRouteParams = { filters: filters({ categoryId: 'c-9' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: 'c-9' })
+    ));
+  });
+
+  // Track C/C6: ImportScreen's "View in Ledger" is the one caller that sets this.
+  it('applies an incoming accountId, alongside a category or on its own', async () => {
+    mockRouteParams = { filters: filters({ accountId: 'acct-1', categoryId: undefined, label: 'HDFC Savings' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ accountId: 'acct-1' })
+    ));
+  });
+
+  it('resolves a categoryName against the category list already fetched for the picker', async () => {
+    mockRouteParams = { filters: filters({ categoryName: 'Travel' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: 'c-2' })
+    ));
+  });
+
+  // A category renamed or deleted since the caller last saw it -- degrades to no category filter
+  // rather than a search built from an id that doesn't exist, which could never match anything.
+  it('drops the category filter rather than search for an unresolvable name', async () => {
+    mockRouteParams = { filters: filters({ categoryName: 'Nonexistent', dateFrom: '2026-08-01', dateTo: '2026-08-31' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: undefined, dateFrom: '2026-08-01', dateTo: '2026-08-31' })
+    ));
+  });
+
+  it('applies the date range and shows the active filter so the result is not a silent mystery', async () => {
+    mockRouteParams = { filters: filters({ categoryId: 'c-1', dateFrom: '2026-08-01', dateTo: '2026-08-31', label: 'Food · August 2026' }) };
+
+    renderScreen();
+
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: 'c-1', dateFrom: '2026-08-01', dateTo: '2026-08-31' })
+    ));
+    expect(await screen.findByText('Food · August 2026')).toBeTruthy();
+  });
+
+  it('clears the filter on request and searches again without it', async () => {
+    mockRouteParams = { filters: filters({ categoryId: 'c-1', label: 'Food' }) };
+    renderScreen();
+    await screen.findByText('Food');
+    transactions.search.mockClear();
+
+    fireEvent.press(screen.getByLabelText('Clear filter: Food'));
+
+    expect(screen.queryByText('Food')).toBeNull();
+    await waitFor(() => expect(transactions.search).toHaveBeenCalledWith(
+      expect.objectContaining({ categoryId: undefined })
+    ));
+  });
+
+  // The tab stays mounted (React Navigation's default), so its local state survives a visit to
+  // History and back -- the nonce is what tells a genuinely new arrival apart from the same old
+  // params still sitting in route.params.filters.
+  it('recognises a second drill-through even though the tab never unmounted between the two', async () => {
+    mockRouteParams = { filters: filters({ categoryId: 'c-1', label: 'Food', nonce: 1 }) };
+    const view = renderScreen();
+    await screen.findByText('Food');
+
+    mockRouteParams = { filters: filters({ categoryId: 'c-2', label: 'Travel', nonce: 2 }) };
+    view.rerender(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })}>
+        <LedgerScreen />
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText('Travel')).toBeTruthy();
+    expect(screen.queryByText('Food')).toBeNull();
+  });
+});
+
+describe('"Where this came from" panel (Track C/C7)', () => {
+  it('opens the source panel for the tapped row without also opening the category picker', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.source.mockResolvedValue({
+      available: true, sourceLabel: 'CSV_IMPORT', statementDeleted: false, statementImportId: 'si-1',
+      fileName: 'march-statement.pdf', rowPosition: 14, importedAt: '2026-08-15T10:00:00Z',
+      accountName: 'HDFC Savings', statementPeriodStart: '2026-03-01', statementPeriodEnd: '2026-03-31',
+    } as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByTestId('source-button-t-1'));
+
+    expect(await screen.findByText('march-statement.pdf')).toBeTruthy();
+    // Tapping the info button must not also trigger the row's own onPress (category picker).
+    expect(screen.queryByText('Change category')).toBeNull();
+    expect(transactions.source).toHaveBeenCalledWith('t-1');
+  });
+
+  it('closes without affecting the row underneath', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.source.mockResolvedValue({
+      available: false, sourceLabel: 'MANUAL', statementDeleted: false, statementImportId: null, fileName: null,
+      rowPosition: null, importedAt: null, accountName: null,
+      statementPeriodStart: null, statementPeriodEnd: null,
+    } as never);
+
+    renderScreen();
+    fireEvent.press(await screen.findByTestId('source-button-t-1'));
+    expect(await screen.findByText('You entered this transaction yourself.')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Close'));
+
+    await waitFor(() => expect(screen.queryByText('You entered this transaction yourself.')).toBeNull());
+    expect(screen.getByText('Grocery run')).toBeTruthy();
+  });
+
+  // The actual bug this test guards: the visible info Pressable is nested inside the row's own
+  // already-accessible Pressable, so it can NEVER be an independently reachable screen-reader
+  // stop (VoiceOver/TalkBack group the whole subtree into one atomic element) -- no matter what
+  // accessibilityLabel it carries. The real, reachable path for a screen-reader user is the
+  // 'viewSource' accessibilityAction declared on the OUTER row, exercised here the same way a
+  // screen reader's rotor would trigger it, not a direct press on the inner Pressable.
+  it('is reachable for a screen-reader user via the row\'s viewSource accessibility action', async () => {
+    transactions.search.mockResolvedValue(page([txn()]) as never);
+    transactions.source.mockResolvedValue({
+      available: true, sourceLabel: 'CSV_IMPORT', statementImportId: 'si-1',
+      fileName: 'march-statement.pdf', rowPosition: 14, importedAt: '2026-08-15T10:00:00Z',
+      accountName: 'HDFC Savings', statementPeriodStart: '2026-03-01', statementPeriodEnd: '2026-03-31',
+      statementDeleted: false,
+    } as never);
+
+    renderScreen();
+    fireEvent(await screen.findByText('Grocery run'), 'accessibilityAction', { nativeEvent: { actionName: 'viewSource' } });
+
+    expect(await screen.findByText('march-statement.pdf')).toBeTruthy();
+  });
+});
+
+// D3 (Track D security cleanup). Transaction descriptions/amounts are as screenshot-attractive
+// as anything on the Dashboard or Accounts screen, which already guard against this.
+describe('screen capture protection (Track D/D3)', () => {
+  it('calls usePreventScreenCapture on mount', () => {
+    transactions.search.mockResolvedValue(page([]) as never);
+
+    renderScreen();
+
+    expect(usePreventScreenCapture).toHaveBeenCalled();
   });
 });

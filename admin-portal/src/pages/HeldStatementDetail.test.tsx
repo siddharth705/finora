@@ -53,6 +53,7 @@ const summary: HeldStatementRow = {
 
 const detail: HeldStatementDetailDto = {
   summary,
+  fileName: 'hdfc-june.pdf',
   findings: [
     {
       sectionIndex: 0,
@@ -204,6 +205,55 @@ describe('HeldStatementDetail', () => {
     await screen.findByText(/count disagree/i);
 
     expect(screen.getByRole('button', { name: /download statement/i })).toBeInTheDocument();
+  });
+
+  /**
+   * Found in review: this used to always save under `${heldId}.pdf`, which was wrong for every
+   * CSV-sourced hold -- the download itself worked, but the saved file's name and extension lied
+   * about its format. The real name (whatever format it actually is) now comes from the detail
+   * the page already loaded.
+   */
+  it('downloads the statement under its real original filename, not a hardcoded .pdf', async () => {
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /download statement/i }));
+
+    await waitFor(() => expect(adminHeldStatementApi.download)
+      .toHaveBeenCalledWith('HLD-2026-100001', 'hdfc-june.pdf'));
+  });
+
+  /** The one case fileName can be null -- the underlying ImportJob is gone -- still needs a
+   *  filename to hand the browser; falling back to the old naming is safe here specifically
+   *  because the download itself will already 409 before this name is ever used to save anything. */
+  it('falls back to a heldId-based name when the underlying job no longer exists', async () => {
+    vi.mocked(adminHeldStatementApi.get).mockResolvedValue({ ...detail, fileName: null });
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    fireEvent.click(screen.getByRole('button', { name: /download statement/i }));
+
+    await waitFor(() => expect(adminHeldStatementApi.download)
+      .toHaveBeenCalledWith('HLD-2026-100001', 'HLD-2026-100001.pdf'));
+  });
+
+  it('discloses that downloading is logged, matching the held-imports queue', async () => {
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['ADMIN']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    expect(await screen.findByText(/downloading this statement has been logged against your account/i))
+      .toBeInTheDocument();
+  });
+
+  it('does not show the download-is-logged disclosure to a role that cannot download', async () => {
+    mockAuth(['TRUST_REVIEW_MANAGE'], ['SUPPORT']);
+    renderPage();
+    await screen.findByText(/count disagree/i);
+
+    expect(screen.queryByText(/downloading this statement has been logged/i)).not.toBeInTheDocument();
   });
 
   /**

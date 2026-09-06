@@ -13,6 +13,16 @@ function fmt(n: number) {
   return (n < 0 ? '-₹' : '₹') + Math.round(Math.abs(n)).toLocaleString('en-IN');
 }
 
+// "2026-08" -> "August 2026", for naming a month inside a sentence (loading/empty-state copy
+// below). Explicit y/m/1 construction, not `new Date(monthStr)` -- a bare "YYYY-MM" parses as UTC
+// midnight, which renders as the prior month in any timezone behind UTC. Long form rather than
+// Dashboard's short `monthLabel` ("Jul 26"), which reads fine on a chart axis but is ambiguous
+// with a day-of-month inside prose.
+function monthLabelLong(monthStr: string) {
+  const [y, m] = monthStr.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
 function downloadCsv(report: ReportData) {
   // Category names are user-controlled and end up in the first column, so cells are escaped
   // against spreadsheet formula interpretation as well as against CSV parsing -- see csvCell.
@@ -195,7 +205,7 @@ export default function Reports() {
       </FinoraCard>
 
       {reportLoading && report === null ? (
-        <Skeleton.Region label="Loading this month's report">
+        <Skeleton.Region label={`Loading ${monthLabelLong(month)}'s report`}>
           <div className="space-y-6">
             {showReportSkeleton && <ReportBodySkeleton />}
           </div>
@@ -216,7 +226,7 @@ export default function Reports() {
                 iconBg="bg-purple-100"
                 iconColor="text-purple-600"
                 title="No expenses recorded"
-                desc="Nothing was spent this month in any category."
+                desc={`Nothing was spent in ${monthLabelLong(month)} in any category.`}
               />
             ) : (
               <div className="space-y-2">
