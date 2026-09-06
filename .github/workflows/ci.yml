@@ -439,6 +439,78 @@ jobs:
           path: backend/target/surefire-reports/
           retention-days: 14
 
+  # docs/proposals/reconciliation-benchmark/'s own permanent gate, added once that folder's
+  # benchmark work landed (PR #1082): 59 scenarios against the real ReconciliationService, moved
+  # from 69.5% to 84.7% pass rate across five measured PRs, entirely by fixes each re-verified
+  # against this exact suite before merging. The gate exists so that PR #1082's biggest long-term
+  # value -- that future reconciliation work is now MEASURED, not guessed at -- doesn't quietly
+  # decay the first time someone edits ReconciliationService or CategoryRules for an unrelated
+  # reason and nobody happens to re-run the benchmark by hand.
+  #
+  # 9 of the 59 scenarios are failing ON PURPOSE (see that folder's README.md) -- each encodes a
+  # correct verdict the engine does not produce yet, and is a tracked, evidenced finding, not a
+  # broken test. So this cannot be "all benchmark tests pass"; it is "the known-failing set,
+  # scripts/reconciliation-benchmark-baseline.txt, does not grow." See
+  # scripts/check-reconciliation-benchmark.py's own docstring for the full reasoning, including why
+  # a bare pass/fail COUNT is the wrong comparison (it cannot tell a real regression apart from an
+  # unrelated fix that coincidentally keeps the total the same).
+  #
+  # A dedicated job, not a step inside `backend`, so it reports as its own named check on the PR --
+  # a regression here should read as "the reconciliation benchmark regressed," not be buried inside
+  # a green-or-red "Backend (Java 25)" that could be failing for an unrelated reason instead.
+  reconciliation-benchmark:
+    name: Reconciliation benchmark
+    runs-on: ubuntu-latest
+    # Six Mockito-only unit-test classes, no Spring context, no Testcontainers -- seconds, not
+    # minutes, on every past run. Generous headroom over that is still a hang detector, not a
+    # performance budget, same reasoning as the backend job's own timeout.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      # Self-test first, same discipline every other guard script in this job runs under (see the
+      # backend job's own fixture-hygiene/import-cross-reference/corpus-diff self-tests): asserts
+      # this script still catches a regression, still waives an improvement, and still blocks a
+      # hollow run, using synthetic surefire XML it builds and discards itself -- no Maven run
+      # needed for this step, so it fails fast if the gate mechanism itself is broken, before
+      # spending time on the real one below.
+      - name: Reconciliation benchmark gate (self-test)
+        run: python3 scripts/check-reconciliation-benchmark.py --self-test
+
+      # -DtestFailureIgnore=true is load-bearing, not a mistake: this step's job is to PRODUCE the
+      # surefire XML the gate step reads next, regardless of how many of the 9 known-failing
+      # scenarios fail -- the gate script, not Maven's own exit code, is what decides whether this
+      # job is red. -DfailIfNoTests=true guards the other direction: these six classes are
+      # deliberately excluded from backend/pom.xml's surefire <includes> (see
+      # docs/proposals/reconciliation-benchmark/README.md), so a typo in this -Dtest list would
+      # otherwise run zero tests and exit 0, the exact "smaller number nobody was looking at" shape
+      # scripts/summarize-surefire.py's own docstring warns about.
+      - name: Run the reconciliation benchmark
+        working-directory: backend
+        run: |
+          ./mvnw -B --no-transfer-progress test \
+            -Dtest="DuplicateDetectionBenchmark,TransferBenchmark,InvestmentTransferBenchmark,RefundReversalBenchmark,GmailMatchingBenchmark,CreditCardPaymentBenchmark" \
+            -DfailIfNoTests=true -DtestFailureIgnore=true
+
+      - name: Check for a regression
+        run: python3 scripts/check-reconciliation-benchmark.py
+
+      # Same reasoning as the backend job's own upload: failures only, and this is what lets
+      # someone read a specific scenario's assertion message without re-running the suite locally.
+      - name: Upload surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reconciliation-benchmark-surefire-reports
+          path: backend/target/surefire-reports/
+          retention-days: 14
+
   frontend:
     name: User frontend
     runs-on: ubuntu-latest
