@@ -125,6 +125,21 @@ updates:
   # the version from being proposed at all. Patch releases within 0.86.x are still allowed. Revisit
   # when Expo ships SDK 58 with react-native@0.87.x support, at which point expo, jest-expo and
   # react-native should all be bumped together (see #242).
+  #
+  # react-native-reanimated and react-native-worklets are ignored past 4.5.1/0.10.1 for a peer-
+  # dependency conflict, not a react-native-shaped module-path break: PR #1055 grouped
+  # reanimated 4.5.1 -> 4.6.0 and worklets 0.10.1 -> 0.12.1 with an expo 57.0.18 -> 57.0.19 bump
+  # and broke all 84 mobile test suites the same "Cannot find module 'expo-modules-core'" way.
+  # Root cause, isolated by bisection (each alone reproduces it, independent of the other):
+  # reanimated 4.6.0's own peerDependencies HARD-requires react-native-worklets "0.12.x", while
+  # expo-modules-core@57.0.15 (pulled in by expo 57.0.19) has an OPTIONAL peer capping worklets at
+  # "^0.7.4 || ^0.8.0 || ^0.9.0 || ^0.10.0" -- no single top-level worklets version can satisfy
+  # both, so npm de-hoists expo-modules-core into a nested copy to resolve the conflict, and
+  # jest-expo's setup.js (a plain top-level `require('expo-modules-core')`) can no longer find it.
+  # This is an upstream timing gap, not a config error here: Expo has not yet published an
+  # expo-modules-core whose peer range accepts worklets 0.12.x, even though Reanimated has already
+  # shipped that pairing. Revisit once Expo does -- at which point expo, reanimated and worklets
+  # should all be bumped together, the same reasoning as the react-native/expo pairing above.
   - package-ecosystem: npm
     directory: /mobile
     schedule:
@@ -136,6 +151,10 @@ updates:
         update-types: [minor, patch]
     ignore:
       - dependency-name: "react-native"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "react-native-reanimated"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "react-native-worklets"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
