@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, UserX, X, Mail, RefreshCw } from 'lucide-react';
+import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, UserX, X, Mail, RefreshCw, Crown } from 'lucide-react';
 import {
   authApi, userApi, workspaceApi, analyticsApi, deviceApi, gmailApi,
   type ImportStatistics, type DeviceSession, type GmailConnectionStatus,
 } from '../api/endpoints';
+import { PremiumFeatureGate } from '../components/PremiumFeatureGate';
 import { useTheme } from '../context/ThemeContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { DeactivateAccountModal } from '../components/DeactivateAccountModal';
@@ -659,44 +660,57 @@ export default function Settings() {
         ) : !gmailStatus?.available ? (
           <p className="text-xs text-muted italic">Gmail sync isn't available on this deployment yet.</p>
         ) : !gmailStatus.connected && gmailStatus.needsReconnect ? (
-          <div className="border border-warning/40 rounded-lg px-3 py-2.5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm text-ink font-medium flex items-center gap-2">
-                  Gmail
-                  <span className="text-[10px] font-medium uppercase tracking-wide text-warning bg-warning-bg rounded px-1.5 py-0.5">
-                    Needs reconnect
-                  </span>
-                </p>
-                {gmailStatus.googleEmail && (
-                  <p className="text-[11px] text-muted truncate mt-0.5">{gmailStatus.googleEmail}</p>
-                )}
-                <p className="text-[11px] text-muted mt-1">
-                  Google stopped accepting this connection -- reconnect to keep finding receipts.
-                </p>
+          // GMAIL_SYNC-gated: reconnecting is starting a NEW connection in every way that matters
+          // to entitlement (a fresh OAuth grant, a fresh background-sync bill), even though the
+          // user has connected before. A downgrade between the original connect and now must be
+          // caught here, not just at signup.
+          <PremiumFeatureGate featureKey="GMAIL_SYNC" fallback={<GmailUpgradePrompt />}>
+            <div className="border border-warning/40 rounded-lg px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm text-ink font-medium flex items-center gap-2">
+                    Gmail
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-warning bg-warning-bg rounded px-1.5 py-0.5">
+                      Needs reconnect
+                    </span>
+                  </p>
+                  {gmailStatus.googleEmail && (
+                    <p className="text-[11px] text-muted truncate mt-0.5">{gmailStatus.googleEmail}</p>
+                  )}
+                  <p className="text-[11px] text-muted mt-1">
+                    Google stopped accepting this connection -- reconnect to keep finding receipts.
+                  </p>
+                </div>
+                <Button size="sm" className="flex-shrink-0 uppercase" loading={gmailConnecting} onClick={handleGmailConnect}>
+                  Reconnect Gmail
+                </Button>
               </div>
-              <Button size="sm" className="flex-shrink-0 uppercase" loading={gmailConnecting} onClick={handleGmailConnect}>
-                Reconnect Gmail
-              </Button>
+              {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
             </div>
-            {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
-          </div>
+          </PremiumFeatureGate>
         ) : !gmailStatus.connected ? (
-          <div>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm text-ink font-medium">Gmail</p>
-                <p className="text-[11px] text-muted mt-0.5">
-                  Automatically detect receipts from your inbox — nothing is imported without your review.
-                </p>
+          <PremiumFeatureGate featureKey="GMAIL_SYNC" fallback={<GmailUpgradePrompt />}>
+            <div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm text-ink font-medium">Gmail</p>
+                  <p className="text-[11px] text-muted mt-0.5">
+                    Automatically detect receipts from your inbox — nothing is imported without your review.
+                  </p>
+                </div>
+                <Button size="sm" className="flex-shrink-0 uppercase" loading={gmailConnecting} onClick={handleGmailConnect}>
+                  Connect Gmail
+                </Button>
               </div>
-              <Button size="sm" className="flex-shrink-0 uppercase" loading={gmailConnecting} onClick={handleGmailConnect}>
-                Connect Gmail
-              </Button>
+              {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
             </div>
-            {gmailActionError && <p className="text-xs text-danger mt-2">{gmailActionError}</p>}
-          </div>
+          </PremiumFeatureGate>
         ) : (
+          // Deliberately NOT gated: a user connected before a downgrade must still be able to see
+          // and disconnect their own connection regardless of current plan -- same "never paywall
+          // removing your own data" principle as account export/deletion. GmailManualSyncService
+          // already refuses Sync Now server-side for a non-entitled user (403), so nothing costly
+          // can actually run here even though the button stays visible.
           <div className="border border-border rounded-lg px-3 py-2.5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -886,6 +900,27 @@ function AISkeletonFields() {
       <div className="mt-4 pt-4 border-t border-border">
         <Skeleton.Block className="h-8 w-28" />
       </div>
+    </div>
+  );
+}
+
+/** Replaces the whole Connect/Reconnect card body for a Free or Plus user. Only ever shown for
+ *  starting a NEW (or reconnecting a dead) connection -- a user already connected before a
+ *  downgrade keeps seeing their real connected card and can still disconnect it regardless of
+ *  plan, per the comment on that branch below. */
+function GmailUpgradePrompt() {
+  const navigate = useNavigate();
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div>
+        <p className="text-sm text-ink font-medium">Gmail</p>
+        <p className="text-[11px] text-muted mt-0.5">
+          Automatically detect receipts from your inbox -- a Premium feature.
+        </p>
+      </div>
+      <Button size="sm" className="flex-shrink-0 uppercase" onClick={() => navigate('/app/billing')}>
+        <Crown size={12} /> Upgrade
+      </Button>
     </div>
   );
 }
