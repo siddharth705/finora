@@ -83,6 +83,45 @@ describe('ImportTimeline', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Found live in testing (2026-09-06): a held job had no way back to the dropzone at all --
+   * ImportProgress shows "Running additional checks" with nothing clickable, and this component
+   * (the only other thing on screen for a queued import) only ever offered that for FAILED. The
+   * label is deliberately different from the failed case's "Try a different file": nothing here
+   * needs retrying, the person just wants to start a second, unrelated upload.
+   */
+  it('offers a way to import another statement for a held job', async () => {
+    api.timeline.mockResolvedValue(timeline({ status: 'HELD_FOR_REVIEW', userStatus: 'PROCESSING' }));
+    const onDismiss = vi.fn();
+    render(<ImportTimeline jobId="job-1" onDismiss={onDismiss} />);
+
+    await advance(100);
+
+    expect(screen.getByTestId('import-timeline')).toBeInTheDocument();
+    // Not a failure -- no curated reason banner, and not the FAILED-flavored button label either.
+    expect(screen.queryByTestId('import-timeline-failure-reason')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try a different file' })).not.toBeInTheDocument();
+    const button = screen.getByRole('button', { name: 'Import another statement' });
+    act(() => {
+      fireEvent.click(button);
+    });
+    expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+
+  /** Same stranding class of bug the FAILED case above is already guarded against, for the other
+   *  hold reason and for the empty-stages edge case together. */
+  it('still offers a way back for a held job with no recorded stages, either hold reason', async () => {
+    api.timeline.mockResolvedValue(
+      timeline({ status: 'HELD_FOR_TRUST_REVIEW', userStatus: 'PROCESSING', stages: [] })
+    );
+    render(<ImportTimeline jobId="job-1" onDismiss={vi.fn()} />);
+
+    await advance(100);
+
+    expect(screen.getByTestId('import-timeline')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Import another statement' })).toBeInTheDocument();
+  });
+
   it('lists every stage once the first poll lands', async () => {
     api.timeline.mockResolvedValue(timeline());
     render(<ImportTimeline jobId="job-1" />);
