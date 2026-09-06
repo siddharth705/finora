@@ -127,6 +127,18 @@ describe('MetricCard', () => {
     expect(screen.queryByText(/Dining/)).not.toBeInTheDocument();
   });
 
+  it('variant="elevated" still colors the icon badge with the metric\'s own iconBg/iconColor', () => {
+    render(
+      <MetricCard
+        label="Total Expenses" value="₹5,000" icon={Wallet} iconBg="bg-red-100" iconColor="text-red-600"
+        variant="elevated"
+      />
+    );
+    const icon = document.querySelector('svg.lucide-wallet') as SVGElement;
+    expect(icon).toHaveClass('text-red-600');
+    expect(icon.parentElement).toHaveClass('bg-red-100');
+  });
+
   it('variant="elevated" renders the delta as a colored pill instead of plain text', () => {
     render(
       <MetricCard
