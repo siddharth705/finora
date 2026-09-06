@@ -4,8 +4,9 @@ import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-quer
 import { motion, useReducedMotion } from 'framer-motion';
 import {
   Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle, Loader2,
-  Wallet, Receipt, Tag, PiggyBank, FilterX, type LucideIcon,
+  Wallet, Receipt, Tag, PiggyBank, FilterX, Sparkles, type LucideIcon,
 } from 'lucide-react';
+import transactionsHero from '../assets/hero/transactions-hero.webp';
 import {
   transactionsApi, categoriesApi, accountsApi, budgetsApi,
   type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation,
@@ -421,15 +422,28 @@ export default function Ledger() {
 
   return (
     <div className="space-y-5">
-      {/* Page header -- eyebrow + headline, matching the mockup's copy. No illustration/quote
-          card: there's no real asset for this page, and fabricating one would be decoration
-          invented for this redesign rather than anything grounded in the product. */}
-      <div>
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-muted mb-1">Transactions</p>
-        <h1 className="text-2xl md:text-3xl font-bold text-ink font-display">
-          Every transaction <span className="text-primary">tells a story</span>
-        </h1>
-        <p className="text-sm text-muted mt-1">Search, categorize, and understand your spending better.</p>
+      {/* Page header -- eyebrow + headline, plus the hero illustration (a real asset now:
+          graphite/cream, matching the brand palette this redesign series settled on -- not the
+          reference mockup's purple). Hidden below `lg` rather than shrunk further, since at
+          narrower widths it would compete with the KPI row for the same horizontal space. */}
+      <div className="flex items-start justify-between gap-6">
+        <div className="max-w-md">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-muted mb-1">Transactions</p>
+          <h1 className="text-2xl md:text-3xl font-bold text-ink font-display">
+            Every transaction <span className="text-primary">tells a story</span>
+          </h1>
+          <p className="text-sm text-muted mt-1">Search, categorize, and understand your spending better.</p>
+        </div>
+        <div className="hidden lg:flex items-center gap-3 flex-shrink-0">
+          <img src={transactionsHero} alt="" className="w-72 xl:w-80 h-auto flex-shrink-0" />
+          <div className="bg-card border border-border rounded-xl2 shadow-card px-4 py-3 flex items-start gap-2 w-40 flex-shrink-0">
+            <Sparkles size={15} className="text-primary flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-ink leading-snug">
+              <span className="font-semibold">Track today.</span><br />A brighter tomorrow.
+              <span className="block text-muted mt-1">— Fynora</span>
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* KPI row. Total Spent/Top Category are computed client-side over `statsFilters`'
