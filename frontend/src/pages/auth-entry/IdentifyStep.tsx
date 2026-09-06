@@ -2,8 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { User } from 'lucide-react';
 import { authApi } from '../../api/endpoints';
 import { useAuth } from '../../context/AuthContext';
-import { GoogleSignInButton } from '../../components/GoogleSignInButton';
-import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { SocialSignInButtons } from '../../components/SocialSignInButtons';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
 import { AuthDivider } from './AuthDivider';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
@@ -110,10 +109,12 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
-      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
+      <SocialSignInButtons
+        googleText="signin_with"
+        onGoogleCredential={handleGoogleCredential}
+        onAppleCredential={handleAppleCredential}
+        onError={setError}
+      />
 
       <AuthDivider />
 

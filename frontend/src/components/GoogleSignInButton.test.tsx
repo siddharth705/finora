@@ -126,6 +126,31 @@ describe('GoogleSignInButton', () => {
     expect(onCredential).toHaveBeenCalledWith('a-real-looking-jwt');
   });
 
+  it('reports the iframe\'s own real rendered width via onRenderedWidth, not the requested width', async () => {
+    vi.stubEnv('VITE_GOOGLE_LOGIN_CLIENT_ID', 'test-client-id.apps.googleusercontent.com');
+    vi.mocked(isGoogleLoginConfigured).mockReturnValue(true);
+    const initialize = vi.fn();
+    // Real GIS inserts an iframe into the container renderButton() is called with; the requested
+    // `width` param and the iframe's own eventual rendered width are two different numbers (see
+    // the component's own comment) -- this mock creates the iframe so the test can drive that gap.
+    const renderButton = vi.fn((container: HTMLElement) => {
+      container.appendChild(document.createElement('iframe'));
+    });
+    vi.mocked(loadGoogleIdentityServices).mockResolvedValue({ initialize, renderButton } as any);
+    const onRenderedWidth = vi.fn();
+
+    const { container } = render(
+      <GoogleSignInButton text="signin_with" onCredential={vi.fn()} onError={vi.fn()} onRenderedWidth={onRenderedWidth} />
+    );
+    await waitFor(() => expect(initialize).toHaveBeenCalled());
+
+    fireResize(container.querySelector('[aria-busy]')!, 400);
+    const iframe = container.querySelector('iframe')!;
+    fireResize(iframe, 420);
+
+    expect(onRenderedWidth).toHaveBeenCalledWith(420);
+  });
+
   it('reports onError when Google Identity Services fails to load', async () => {
     vi.stubEnv('VITE_GOOGLE_LOGIN_CLIENT_ID', 'test-client-id.apps.googleusercontent.com');
     vi.mocked(isGoogleLoginConfigured).mockReturnValue(true);
