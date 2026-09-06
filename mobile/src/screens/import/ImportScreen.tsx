@@ -464,6 +464,8 @@ export function ImportScreen() {
             existingAccountId: reimport.accountId,
             statementOpeningBalance: detected?.openingBalance ?? null,
             statementClosingBalance: detected?.closingBalance ?? null,
+            statementPeriodStart: detected?.statementPeriodStart ?? null,
+            statementPeriodEnd: detected?.statementPeriodEnd ?? null,
             password: reimport.password,
             idempotencyKey: attemptKey.current ?? undefined,
           })
@@ -474,6 +476,12 @@ export function ImportScreen() {
             newAccount: accountChoice === 'new' ? buildNewAccountPayload(accountForm, detected) : null,
             statementOpeningBalance: detected?.openingBalance ?? null,
             statementClosingBalance: detected?.closingBalance ?? null,
+            // Bug fix: this client never sent the detected period at all, even though it's already
+            // fetched and shown on screen (see the "detected.statementPeriodStart to ...End" line
+            // below) -- so ImportController's Free-tier 31-day statement-period cap could never
+            // fire for a mobile confirm, only a web one, for the exact same statement.
+            statementPeriodStart: detected?.statementPeriodStart ?? null,
+            statementPeriodEnd: detected?.statementPeriodEnd ?? null,
           });
       setSummary(result);
       setStep('summary');

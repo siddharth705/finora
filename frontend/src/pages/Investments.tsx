@@ -126,8 +126,14 @@ export default function Investments() {
       // Awaited, so the button keeps its spinner until the new holding is actually on screen.
       // Firing and forgetting would drop the spinner while the list was still the old one.
       await load();
-    } catch {
-      setError('Could not add this holding.');
+    } catch (e: any) {
+      // Surfaces the server message rather than a fixed string, same as Setup.tsx's own
+      // addAccount() for this identical endpoint -- needed now that a Free-plan holder past the
+      // 2-account cap gets a specific, actionable ACCOUNT_LIMIT_REACHED message ("Upgrade to Plus
+      // for unlimited accounts"), not a generic failure. Every other catch in this file stays a
+      // fixed string on purpose; this is the one call site whose failures are now sometimes
+      // exactly this specific and actionable.
+      setError(e.response?.data?.message ?? 'Could not add this holding.');
     } finally {
       setAdding(false);
     }
