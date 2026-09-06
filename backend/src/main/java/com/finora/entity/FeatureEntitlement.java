@@ -28,6 +28,11 @@ public class FeatureEntitlement {
     // previously just marketing copy with nothing checking it). Seeded in V161, same
     // Free-absent/Plus-and-Premium-enabled shape as every other key here.
     public static final String UNLIMITED_ACCOUNTS = "UNLIMITED_ACCOUNTS";
+    // V162. Gmail sync is the one integration with real ongoing per-user cost (a scheduled worker
+    // polling the Gmail API for as long as the connection stays live), unlike the mostly-free-CRUD
+    // rest of the app -- see GmailConnectionService.beginConnect/GmailManualSyncService.syncNow/
+    // GmailDiscoveryWorker.runOnce, the three places this key is actually checked.
+    public static final String GMAIL_SYNC = "GMAIL_SYNC";
 
     @Id
     @GeneratedValue

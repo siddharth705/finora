@@ -1,7 +1,10 @@
 package com.finora.integrations.google;
 
+import com.finora.entity.FeatureEntitlement;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.integrations.google.merchant.GmailReceiptExtractionService;
+import com.finora.service.EntitlementService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -35,6 +38,7 @@ public class GmailManualSyncService {
     private final GmailConnectionService connectionService;
     private final GmailMessageDiscoveryService discovery;
     private final GmailReceiptExtractionService extraction;
+    private final EntitlementService entitlementService;
     private final Duration cooldown;
     private final int messagesPerConnection;
     private final int extractionMessagesPerConnection;
@@ -43,12 +47,14 @@ public class GmailManualSyncService {
             GmailConnectionService connectionService,
             GmailMessageDiscoveryService discovery,
             GmailReceiptExtractionService extraction,
+            EntitlementService entitlementService,
             @Value("${app.integrations.google.discovery.manual-sync-cooldown-ms:60000}") long cooldownMs,
             @Value("${app.integrations.google.discovery.messages-per-connection:500}") int messagesPerConnection,
             @Value("${app.integrations.google.discovery.extraction-messages-per-connection:50}") int extractionMessagesPerConnection) {
         this.connectionService = connectionService;
         this.discovery = discovery;
         this.extraction = extraction;
+        this.entitlementService = entitlementService;
         this.cooldown = Duration.ofMillis(cooldownMs);
         this.messagesPerConnection = messagesPerConnection;
         this.extractionMessagesPerConnection = extractionMessagesPerConnection;
@@ -57,9 +63,18 @@ public class GmailManualSyncService {
     /**
      * Runs discovery then extraction for this user's live connection, right now.
      *
-     * @throws ApiException 404 if there is no live connection, 429 if the cooldown hasn't elapsed
+     * <p>Entitlement is checked before the connection lookup, deliberately: a Free/Plus user who
+     * downgraded after connecting (or reaches this endpoint directly) should be told to upgrade,
+     * not "no connected account" -- the account may well still exist, just no longer usable here.
+     *
+     * @throws ApiException 403 if the caller isn't entitled to GMAIL_SYNC, 404 if there is no live
+     *         connection, 429 if the cooldown hasn't elapsed
      */
     public void syncNow(UUID userId) {
+        if (!entitlementService.hasEntitlement(userId, FeatureEntitlement.GMAIL_SYNC)) {
+            throw new ApiException(ErrorCode.ENTITLEMENT_REQUIRED);
+        }
+
         GmailConnection connection = connectionService.findLiveConnection(userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No connected Gmail account."));
 

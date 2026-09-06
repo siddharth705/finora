@@ -1,7 +1,9 @@
 package com.finora.integrations.google;
 
+import com.finora.entity.FeatureEntitlement;
 import com.finora.exception.ApiException;
 import com.finora.integrations.google.merchant.GmailReceiptExtractionService;
+import com.finora.service.EntitlementService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,6 +26,7 @@ class GmailManualSyncServiceTest {
     private GmailConnectionService connectionService;
     private GmailMessageDiscoveryService discovery;
     private GmailReceiptExtractionService extraction;
+    private EntitlementService entitlementService;
     private GmailManualSyncService manualSync;
 
     private final UUID userId = UUID.randomUUID();
@@ -33,7 +36,22 @@ class GmailManualSyncServiceTest {
         connectionService = mock(GmailConnectionService.class);
         discovery = mock(GmailMessageDiscoveryService.class);
         extraction = mock(GmailReceiptExtractionService.class);
-        manualSync = new GmailManualSyncService(connectionService, discovery, extraction, COOLDOWN_MS, 500, 50);
+        // Entitled by default -- every existing test here is about sync mechanics (cooldown,
+        // error mapping), not billing. The denial test below overrides this.
+        entitlementService = mock(EntitlementService.class);
+        when(entitlementService.hasEntitlement(userId, FeatureEntitlement.GMAIL_SYNC)).thenReturn(true);
+        manualSync = new GmailManualSyncService(connectionService, discovery, extraction, entitlementService, COOLDOWN_MS, 500, 50);
+    }
+
+    @Test
+    @DisplayName("a caller not entitled to GMAIL_SYNC is refused before the connection is even looked up")
+    void notEntitledThrows403() {
+        when(entitlementService.hasEntitlement(userId, FeatureEntitlement.GMAIL_SYNC)).thenReturn(false);
+
+        assertThatThrownBy(() -> manualSync.syncNow(userId))
+                .isInstanceOf(ApiException.class)
+                .satisfies(e -> assertThat(((ApiException) e).getStatus()).isEqualTo(HttpStatus.FORBIDDEN));
+        verifyNoInteractions(connectionService, discovery, extraction);
     }
 
     @Test

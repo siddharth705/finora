@@ -2,11 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Settings from './Settings';
 import { ThemeProvider } from '../context/ThemeContext';
 import { AuthProvider } from '../context/AuthContext';
-import { userApi, workspaceApi, analyticsApi, deviceApi, accountLifecycleApi, authApi, gmailApi } from '../api/endpoints';
-import type { UserSettings } from '../api/endpoints';
+import { userApi, workspaceApi, analyticsApi, deviceApi, accountLifecycleApi, authApi, gmailApi, entitlementsApi } from '../api/endpoints';
+import type { UserSettings, EntitlementsDto } from '../api/endpoints';
 import { getAccessToken, setAccessToken } from '../api/client';
 
 // v1 scope is capabilities-first: every section on this page reflects a real, backed setting or
@@ -31,6 +32,7 @@ vi.mock('../api/endpoints', () => ({
     status: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), syncNow: vi.fn(),
     reviewQueue: vi.fn(), approve: vi.fn(), reject: vi.fn(),
   },
+  entitlementsApi: { mine: vi.fn() },
 }));
 
 function gmailStatus(overrides: Partial<Record<string, unknown>> = {}) {
@@ -40,6 +42,10 @@ function gmailStatus(overrides: Partial<Record<string, unknown>> = {}) {
     transactionsFound: 0, needsReview: 0, available: true,
     ...overrides,
   };
+}
+
+function entitlements(overrides: Partial<EntitlementsDto> = {}): EntitlementsDto {
+  return { planCode: 'PREMIUM', planName: 'Premium', features: { GMAIL_SYNC: true }, ...overrides };
 }
 
 function userSettings(overrides: Partial<UserSettings> = {}): UserSettings {
@@ -78,14 +84,20 @@ function deviceSession(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 function renderSettings() {
+  // PremiumFeatureGate (the Gmail connect card's GMAIL_SYNC gate) reads react-query's context,
+  // which nothing else on this page needed before it existed -- without a real QueryClient here,
+  // rendering Settings at all now throws "No QueryClient set", not just the Gmail-specific tests.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <ThemeProvider>
-      <MemoryRouter>
-        <AuthProvider>
-          <Settings />
-        </AuthProvider>
-      </MemoryRouter>
-    </ThemeProvider>
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <MemoryRouter>
+          <AuthProvider>
+            <Settings />
+          </AuthProvider>
+        </MemoryRouter>
+      </ThemeProvider>
+    </QueryClientProvider>
   );
 }
 
@@ -111,6 +123,9 @@ describe('Settings', () => {
     vi.mocked(gmailApi.connect).mockReset();
     vi.mocked(gmailApi.disconnect).mockReset();
     vi.mocked(gmailApi.syncNow).mockReset();
+    // Entitled by default -- every existing test here predates GMAIL_SYNC and expects the real
+    // Connect/Reconnect card, not the upgrade prompt. The denial tests below override this.
+    vi.mocked(entitlementsApi.mine).mockReset().mockResolvedValue(entitlements());
   });
 
   it('renders the real preferences and import-stat facts once loaded', async () => {
@@ -661,6 +676,48 @@ describe('Settings', () => {
 
       expect(await screen.findByText(/disconnect it first to connect a different one/i)).toBeInTheDocument();
       expect(screen.queryByText(/couldn't start the gmail connection/i)).not.toBeInTheDocument();
+    });
+
+    // GMAIL_SYNC (#1095): the connect/reconnect actions are the ones that start a NEW background
+    // sync obligation, so they're the ones gated -- an already-connected user is handled below.
+    describe('GMAIL_SYNC gating', () => {
+      it('shows an upgrade prompt instead of Connect Gmail for a non-entitled user', async () => {
+        vi.mocked(entitlementsApi.mine).mockResolvedValue(entitlements({ planCode: 'FREE', features: {} }));
+        vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: false, status: 'DISCONNECTED' }));
+
+        renderSettings();
+
+        expect(await screen.findByRole('button', { name: /upgrade/i })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^connect gmail$/i })).not.toBeInTheDocument();
+      });
+
+      it('shows the same upgrade prompt in place of Reconnect Gmail for a non-entitled user', async () => {
+        vi.mocked(entitlementsApi.mine).mockResolvedValue(entitlements({ planCode: 'PLUS', features: {} }));
+        vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({
+          connected: false, status: 'REAUTH_REQUIRED', needsReconnect: true, googleEmail: 'amy@gmail.example.test',
+        }));
+
+        renderSettings();
+
+        expect(await screen.findByRole('button', { name: /upgrade/i })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /reconnect gmail/i })).not.toBeInTheDocument();
+        expect(gmailApi.connect).not.toHaveBeenCalled();
+      });
+
+      it('still shows the real connected card, with a working Disconnect, for a user connected before a downgrade', async () => {
+        const user = userEvent.setup();
+        vi.mocked(entitlementsApi.mine).mockResolvedValue(entitlements({ planCode: 'FREE', features: {} }));
+        vi.mocked(gmailApi.status).mockResolvedValue(gmailStatus({ connected: true, googleEmail: 'amy@gmail.example.test' }));
+        vi.mocked(gmailApi.disconnect).mockResolvedValue(undefined as any);
+
+        renderSettings();
+        expect(await screen.findByText('amy@gmail.example.test')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /upgrade/i })).not.toBeInTheDocument();
+
+        await user.click(screen.getByRole('button', { name: /^disconnect$/i }));
+
+        await waitFor(() => expect(gmailApi.disconnect).toHaveBeenCalled());
+      });
     });
   });
 

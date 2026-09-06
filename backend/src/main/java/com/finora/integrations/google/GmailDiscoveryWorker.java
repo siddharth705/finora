@@ -1,8 +1,10 @@
 package com.finora.integrations.google;
 
+import com.finora.entity.FeatureEntitlement;
 import com.finora.integrations.google.merchant.GmailReceiptExtractionService;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
+import com.finora.service.EntitlementService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -60,6 +62,7 @@ public class GmailDiscoveryWorker {
     private final GmailReceiptExtractionService extraction;
     private final GmailConnectionRepository connections;
     private final WorkerObservability observability;
+    private final EntitlementService entitlementService;
 
     private final boolean enabled;
     private final int connectionsPerTick;
@@ -72,6 +75,7 @@ public class GmailDiscoveryWorker {
             GmailReceiptExtractionService extraction,
             GmailConnectionRepository connections,
             WorkerObservability observability,
+            EntitlementService entitlementService,
             @Value("${app.integrations.google.discovery.enabled:true}") boolean enabled,
             @Value("${app.integrations.google.discovery.connections-per-tick:25}") int connectionsPerTick,
             @Value("${app.integrations.google.discovery.messages-per-connection:500}") int messagesPerConnection,
@@ -84,6 +88,7 @@ public class GmailDiscoveryWorker {
         this.extraction = extraction;
         this.connections = connections;
         this.observability = observability;
+        this.entitlementService = entitlementService;
         this.enabled = enabled;
         this.connectionsPerTick = connectionsPerTick;
         this.messagesPerConnection = messagesPerConnection;
@@ -130,6 +135,17 @@ public class GmailDiscoveryWorker {
             execution.claimed(due.size());
 
             for (GmailConnection connection : due) {
+                // A connection stays live across a plan downgrade -- GmailConnectionService only
+                // ever refuses a NEW connect, it never tears an existing one down. Without this
+                // check, a Premium user who downgrades keeps getting free background sync forever,
+                // which is exactly the ongoing cost GMAIL_SYNC exists to gate. Checked here rather
+                // than added to findDueForDiscovery's own query, to keep entitlement lookups
+                // (EntitlementService, the billing domain) out of a plain connection repository.
+                if (!entitlementService.hasEntitlement(connection.getUserId(), FeatureEntitlement.GMAIL_SYNC)) {
+                    log.info("Gmail connection {} is no longer entitled to GMAIL_SYNC; skipping discovery.",
+                            connection.getId());
+                    continue;
+                }
                 try {
                     discovery.discoverFor(connection, messagesPerConnection);
                     extraction.extractFor(connection, extractionMessagesPerConnection);

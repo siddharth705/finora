@@ -1,9 +1,11 @@
 package com.finora.integrations.google;
 
+import com.finora.entity.FeatureEntitlement;
 import com.finora.exception.ApiException;
 import com.finora.integrations.google.merchant.GmailReceiptExtractionService;
 import com.finora.observability.WorkerExecution;
 import com.finora.observability.WorkerObservability;
+import com.finora.service.EntitlementService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,7 @@ class GmailDiscoveryWorkerTest {
     private GmailMessageDiscoveryService discovery;
     private GmailReceiptExtractionService extraction;
     private GmailConnectionRepository connections;
+    private EntitlementService entitlementService;
     private GmailDiscoveryWorker worker;
 
     @BeforeEach
@@ -49,8 +52,32 @@ class GmailDiscoveryWorkerTest {
         WorkerExecution execution = mock(WorkerExecution.class);
         when(observability.beginScheduled(anyString(), anyString())).thenReturn(execution);
 
-        worker = new GmailDiscoveryWorker(discovery, extraction, connections, observability,
+        // Entitled by default -- every existing test here is about scheduling/failure-isolation
+        // mechanics, not billing. The denial test below overrides this per-connection.
+        entitlementService = mock(EntitlementService.class);
+        when(entitlementService.hasEntitlement(any(), eq(FeatureEntitlement.GMAIL_SYNC))).thenReturn(true);
+
+        worker = new GmailDiscoveryWorker(discovery, extraction, connections, observability, entitlementService,
                 true, 25, 500, 50, Duration.ofHours(1).toMillis());
+    }
+
+    /** A connection stays live across a plan downgrade -- nothing tears it down. Without this
+     *  check, a downgraded user would keep getting free background sync forever. */
+    @Test
+    @DisplayName("a connection whose owner is no longer entitled to GMAIL_SYNC is skipped, not synced")
+    void aNoLongerEntitledConnectionIsSkipped() {
+        GmailConnection downgraded = connection();
+        GmailConnection healthy = connection();
+        when(connections.findDueForDiscovery(any(), any())).thenReturn(List.of(downgraded, healthy));
+        when(entitlementService.hasEntitlement(downgraded.getUserId(), FeatureEntitlement.GMAIL_SYNC)).thenReturn(false);
+
+        int attempted = worker.runOnce();
+
+        assertThat(attempted).isEqualTo(2);
+        verify(discovery, never()).discoverFor(eq(downgraded), anyInt());
+        verify(extraction, never()).extractFor(eq(downgraded), anyInt());
+        verify(discovery).discoverFor(healthy, 500);
+        verify(extraction).extractFor(healthy, 50);
     }
 
     /**
@@ -158,7 +185,7 @@ class GmailDiscoveryWorkerTest {
     @Test
     void theScheduledTriggerDoesNothingWhenDisabled() {
         GmailDiscoveryWorker disabled = new GmailDiscoveryWorker(discovery, extraction, connections,
-                observabilityStub(), false, 25, 500, 50, 3_600_000L);
+                observabilityStub(), entitlementService, false, 25, 500, 50, 3_600_000L);
 
         disabled.scheduledDiscovery();
 
