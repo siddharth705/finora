@@ -20,8 +20,8 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.49.1",
-    "@types/pg": "^8.15.6",
-    "pg": "^8.22.0",
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.0",
     "typescript": "^7.0.2"
   },
   "engines": {
