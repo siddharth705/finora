@@ -11,10 +11,12 @@ before any other reconciliation logic changed.
 `CategoryRules`, `DuplicateMatching`.
 **Benchmark:** 59 scenarios across 6 categories, executed against the real
 `ReconciliationService` code path (mocked persistence only — see `README.md`).
-**Implemented:** roadmap item #1 (transfer keyword-gate widening, see §7) and its recommended
-follow-up, item 1a from `post-fix-failure-analysis.md` (adding `"rtgs"`/`"self transfer"` to
-`CategoryRules`' `"Transfer"` keyword list, the same mechanism, re-measured at 76.3% overall / 65%
-transfers). Nothing else in this report has been implemented.
+**Implemented, in order:** roadmap item #1 (transfer keyword-gate widening, §7); item 1a from
+`post-fix-failure-analysis.md` (`"rtgs"`/`"self transfer"` added to `CategoryRules`' `"Transfer"`
+list, 76.3% / 65% transfers); and item #2 (investment keyword word-boundary fusion fix — a small,
+explicit fusion-tolerant exemption set for `groww`/`zerodha`/`upstox` only, not a blanket loosening
+— now at **78.0% overall, 100% investment transfers**). See `post-fix-failure-analysis.md` for the
+full, current before/after trail. Nothing else in this report has been implemented.
 
 ---
 
@@ -430,7 +432,7 @@ using only the findings above — nothing here is speculative.
   this project's own tracking.
 - **User impact:** Low-medium today; grows as Gmail Sync adoption grows.
 
-### 8 → re-ranked to ~3-4. Fix the investment-transfer keyword's word-boundary fusion gap
+### 8 → re-ranked to ~3-4 → ✅ IMPLEMENTED. Fix the investment-transfer keyword's word-boundary fusion gap
 - **Addresses:** Finding F (1 of 18 scenarios, but see the corpus check below).
 - **Effort:** Low — this is a `CategoryRules` keyword-matching fix, not a reconciliation-logic
   change.

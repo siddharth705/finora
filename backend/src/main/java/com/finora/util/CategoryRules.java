@@ -209,11 +209,33 @@ public final class CategoryRules {
     // in a Coca-Cola purchase on a grocery/dining line). Both are real, evidenced false-positive
     // risks, not theoretical -- fixed once, systemically, for every keyword at once rather than
     // patched keyword-by-keyword.
+    // Reconciliation benchmark, investment-transfer word-boundary finding (docs/proposals/
+    // reconciliation-benchmark/corpus-frequency-analysis.md, "Finding F"): a broker's aggregator ID
+    // gets fused into one token by some payment gateways with no separating character at all --
+    // e.g. "UPI-ICCLGROWWPAY-<ref>-BSE", where "groww" is preceded by "l" and followed by "p" with
+    // no boundary on either side. Measured directly against this project's own real corpus: 8 of 19
+    // real transaction lines mentioning "Groww" carried it ONLY in this fused form -- 42%, not a
+    // theoretical edge case.
+    //
+    // This is deliberately NOT a blanket loosening of word-boundary matching -- the comment on
+    // RULE_PATTERNS above exists precisely because that already burned this codebase twice ("rent"
+    // inside "current", "ola" inside "cola"). The three brand names below are exempted individually,
+    // and only because each is long and phonetically distinctive enough that an accidental
+    // substring collision inside an unrelated English or Indian-banking-narration word is not a
+    // realistic risk the way it would be for a short or generic keyword. Every other Investments
+    // keyword ("sip", "nps", "ppf", "mutualfunds", "demat", "nse mf") stays word-boundary-matched:
+    // "sip" in particular is exactly the short, common-substring case ("gossip", "sipping") this
+    // exemption must never be widened to cover without the same kind of real-corpus evidence
+    // gathered for these three first.
+    private static final Set<String> FUSION_TOLERANT_KEYWORDS = Set.of("groww", "zerodha", "upstox");
+
     private static final Map<String, List<Pattern>> RULE_PATTERNS = new LinkedHashMap<>();
     static {
         for (var entry : RULES.entrySet()) {
             List<Pattern> patterns = entry.getValue().stream()
-                    .map(w -> Pattern.compile(WORD_BOUNDARY + Pattern.quote(w) + WORD_BOUNDARY))
+                    .map(w -> FUSION_TOLERANT_KEYWORDS.contains(w)
+                            ? Pattern.compile(Pattern.quote(w))
+                            : Pattern.compile(WORD_BOUNDARY + Pattern.quote(w) + WORD_BOUNDARY))
                     .toList();
             RULE_PATTERNS.put(entry.getKey(), patterns);
         }

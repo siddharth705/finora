@@ -106,13 +106,29 @@ three score well. The reasoning for picking #1a specifically:
 - **Directly evidenced**, not guessed: the same corpus check that justified PR #1082 (transfer-rail
   lines almost never contain "payment") applies identically here.
 
-**Why not #2 (investment fusion) despite having the single strongest evidence (42%):** it is a real
-and well-evidenced fix, and should be next in the queue right after this one — but it touches
-`CategoryRules`' shared keyword-matching mechanism (used by every category, not just Transfer/
-Investments), so a safe implementation needs a real design decision (which keywords are long/
-specific enough to relax word-boundary matching for) rather than a one-line gate extension. Slightly
-more design surface than #1a for a smaller (1-scenario) direct benchmark gain — recommended as the
-**second** target, immediately after this one.
+**#2 (investment fusion) — also now implemented, immediately after #1a, per this section's own
+recommended sequencing.** It needed exactly the "real design decision" flagged here: not a blanket
+word-boundary loosening (which would reintroduce the "rent" inside "current" / "ola" inside "cola"
+false positives `CategoryRules`' own comment already warns about), but a small, explicit,
+individually-justified exemption set — `{"groww", "zerodha", "upstox"}` — long, phonetically
+distinctive brand names with negligible accidental-substring risk, compiled without the `\b...\b`
+word-boundary wrapper every other keyword still gets. Short/generic Investments keywords ("sip",
+"nps", "ppf") were deliberately left untouched.
+
+**Re-measured result:**
+
+```
+Before this change:  76.3% overall (45/59), 100% investment transfers was not yet true (5/6, 83%)
+After this change:   78.0% overall (46/59), 100% investment transfers (6/6)
+```
+
+`brokerFundingWithFusedKeyword_noWordBoundary_notRecognized` now passes — the only scenario this
+fix targeted. Full regression check across `com.finora.service.*Test`,
+`com.finora.transactions.*Test`, `com.finora.util.*Test`, `com.finora.imports.*Test`, and
+`com.finora.rules.*Test` (a wider net than before, since `CategoryRules` is shared by
+categorization broadly, not just reconciliation) is unaffected.
+
+**13 failures remain** (down from 14, 16, and the original 18).
 
 **Why not #3 (first-match-wins) despite matching the original hypothesis this analysis was asked to
 check:** the post-fix data does not support it being the top pick. It closes only 2 of 16 remaining
