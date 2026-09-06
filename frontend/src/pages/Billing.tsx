@@ -51,7 +51,7 @@ function useActivationPoll(expectedPlanCode: string | null, onSettled: () => voi
       }
     }, 2000);
     return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSettled is a stable setState-based
+     
     // closure from the caller; including it would re-run this effect (and restart the poll) every
     // render, which the caller's re-render-per-tick already causes without help from this list.
   }, [expectedPlanCode]);
@@ -65,6 +65,11 @@ export default function Billing() {
   const [targetPlan, setTargetPlan] = useState('PLUS');
   const [targetCycle, setTargetCycle] = useState('MONTHLY');
   const [activatingPlanCode, setActivatingPlanCode] = useState<string | null>(null);
+  // Guards both subscribeToPlan and resumePendingOrder against a double-click opening two
+  // Razorpay widgets for the same checkout -- neither is a useMutation (each branches on live
+  // subscription state read at click time, not a single fixed request), so this is tracked by
+  // hand instead of read off a mutation's own .isPending.
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const { data: subscription, isLoading: subLoading } = useQuery({
     queryKey: ['my-subscription'],
@@ -107,21 +112,33 @@ export default function Billing() {
 
   // Plan 3 review. Deliberately does NOT call billingApi.checkout() again -- the whole point of
   // resuming is reusing the SAME Razorpay subscription the abandoned attempt already created, not
-  // creating a second one.
+  // creating a second one. Wrapped in the same try/catch/isSubmitting-guard discipline as
+  // subscribeToPlan below -- this used to have neither, so a Razorpay Checkout load failure (the
+  // script blocked, offline) failed silently with no error shown, and a double-click could open
+  // two Checkout widgets for the same subscription.
   async function resumePendingOrder() {
-    if (!subscription?.pendingOrder) return;
+    if (!subscription?.pendingOrder || isSubmitting) return;
     setError(null);
-    const result = await openRazorpayCheckout({
-      key: subscription.pendingOrder.keyId,
-      subscription_id: subscription.pendingOrder.razorpaySubscriptionId,
-      name: 'Fynora',
-      description: `${subscription.pendingOrder.planCode} — ${subscription.pendingOrder.billingCycle}`,
-    });
-    if (result) setActivatingPlanCode(subscription.pendingOrder.planCode);
+    setIsSubmitting(true);
+    try {
+      const result = await openRazorpayCheckout({
+        key: subscription.pendingOrder.keyId,
+        subscription_id: subscription.pendingOrder.razorpaySubscriptionId,
+        name: 'Fynora',
+        description: `${subscription.pendingOrder.planCode} — ${subscription.pendingOrder.billingCycle}`,
+      });
+      if (result) setActivatingPlanCode(subscription.pendingOrder.planCode);
+    } catch (e: any) {
+      setError(e.response?.data?.message ?? 'Could not resume this checkout. Try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function subscribeToPlan() {
+    if (isSubmitting) return;
     setError(null);
+    setIsSubmitting(true);
     try {
       if (!subscription?.hasBillingSubscription) {
         const checkout = await billingApi.checkout(targetPlan, targetCycle);
@@ -149,6 +166,8 @@ export default function Billing() {
       }
     } catch (e: any) {
       setError(e.response?.data?.message ?? 'Could not change your plan. Try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -183,8 +202,13 @@ export default function Billing() {
               <p className="text-xs text-muted mt-0.5">{subscription.pendingOrder.billingCycle} billing</p>
             </div>
             <div className="flex gap-2">
-              <Button size="sm" onClick={resumePendingOrder}>Resume checkout</Button>
-              <Button variant="secondary" size="sm" onClick={() => setConfirmingCancelPendingOrder(true)}>
+              <Button size="sm" onClick={resumePendingOrder} disabled={isSubmitting || !!activatingPlanCode}>
+                Resume checkout
+              </Button>
+              <Button
+                variant="secondary" size="sm" disabled={isSubmitting || !!activatingPlanCode}
+                onClick={() => setConfirmingCancelPendingOrder(true)}
+              >
                 Cancel
               </Button>
             </div>
@@ -199,7 +223,16 @@ export default function Billing() {
               <p className="text-xs text-muted uppercase tracking-wide mb-1">Current plan</p>
               <p className="text-lg font-bold text-ink">{subscription.planName}</p>
               {subscription.renewalDate && (
-                <p className="text-sm text-muted mt-1">Renews {formatDate(subscription.renewalDate)}</p>
+                // Cancelling (BillingCheckoutService.cancel) only flips autoRenew -- status and
+                // renewalDate are untouched until the actual subscription.cancelled webhook lands
+                // (design spec §6.3, "access continues untouched"). Without reading autoRenew
+                // here, a user who already cancelled saw the exact same "Renews <date>" text as
+                // someone who hadn't, with no sign their cancellation took effect.
+                <p className="text-sm text-muted mt-1">
+                  {subscription.hasBillingSubscription && !subscription.autoRenew
+                    ? <>Ends {formatDate(subscription.renewalDate)} — won't renew</>
+                    : <>Renews {formatDate(subscription.renewalDate)}</>}
+                </p>
               )}
               {subscription.pendingChange && (
                 <p className="text-sm text-warning mt-1">
@@ -208,7 +241,7 @@ export default function Billing() {
                 </p>
               )}
             </div>
-            {subscription.hasBillingSubscription && (
+            {subscription.hasBillingSubscription && subscription.autoRenew && (
               <Button variant="danger" size="sm" onClick={() => setConfirmingCancel(true)}>
                 Cancel subscription
               </Button>
@@ -242,7 +275,8 @@ export default function Billing() {
             </label>
             <Button
               onClick={subscribeToPlan}
-              disabled={targetPlan === subscription.planCode && targetCycle === subscription.billingCycle}
+              disabled={isSubmitting || !!activatingPlanCode ||
+                (targetPlan === subscription.planCode && targetCycle === subscription.billingCycle)}
             >
               <CreditCard size={14} /> Subscribe
             </Button>

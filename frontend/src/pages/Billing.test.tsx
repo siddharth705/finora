@@ -80,6 +80,21 @@ describe('Billing', () => {
     expect(screen.getByRole('button', { name: /cancel/i })).toBeInTheDocument();
   });
 
+  it('shows an ends-on message and hides the cancel button once already cancelled', async () => {
+    // BillingCheckoutService.cancel() only flips autoRenew -- status/renewalDate/
+    // hasBillingSubscription are all untouched until the actual webhook lands (design spec
+    // §6.3). The Billing Portal must still tell the user their cancellation took effect.
+    vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription({
+      planCode: 'PLUS', planName: 'Plus', billingCycle: 'MONTHLY',
+      renewalDate: '2026-11-01', hasBillingSubscription: true, autoRenew: false,
+    }));
+    renderPage();
+
+    await screen.findByText('Plus', { selector: 'p' });
+    expect(screen.getByText(/ends.*won't renew/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^cancel subscription$/i })).not.toBeInTheDocument();
+  });
+
   it('shows a pending downgrade banner', async () => {
     vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription({
       planCode: 'PREMIUM', planName: 'Premium', billingCycle: 'MONTHLY',
@@ -119,6 +134,39 @@ describe('Billing', () => {
     expect(billingApi.checkout).not.toHaveBeenCalled();
   });
 
+  it('shows an error if resuming a pending order fails to open Razorpay', async () => {
+    vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription({
+      pendingOrder: { planCode: 'PREMIUM', planName: 'Premium', billingCycle: 'YEARLY', razorpaySubscriptionId: 'sub_stuck', keyId: 'rzp_test' },
+    }));
+    vi.mocked(openRazorpayCheckout).mockRejectedValue(new Error('Failed to load Razorpay Checkout.'));
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: /resume checkout/i });
+
+    await user.click(screen.getByRole('button', { name: /resume checkout/i }));
+
+    expect(await screen.findByText(/could not resume this checkout/i)).toBeInTheDocument();
+  });
+
+  it('disables Resume checkout while a resume is already in flight', async () => {
+    vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription({
+      pendingOrder: { planCode: 'PREMIUM', planName: 'Premium', billingCycle: 'YEARLY', razorpaySubscriptionId: 'sub_stuck', keyId: 'rzp_test' },
+    }));
+    let resolveCheckout: (v: { paymentId: string } | null) => void;
+    vi.mocked(openRazorpayCheckout).mockReturnValue(new Promise((resolve) => { resolveCheckout = resolve; }));
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: /resume checkout/i });
+
+    await user.click(screen.getByRole('button', { name: /resume checkout/i }));
+    // Still in flight (the mocked promise hasn't resolved yet) -- a second click must not open a
+    // second Razorpay widget.
+    await user.click(screen.getByRole('button', { name: /resume checkout/i }));
+    resolveCheckout!({ paymentId: 'pay_1' });
+
+    await waitFor(() => expect(openRazorpayCheckout).toHaveBeenCalledTimes(1));
+  });
+
   it('cancelling a pending order calls cancelPendingOrder after confirmation', async () => {
     vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription({
       pendingOrder: { planCode: 'PREMIUM', planName: 'Premium', billingCycle: 'YEARLY', razorpaySubscriptionId: 'sub_stuck', keyId: 'rzp_test' },
@@ -149,6 +197,24 @@ describe('Billing', () => {
     expect(openRazorpayCheckout).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'rzp_test', subscription_id: 'sub_new' })
     );
+  });
+
+  it('double-clicking Subscribe only checks out once', async () => {
+    vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription());
+    let resolveCheckout: (v: { razorpaySubscriptionId: string; keyId: string }) => void;
+    vi.mocked(billingApi.checkout).mockReturnValue(new Promise((resolve) => { resolveCheckout = resolve; }));
+    vi.mocked(openRazorpayCheckout).mockResolvedValue({ paymentId: 'pay_1' });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Free');
+    await user.selectOptions(screen.getByLabelText(/choose a plan/i), 'PLUS');
+
+    await user.click(screen.getByRole('button', { name: /subscribe/i }));
+    // billingApi.checkout hasn't resolved yet -- a second click must not fire a second checkout.
+    await user.click(screen.getByRole('button', { name: /subscribe/i }));
+    resolveCheckout!({ razorpaySubscriptionId: 'sub_new', keyId: 'rzp_test' });
+
+    await waitFor(() => expect(billingApi.checkout).toHaveBeenCalledTimes(1));
   });
 
   it('cancelling calls the cancel endpoint after confirmation', async () => {
