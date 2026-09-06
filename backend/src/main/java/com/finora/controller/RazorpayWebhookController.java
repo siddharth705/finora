@@ -36,6 +36,19 @@ import java.util.Map;
  * this controller read {@code json.optString("id", null)} from the body, which is always absent, so
  * every webhook took the "unrecorded" fallback path and the {@code webhook_events} idempotency
  * ledger (design spec §4.7, described there as mandatory) never actually engaged in production.
+ *
+ * <p>Bug fix, found via a real dry-run webhook against a real Razorpay test-mode subscription (not
+ * caught by any existing test): {@code json.toMap()} on the whole request body was passed straight
+ * to {@link RazorpayWebhookDispatcher#dispatch}, which expects just the INNER {@code payload}
+ * object -- {@code subscriptionEntity()} there reads {@code payload.get("subscription")}, and
+ * {@code subscription} only ever exists nested under this body's own {@code payload} key (see this
+ * class's own doc comment above on the real top-level shape), never at the top level. Every
+ * dispatcher-level test called {@code dispatch()} directly with the correct already-unwrapped
+ * shape, so this silently no-op'd on every real webhook delivery -- confirmed by replaying a
+ * correctly-signed, Razorpay-shaped {@code subscription.activated} body through this endpoint
+ * against a real test-mode subscription: {@code 200 OK}, recorded {@code PROCESSED}, subscription
+ * never left FREE. The webhook_events audit row still stores the FULL body (accountId/contains/
+ * created_at included) -- only what reaches the dispatcher changes.
  */
 @RestController
 @RequestMapping("/api/v1/webhooks/razorpay")
@@ -74,23 +87,28 @@ public class RazorpayWebhookController {
 
         JSONObject json = new JSONObject(rawBody);
         String eventType = json.optString("event", "unknown");
-        Map<String, Object> payload = json.toMap();
+        // The FULL body -- kept as the webhook_events audit record (account_id/contains/created_at
+        // included). The dispatcher gets only the inner "payload" object below: that object, not
+        // this one, is where "subscription"/"payment" actually live in a real Razorpay webhook.
+        Map<String, Object> fullBody = json.toMap();
+        JSONObject innerPayload = json.optJSONObject("payload");
+        Map<String, Object> eventPayload = innerPayload != null ? innerPayload.toMap() : Map.of();
 
         // Razorpay's test-mode "send test webhook" tool does not always include this header -- fall
         // back to accepting (and not recording) rather than NPEing on a null primary key. A real
         // production webhook always carries one.
         if (eventId == null) {
-            dispatcher.dispatch(eventType, payload);
+            dispatcher.dispatch(eventType, eventPayload);
             return ResponseEntity.ok().build();
         }
 
-        if (!webhookEventService.claim(eventId, "RAZORPAY", eventType, payload)) {
+        if (!webhookEventService.claim(eventId, "RAZORPAY", eventType, fullBody)) {
             log.info("Duplicate Razorpay webhook event {} ({}), ignoring.", eventId, eventType);
             return ResponseEntity.ok().build();
         }
 
         try {
-            dispatcher.dispatch(eventType, payload);
+            dispatcher.dispatch(eventType, eventPayload);
             webhookEventService.markProcessed(eventId);
         } catch (RuntimeException e) {
             webhookEventService.markFailed(eventId);
