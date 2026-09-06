@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Doughnut, Line } from 'react-chartjs-2';
 import { Chart as ChartJS, ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend } from 'chart.js';
-import { LineChart as LineChartIcon, TrendingUp, TrendingDown, Wallet, Loader2 } from 'lucide-react';
+import { LineChart as LineChartIcon, TrendingUp, TrendingDown, Wallet, Loader2, Crown } from 'lucide-react';
 import { accountsApi, networthApi, type NetWorthData } from '../api/endpoints';
 import type { Account } from '../types';
 import { formatDate } from '../utils/date';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import { useDelayedLoading } from '../hooks/useDelayedLoading';
 import { Button, FinoraCard, MetricCard, EmptyState, SectionHeader, ChartContainer, baseChartOptions, ConfirmDialog, Skeleton } from '../design-system';
+import { PremiumFeatureGate } from '../components/PremiumFeatureGate';
 
 ChartJS.register(ArcElement, LineElement, PointElement, LinearScale, CategoryScale, Tooltip, Legend);
 
@@ -39,6 +41,21 @@ function DepositTerms({ holding }: { holding: Account }) {
 
   if (terms.length === 0) return null;
   return <p className="text-[11px] text-gray-500 mt-0.5">{terms.join(' · ')}</p>;
+}
+
+/** Replaces the Add Investment form row for a Free or Plus user. Only ever shown in place of
+ *  ADDING a new holding -- an existing holding (from before a downgrade, or added by an admin on
+ *  the user's behalf) still shows in the list below and can still be deleted, regardless of plan. */
+function AddHoldingUpgradePrompt() {
+  const navigate = useNavigate();
+  return (
+    <div className="flex items-center justify-between gap-3 mb-4">
+      <p className="text-xs text-muted">Tracking investments is a Premium feature.</p>
+      <Button size="sm" className="flex-shrink-0 uppercase" onClick={() => navigate('/app/billing')}>
+        <Crown size={12} /> Upgrade
+      </Button>
+    </div>
+  );
 }
 
 export default function Investments() {
@@ -285,23 +302,25 @@ export default function Investments() {
           </div>
         )}
         <SectionHeader title="Add Investment / Asset" />
-        <div className="grid md:grid-cols-4 gap-2 items-end mb-4">
-          <div>
-            <label htmlFor="investment-name" className="block text-xs uppercase text-gray-500 mb-1">Name</label>
-            <input id="investment-name" value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
+        <PremiumFeatureGate featureKey="INVESTMENT_INSIGHTS" fallback={<AddHoldingUpgradePrompt />}>
+          <div className="grid md:grid-cols-4 gap-2 items-end mb-4">
+            <div>
+              <label htmlFor="investment-name" className="block text-xs uppercase text-gray-500 mb-1">Name</label>
+              <input id="investment-name" value={name} onChange={(e) => setName(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
+            </div>
+            <div>
+              <label htmlFor="investment-value" className="block text-xs uppercase text-gray-500 mb-1">Current value</label>
+              <input id="investment-value" type="number" value={value} onChange={(e) => setValue(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
+            </div>
+            <div>
+              <label htmlFor="investment-type" className="block text-xs uppercase text-gray-500 mb-1">Type</label>
+              <select id="investment-type" value={kind} onChange={(e) => setKind(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
+                <option>Mutual Fund</option><option>Stocks</option><option>FD</option><option>PPF/NPS</option><option>Other</option>
+              </select>
+            </div>
+            <Button onClick={addHolding} loading={adding} className="uppercase">Add</Button>
           </div>
-          <div>
-            <label htmlFor="investment-value" className="block text-xs uppercase text-gray-500 mb-1">Current value</label>
-            <input id="investment-value" type="number" value={value} onChange={(e) => setValue(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full" />
-          </div>
-          <div>
-            <label htmlFor="investment-type" className="block text-xs uppercase text-gray-500 mb-1">Type</label>
-            <select id="investment-type" value={kind} onChange={(e) => setKind(e.target.value)} className="bg-card text-ink border rounded px-2 py-1.5 text-sm w-full">
-              <option>Mutual Fund</option><option>Stocks</option><option>FD</option><option>PPF/NPS</option><option>Other</option>
-            </select>
-          </div>
-          <Button onClick={addHolding} loading={adding} className="uppercase">Add</Button>
-        </div>
+        </PremiumFeatureGate>
 
         {loading ? (
           <Skeleton.Region label="Loading your holdings">
