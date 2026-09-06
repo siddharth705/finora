@@ -270,6 +270,12 @@ export interface ConfirmPayload {
   newAccount: NewAccountPayload | null;
   statementOpeningBalance: number | null;
   statementClosingBalance: number | null;
+  // Echoed back from DetectedAccountInfo.statementPeriodStart/End -- see ConfirmRequest's own doc
+  // comment on the backend (frontend/src/api/endpoints.ts already sends these; this client never
+  // did, which meant ImportController's Free-tier 31-day statement-period cap could never fire for
+  // a mobile confirm, since a null period is never itself a reason to block).
+  statementPeriodStart: string | null;
+  statementPeriodEnd: string | null;
   // Only meaningful to confirmReimport, for a statement whose stored bytes are a password-protected
   // PDF -- see ConfirmRequest's own doc comment on the backend. Every other confirm path ignores it.
   password?: string;

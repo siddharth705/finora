@@ -1,0 +1,21 @@
+# Known, documented reconciliation benchmark failures -- read by
+# scripts/check-reconciliation-benchmark.py, which fails CI only when a scenario NOT listed here
+# starts failing (a real regression), never on one of these (already-evidenced, tracked gaps).
+#
+# See docs/proposals/reconciliation-benchmark/remaining-failures-classification.md for what each
+# of these is, why it's not fixed yet, and its ranked priority. When one of these gets fixed,
+# remove its line here in the SAME PR that fixes it -- the check itself will tell you to (it
+# prints "now pass that are still listed as known failures" rather than silently accepting a
+# stale entry), but removing it explicitly keeps this file an accurate record rather than a
+# growing allowlist nobody prunes.
+#
+# Baseline as of PR #1082 (69.5% -> 84.7% overall): 9 known failures.
+com.finora.service.CreditCardPaymentBenchmark.latePayment_beyondTenDayWindow_missedAndDoubleCounted
+com.finora.service.DuplicateDetectionBenchmark.manualEntryThenImport_sameRealTransaction_differentDescription_notCaught
+com.finora.service.DuplicateDetectionBenchmark.nearDuplicate_reformattedNarrationAcrossPendingAndSettled_isNotCaught
+com.finora.service.GmailMatchingBenchmark.falsePositive_shortTokenEditDistanceCoincidence_wronglyMatched
+com.finora.service.GmailMatchingBenchmark.merchantAlias_brandToLegalEntityName_isNotFound
+com.finora.service.TransferBenchmark.savingsToCreditCardAutoDebit_noPaymentKeyword_missed
+com.finora.service.TransferBenchmark.splitTransfer_twoPartialDebitsOneLumpCredit_notMatchedAtAll
+com.finora.service.TransferBenchmark.transferWithRealisticFee_exceedsOneRupeeTolerance_notMatched
+com.finora.service.TransferBenchmark.walletFunding_noPaymentKeyword_missed

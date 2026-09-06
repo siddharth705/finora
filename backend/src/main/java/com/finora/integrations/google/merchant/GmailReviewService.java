@@ -292,10 +292,13 @@ public class GmailReviewService {
     private UUID resolveGmailReceiptsAccount(UUID userId) {
         return accountRepository.findFirstByUserIdAndName(userId, GMAIL_RECEIPTS_ACCOUNT_NAME)
                 .map(Account::getId)
+                // enforceFreeAccountLimit=false: this is a synthetic bookkeeping bucket, not a bank
+                // the user chose to connect -- see AccountService.create's own 4-arg overload doc
+                // comment for why the Free-tier account cap must not apply here.
                 .orElseGet(() -> accountService.create(userId, new AccountDto.CreateRequest(
                         GMAIL_RECEIPTS_ACCOUNT_NAME, Account.Type.SAVINGS.name(), BigDecimal.ZERO,
                         null, null, null, null, null, BankRegistry.UNKNOWN_ID, null, null),
-                        userId).id());
+                        userId, false).id());
     }
 
     private StagedRow onlyStagedRow(ImportSession session) {

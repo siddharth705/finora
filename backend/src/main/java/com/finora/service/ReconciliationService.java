@@ -73,12 +73,15 @@ public class ReconciliationService {
     private final TransactionGraphService transactionGraphService;
     private final com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
     private final com.finora.repository.StatementImportRepository statementImportRepository;
+    private final com.finora.observability.ReconciliationMetrics reconciliationMetrics;
 
     public ReconciliationService(TransactionRepository transactionRepository, AccountRepository accountRepository,
                                   RelationshipService relationshipService,
                                   AuditService auditService, TransactionGraphService transactionGraphService,
                                   com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher,
-                                  com.finora.repository.StatementImportRepository statementImportRepository) {
+                                  com.finora.repository.StatementImportRepository statementImportRepository,
+                                  com.finora.observability.ReconciliationMetrics reconciliationMetrics) {
+        this.reconciliationMetrics = reconciliationMetrics;
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.relationshipService = relationshipService;
@@ -251,6 +254,20 @@ public class ReconciliationService {
         int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0, newGmailMatches = 0,
                 newCcPaymentMatches = 0, newInvestmentTransfers = 0;
 
+        // Collected during the transfer pass, emitted to ReconciliationMetrics only after this
+        // method's own writes below (saveAll/linkAll) have actually succeeded -- not inline in the
+        // matching loop. This method runs inside whichever caller's transaction is already open
+        // (it carries no @Transactional of its own; see its class comment on its eight production
+        // callers), so a counter incremented mid-loop would still be incremented even if a LATER
+        // pass in this same run throws, or the caller's transaction rolls back afterwards for an
+        // unrelated reason -- Micrometer counters are not transactional and nothing rolls them
+        // back. Deferring to the end of this method can't close that second, caller-side window
+        // (a metric fired from inside any @Transactional method carries it, and isn't something
+        // this method can fix on behalf of every one of its eight callers), but it does remove the
+        // larger, entirely-avoidable part: this run's OWN later passes throwing before its OWN
+        // writes ever happen.
+        List<Boolean> matchedTransferRelationshipFlags = new java.util.ArrayList<>();
+
         // Every row the passes below touch, written once at the end instead of one save() per
         // match. A large first import can flag hundreds of duplicates, and each save() was its own
         // round trip -- the batch_size: 50 and order_updates: true already configured in
@@ -382,7 +399,23 @@ public class ReconciliationService {
             // A relationship identifier match is independent evidence of a known own-account
             // transfer -- it can trigger this candidate pair's evaluation on its own, without
             // also needing the "payment"-in-description heuristic.
-            boolean looksLikeTransfer = aOwnAccountMatch || CategoryRules.normalize(a.getDescription()).contains("payment");
+            //
+            // Reconciliation benchmark finding A (docs/proposals/reconciliation-benchmark/
+            // benchmark-report.md, roadmap item #1): the plain "payment" substring alone missed
+            // most real transfer-rail narrations against this project's own real bank-statement
+            // corpus -- of every NEFT/IMPS/RTGS/UPI-shaped line across 29 real statements, only
+            // ~1% also contained the word "payment". CategoryRules' own "Transfer" keyword list
+            // ("neft to", "imps to", "autopay", "billdesk", "cc payment", "card bill payment") is
+            // reused here rather than inventing new keywords -- it is already vetted,
+            // word-boundary-matched vocabulary this project trusts for the identical
+            // categorization decision, so widening this gate with it carries no new keyword-choice
+            // risk. This does not close every gap the benchmark found (RTGS and a bare "self
+            // transfer"/wallet narration carry none of these keywords either), by design -- see
+            // the roadmap's own note that this is deliberately the smallest, lowest-risk slice,
+            // re-measured against the benchmark before any further widening.
+            boolean looksLikeTransfer = aOwnAccountMatch
+                    || CategoryRules.normalize(a.getDescription()).contains("payment")
+                    || "Transfer".equals(CategoryRules.suggestCategory(a.getDescription()));
             if (!looksLikeTransfer) continue;
 
             // Only the transactions that could possibly satisfy the daysApart check below, found
@@ -391,6 +424,23 @@ public class ReconciliationService {
             // (relationshipMatch reads ownAccountMatch for both sides) and is therefore not known
             // until the pair is in hand. The exact per-pair window check is unchanged and still
             // inside the loop -- this narrows what is considered, never what qualifies.
+            //
+            // Collects every qualifying candidate and scores it, rather than committing to the
+            // first one found (reconciliation benchmark finding: docs/proposals/
+            // reconciliation-benchmark/remaining-failures-classification.md, "first-match-wins"
+            // misclassification). `candidates` is sorted by (date, id) for determinism (see its own
+            // comment above), but sort order is not plausibility: a coincidental same-amount match
+            // several days away previously won over the real transfer leg one day away, purely
+            // because it happened to sort earlier -- transferCandidateScore below ranks every
+            // qualifying candidate on the same evidence this pass already computes (own-account
+            // relationship match, date proximity) instead of taking whichever is visited first.
+            Transaction bestMatch = null;
+            BigDecimal bestMatchAmountDelta = null;
+            long bestMatchDaysApart = 0;
+            long bestMatchDayWindow = 0;
+            boolean bestMatchRelationshipMatch = false;
+            int bestScore = Integer.MIN_VALUE;
+
             for (Transaction b : withinDays(candidates, a.getTxnDate(), OWN_ACCOUNT_MATCH_DAY_WINDOW)) {
                 if (a.getId().equals(b.getId()) || b.isTransfer()) continue;
                 if (looksLikeSalary.getOrDefault(b.getId(), false)) continue; // same guard, other side of the pair
@@ -398,47 +448,65 @@ public class ReconciliationService {
 
                 BigDecimal amountDelta = a.getAmount().subtract(b.getAmount()).abs();
                 boolean sameAmount = amountDelta.compareTo(ReconciliationPolicy.TRANSFER_AMOUNT_TOLERANCE) < 0;
+                if (!sameAmount) continue;
                 long daysApart = Math.abs(ChronoUnit.DAYS.between(a.getTxnDate(), b.getTxnDate()));
 
                 boolean relationshipMatch = aOwnAccountMatch || ownAccountMatch.getOrDefault(b.getId(), false);
                 long dayWindow = relationshipMatch ? OWN_ACCOUNT_MATCH_DAY_WINDOW : DEFAULT_TRANSFER_DAY_WINDOW;
+                if (daysApart > dayWindow) continue;
 
-                if (sameAmount && daysApart <= dayWindow) {
-                    a.setTransfer(true); b.setTransfer(true);
-                    a.setTransferPairId(b.getId()); b.setTransferPairId(a.getId());
-                    a.setReconciliationStatus(Transaction.ReconciliationStatus.TRANSFER);
-                    b.setReconciliationStatus(Transaction.ReconciliationStatus.TRANSFER);
-                    // Both sides get their own explanation, each naming the other. A transfer is
-                    // one decision but two rows, and someone looking at either row should not have
-                    // to fetch the partner to find out why this one was excluded from totals.
-                    Map<String, Object> explanationA = ReconciliationExplanation.transfer(a, b, dayWindow, relationshipMatch);
-                    Map<String, Object> explanationB = ReconciliationExplanation.transfer(b, a, dayWindow, relationshipMatch);
-                    a.setReconciliationExplanation(explanationA);
-                    b.setReconciliationExplanation(explanationB);
-                    dirty.add(a);
-                    dirty.add(b);
-                    newTransfers++; // one pair = one match, not two (see WorkspaceSummaryDto's own note on this asymmetry)
-                    // One edge per direction, matching transferPairId's own symmetric shape (see
-                    // V114's backfill comment) rather than picking an arbitrary canonical side.
-                    // MERCHANT_AND_AMOUNT tier: matched on amount + date window (+ an own-account
-                    // relationship identifier when relationshipMatch is true), not a free-text
-                    // merchant-name comparison -- there is no merchant on either side of a transfer
-                    // -- but it's the closest of the roadmap's three tiers to "two independent
-                    // structured signals agreeing," which is what this match actually is.
-                    int confidenceA = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
-                            a.getAmount(), amountDelta, daysApart, dayWindow);
-                    int confidenceB = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
-                            b.getAmount(), amountDelta, daysApart, dayWindow);
-                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, a.getId(), b.getId(),
-                            TransactionRelationship.RelationshipType.TRANSFER, a.getAmount(), confidenceA,
-                            SourceTrust.of(a.getSource()), statusFor(confidenceA),
-                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationA));
-                    pendingEdges.add(new TransactionGraphService.PendingEdge(userId, b.getId(), a.getId(),
-                            TransactionRelationship.RelationshipType.TRANSFER, b.getAmount(), confidenceB,
-                            SourceTrust.of(b.getSource()), statusFor(confidenceB),
-                            TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationB));
-                    break;
+                int score = transferCandidateScore(relationshipMatch, daysApart, dayWindow);
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMatch = b;
+                    bestMatchAmountDelta = amountDelta;
+                    bestMatchDaysApart = daysApart;
+                    bestMatchDayWindow = dayWindow;
+                    bestMatchRelationshipMatch = relationshipMatch;
                 }
+            }
+
+            if (bestMatch != null) {
+                Transaction b = bestMatch;
+                BigDecimal amountDelta = bestMatchAmountDelta;
+                long daysApart = bestMatchDaysApart;
+                long dayWindow = bestMatchDayWindow;
+                boolean relationshipMatch = bestMatchRelationshipMatch;
+
+                a.setTransfer(true); b.setTransfer(true);
+                a.setTransferPairId(b.getId()); b.setTransferPairId(a.getId());
+                a.setReconciliationStatus(Transaction.ReconciliationStatus.TRANSFER);
+                b.setReconciliationStatus(Transaction.ReconciliationStatus.TRANSFER);
+                // Both sides get their own explanation, each naming the other. A transfer is
+                // one decision but two rows, and someone looking at either row should not have
+                // to fetch the partner to find out why this one was excluded from totals.
+                Map<String, Object> explanationA = ReconciliationExplanation.transfer(a, b, dayWindow, relationshipMatch);
+                Map<String, Object> explanationB = ReconciliationExplanation.transfer(b, a, dayWindow, relationshipMatch);
+                a.setReconciliationExplanation(explanationA);
+                b.setReconciliationExplanation(explanationB);
+                dirty.add(a);
+                dirty.add(b);
+                newTransfers++; // one pair = one match, not two (see WorkspaceSummaryDto's own note on this asymmetry)
+                matchedTransferRelationshipFlags.add(relationshipMatch);
+                // One edge per direction, matching transferPairId's own symmetric shape (see
+                // V114's backfill comment) rather than picking an arbitrary canonical side.
+                // MERCHANT_AND_AMOUNT tier: matched on amount + date window (+ an own-account
+                // relationship identifier when relationshipMatch is true), not a free-text
+                // merchant-name comparison -- there is no merchant on either side of a transfer
+                // -- but it's the closest of the roadmap's three tiers to "two independent
+                // structured signals agreeing," which is what this match actually is.
+                int confidenceA = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                        a.getAmount(), amountDelta, daysApart, dayWindow);
+                int confidenceB = ConfidenceScorer.score(ConfidenceScorer.MatchType.MERCHANT_AND_AMOUNT,
+                        b.getAmount(), amountDelta, daysApart, dayWindow);
+                pendingEdges.add(new TransactionGraphService.PendingEdge(userId, a.getId(), b.getId(),
+                        TransactionRelationship.RelationshipType.TRANSFER, a.getAmount(), confidenceA,
+                        SourceTrust.of(a.getSource()), statusFor(confidenceA),
+                        TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationA));
+                pendingEdges.add(new TransactionGraphService.PendingEdge(userId, b.getId(), a.getId(),
+                        TransactionRelationship.RelationshipType.TRANSFER, b.getAmount(), confidenceB,
+                        SourceTrust.of(b.getSource()), statusFor(confidenceB),
+                        TransactionRelationship.DetectionMethod.RULE_ENGINE, explanationB));
             }
         }
 
@@ -777,6 +845,13 @@ public class ReconciliationService {
         List<TransactionRelationship> writtenEdges = pendingEdges.isEmpty()
                 ? List.of() : transactionGraphService.linkAll(pendingEdges);
 
+        // Emitted only now that this run's own writes above have both actually executed without
+        // throwing -- see matchedTransferRelationshipFlags' own comment on why this is deferred
+        // rather than incremented inline during the matching loop.
+        for (boolean relationshipMatch : matchedTransferRelationshipFlags) {
+            reconciliationMetrics.transferMatched(relationshipMatch);
+        }
+
         long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000;
 
         // Financial Intelligence Workspace, Reconciliation Monitor -- one summary entry per run
@@ -892,6 +967,43 @@ public class ReconciliationService {
         return confidence >= NEEDS_REVIEW_THRESHOLD
                 ? TransactionRelationship.Status.AUTO_CONFIRMED
                 : TransactionRelationship.Status.CANDIDATE;
+    }
+
+    /**
+     * Ranks one candidate the transfer pass is already considering -- called only after {@code b}
+     * has already passed every structural check (different account, opposite type, not salary,
+     * amount within tolerance, within the applicable day window). Deterministic, no stored history,
+     * no learning: every input is something this pass already computes for the pair in hand.
+     *
+     * <p>Two signals, not the four-signal sketch this was scoped down from (own-account match, same
+     * day, same description, known account pair) -- reconciliation benchmark's own before/after
+     * measurement only needed these two to resolve both first-match-wins scenarios it found, and
+     * this pass has no natural notion of "same description" for a transfer (the two legs of a real
+     * transfer routinely read nothing alike -- "CREDIT CARD PAYMENT" vs. "PAYMENT RECEIVED THANK
+     * YOU" -- unlike the duplicate pass, where identical description is the whole signal) or "known
+     * account pair" (that would mean querying past confirmed edges between this specific pair of
+     * accounts, real future work but a genuinely different, stateful mechanism from what a single
+     * candidate's own fields can answer). Adding either needs its own evidence the way every other
+     * change in this file has, not inclusion by default because a sketch mentioned it.
+     *
+     * @param relationshipMatch a user-configured OWN_ACCOUNT identifier matched on either side --
+     *                          the strongest available evidence, worth more than any amount of date
+     *                          proximity alone
+     * @param daysApart         how far apart the two candidate dates are
+     * @param dayWindow         the window this pair was matched under (4 or 10 days -- see
+     *                          {@link ReconciliationPolicy}), so proximity is judged relative to
+     *                          how wide a window was actually in play, not a fixed constant
+     */
+    private static int transferCandidateScore(boolean relationshipMatch, long daysApart, long dayWindow) {
+        int score = relationshipMatch ? 40 : 0;
+        if (dayWindow > 0) {
+            // 20 at the anchor date, decaying linearly to 0 at the window's edge -- same shape as
+            // ConfidenceScorer's own date_decay, deliberately: this project already treats "closer
+            // to the anchor" as more plausible everywhere else a date window exists, and there is
+            // no reason this pass's own candidate selection should reason about it differently.
+            score += Math.round(20.0 * (dayWindow - daysApart) / dayWindow);
+        }
+        return score;
     }
 
     /**
@@ -1108,9 +1220,24 @@ public class ReconciliationService {
      * whenever either side merely lacks the value (rather than when the two sides actively
      * disagree) would leave that genuine duplicate unmatched -- silently double-counting it in
      * income/expense totals and the account balance, a worse failure than the false-positive
-     * grouping this method exists to fix. A group with incomplete discriminator data is left
-     * exactly as it was before this method existed: one cluster, matching everything else this
-     * pass already did.
+     * grouping this method exists to fix.
+     *
+     * <p><b>Reconciliation benchmark finding (docs/proposals/reconciliation-benchmark/
+     * remaining-failures-classification.md): a group with NEITHER discriminator is not always
+     * safe to leave as one cluster either.</b> Two genuinely separate recurring-mandate debits --
+     * a SIP to one fund and a SIP to another, or two different loans' EMIs -- routinely share the
+     * same round amount, the same day (both auto-debit on the 5th), and the same generic
+     * bank-template narration, with no balance or reference column at all on a minimal-column
+     * import. Merging them is silent DATA LOSS: the second row's amount vanishes from every total
+     * with no signal anything happened, which this project treats as strictly worse than the
+     * failure this whole method already accepts elsewhere (a genuine duplicate staying
+     * unmatched -- see the paragraph above). {@link #looksLikeRecurringMandate} refuses to guess
+     * for exactly this narrow, evidenced shape: when nothing else exists to tell two same-day,
+     * same-amount rows apart AND the shared narration itself signals a recurring mandate, leave
+     * every member of the group on its own rather than pick a canonical one and discard the rest.
+     * Every other undiscriminated group (an ordinary same-day coincidence with no mandate marker)
+     * is left exactly as it was before this guard existed: one cluster, matching everything else
+     * this pass already did.
      */
     private static List<List<Transaction>> splitByDiscriminator(List<Transaction> group) {
         if (group.stream().allMatch(t -> t.getBalanceAfter() != null)) {
@@ -1119,7 +1246,31 @@ public class ReconciliationService {
         if (group.stream().allMatch(t -> t.getReferenceNumber() != null && !t.getReferenceNumber().isBlank())) {
             return groupBy(group, t -> "ref:" + t.getReferenceNumber());
         }
+        if (looksLikeRecurringMandate(group.get(0).getDescription())) {
+            return group.stream().map(List::of).toList();
+        }
         return List.of(group);
+    }
+
+    // Deliberately a small, purpose-built set here rather than a reuse of CategoryRules.RULES --
+    // that table is tuned for a different job (a user-facing category label, where "emi" alone is
+    // excluded as a bare keyword specifically because it's a substring of "premium", see its own
+    // comment) with a different cost of a false trigger. Here, a false trigger on an unrelated word
+    // only means this pass declines to merge a group it otherwise would have -- the SAME accepted,
+    // safer-direction failure (a genuine duplicate slips through) this method's own doc comment
+    // already names for the balance/reference case above, not a new risk class. "ecs"/"nach" (the
+    // clearing-system names Indian standing-instruction debits are routinely narrated with) and
+    // "mandate"/"installment" are included alongside "sip"/"emi" for the same reason -- a real bank
+    // template narration is as likely to say "ECS EMI AUTO DEBIT" as "EMI PAYMENT".
+    private static final Set<String> RECURRING_MANDATE_MARKERS =
+            Set.of("sip", "emi", "ecs", "nach", "mandate", "installment");
+
+    private static boolean looksLikeRecurringMandate(String description) {
+        if (description == null) return false;
+        for (String token : CategoryRules.normalize(description).split(" ")) {
+            if (RECURRING_MANDATE_MARKERS.contains(token)) return true;
+        }
+        return false;
     }
 
     private static List<List<Transaction>> groupBy(List<Transaction> group, java.util.function.Function<Transaction, String> keyFn) {

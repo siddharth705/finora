@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet, Trash2, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type StagingResult } from '../api/endpoints';
 import { newIdempotencyKey } from '../lib/idempotencyKey';
-import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
+import {
+  PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, IMPORT_SESSION_ALREADY_CONFIRMED,
+  ACCOUNT_LIMIT_REACHED, STATEMENT_PERIOD_TOO_LONG,
+} from '../api/errorCodes';
 import { importFailureMessage } from '../api/importFailureMessages';
 import { BankLogo } from '../components/BankLogo';
 import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
@@ -175,14 +178,21 @@ export default function Import() {
   // can never go stale from a PREVIOUS error (e.g. an ACTION_REQUIRED parse failure) while a new,
   // unrelated one (network failure, a validation message, a discard failure) is being shown.
   const [errorActionRequired, setErrorActionRequired] = useState(false);
+  // plans.ts's "Unlimited accounts" / "Extended financial history" Plus/Premium promises: whether
+  // the CURRENT error banner is one of the two Free-tier caps (ACCOUNT_LIMIT_REACHED /
+  // STATEMENT_PERIOD_TOO_LONG), which get a "See Plus plans" link the ordinary confirm-failure
+  // banner doesn't -- same "actionRequired changes the banner" precedent as Sprint 4 item 22 above.
+  const [errorUpgradeRequired, setErrorUpgradeRequired] = useState(false);
 
-  function showError(message: string, actionRequired = false) {
+  function showError(message: string, actionRequired = false, upgradeRequired = false) {
     setError(message);
     setErrorActionRequired(actionRequired);
+    setErrorUpgradeRequired(upgradeRequired);
   }
   function clearError() {
     setError(null);
     setErrorActionRequired(false);
+    setErrorUpgradeRequired(false);
   }
 
   // The queued import currently being watched, if this deployment queues them at all.
@@ -753,7 +763,9 @@ export default function Import() {
       setStep('summary');
       invalidateImportRelatedQueries(queryClient);
     } catch (e: any) {
-      showError(e.response?.data?.message ?? 'Could not complete the import.');
+      const code = e.response?.data?.errorCode;
+      const isUpgradeRequired = code === ACCOUNT_LIMIT_REACHED || code === STATEMENT_PERIOD_TOO_LONG;
+      showError(e.response?.data?.message ?? 'Could not complete the import.', false, isUpgradeRequired);
     } finally {
       setConfirming(false);
     }
@@ -800,7 +812,9 @@ export default function Import() {
       setStep('summary');
       invalidateImportRelatedQueries(queryClient);
     } catch (e: any) {
-      showError(e.response?.data?.message ?? 'Could not complete the import.');
+      const code = e.response?.data?.errorCode;
+      const isUpgradeRequired = code === ACCOUNT_LIMIT_REACHED || code === STATEMENT_PERIOD_TOO_LONG;
+      showError(e.response?.data?.message ?? 'Could not complete the import.', false, isUpgradeRequired);
     } finally {
       setConfirming(false);
     }
@@ -885,6 +899,11 @@ export default function Import() {
         // instead of below it.
         <p className={`text-sm flex items-center gap-2 ${errorActionRequired ? 'text-warning' : 'text-danger'}`}>
           <AlertTriangle size={14} /> {error}
+          {errorUpgradeRequired && (
+            <Link to="/app/billing" className="font-semibold underline whitespace-nowrap">
+              See Plus plans
+            </Link>
+          )}
         </p>
       )}
 

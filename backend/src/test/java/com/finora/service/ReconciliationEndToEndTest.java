@@ -82,7 +82,8 @@ class ReconciliationEndToEndTest {
         reconciliationService = new ReconciliationService(transactionRepository, accountRepository, relationshipService, auditService,
                 transactionGraphService,
                 mock(com.finora.integrations.google.merchant.GmailReconciliationMatcher.class),
-                mock(com.finora.repository.StatementImportRepository.class));
+                mock(com.finora.repository.StatementImportRepository.class),
+                mock(com.finora.observability.ReconciliationMetrics.class));
     }
 
     private Transaction txn(UUID accountId, LocalDate date, String amount, Transaction.Type type,

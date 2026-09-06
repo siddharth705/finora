@@ -80,6 +80,11 @@ export const PLANS: Plan[] = [
     features: [
       'Import statements (PDF & CSV)',
       'Password-protected and multi-account files',
+      // Billing Plan Taxonomy Decision, 2026-08-12's "Unlimited accounts" / "Extended financial
+      // history" Plus differentiators only mean something if Free has a stated limit to grow out
+      // of -- this is that limit, enforced by AccountService.create/ImportController (backend),
+      // not just descriptive copy.
+      'Up to 2 accounts, one month per statement',
       'Automatic categorization that learns',
       'Budgets, goals and reports',
       'Financial dashboard and insights',
@@ -136,6 +141,10 @@ export const COMPARISON: { label: string; free: boolean; plus: boolean; premium:
   { label: 'Transaction categorization', free: true, plus: true, premium: true },
   { label: 'Budget tracking', free: true, plus: true, premium: true },
   { label: 'Learning engine', free: true, plus: true, premium: true },
+  // Was missing here even though it's the first item in Plus's own `features` list above --
+  // this is the Free-tier 2-account cap (AccountService.create, FeatureEntitlement
+  // .UNLIMITED_ACCOUNTS), confirmed final 2026-09-06.
+  { label: 'Unlimited accounts', free: false, plus: true, premium: true },
   { label: 'Advanced analytics', free: false, plus: true, premium: true },
   { label: 'Extended financial history', free: false, plus: true, premium: true },
   { label: 'Long-term trends', free: false, plus: true, premium: true },

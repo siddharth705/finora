@@ -53,6 +53,7 @@ public class TransactionService {
     private final UserRepository userRepository;
     private final SmsProvider smsProvider;
     private final TransactionGroupingService transactionGroupingService;
+    private final com.finora.observability.ReconciliationMetrics reconciliationMetrics;
 
     public TransactionService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
                                AccountRepository accountRepository,
@@ -64,7 +65,8 @@ public class TransactionService {
                                BankManagementService bankManagementService,
                                UserRepository userRepository,
                                SmsProvider smsProvider,
-                               TransactionGroupingService transactionGroupingService) {
+                               TransactionGroupingService transactionGroupingService,
+                               com.finora.observability.ReconciliationMetrics reconciliationMetrics) {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.accountRepository = accountRepository;
@@ -77,6 +79,7 @@ public class TransactionService {
         this.userRepository = userRepository;
         this.smsProvider = smsProvider;
         this.transactionGroupingService = transactionGroupingService;
+        this.reconciliationMetrics = reconciliationMetrics;
     }
 
     // Never a real bank id (BankRegistry ids are short uppercase codes like "PNB"/"OTHER") --
@@ -618,6 +621,17 @@ public class TransactionService {
 
         auditService.record(userId, "TRANSACTION_CONFIRMED_NOT_DUPLICATE", "Transaction", txnId,
                 Map.of("amount", saved.getAmount(), "date", String.valueOf(saved.getTxnDate())));
+
+        // Deliberately last, not right after save(t) above: everything between here and there
+        // (the balance adjustment, a full reconciliation re-run, recurring detection, the audit
+        // write) still runs inside this same @Transactional method and can still throw. A
+        // Micrometer counter is not transactional -- nothing rolls it back -- so incrementing it
+        // any earlier would count an override that a later failure in THIS method then undoes.
+        // This placement can't close the outer window (Spring's proxy commits after this method
+        // returns, so a commit-time failure is still possible), but it removes the much larger,
+        // entirely-avoidable one: this method's own later steps failing before this line is ever
+        // reached.
+        reconciliationMetrics.duplicateOverridden(saved.getSource());
 
         return TransactionDto.from(saved,
                 categoryNamesById(userId).getOrDefault(saved.getCategoryId(), "Uncategorized"));
