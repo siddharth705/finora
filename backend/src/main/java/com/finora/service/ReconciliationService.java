@@ -382,7 +382,23 @@ public class ReconciliationService {
             // A relationship identifier match is independent evidence of a known own-account
             // transfer -- it can trigger this candidate pair's evaluation on its own, without
             // also needing the "payment"-in-description heuristic.
-            boolean looksLikeTransfer = aOwnAccountMatch || CategoryRules.normalize(a.getDescription()).contains("payment");
+            //
+            // Reconciliation benchmark finding A (docs/proposals/reconciliation-benchmark/
+            // benchmark-report.md, roadmap item #1): the plain "payment" substring alone missed
+            // most real transfer-rail narrations against this project's own real bank-statement
+            // corpus -- of every NEFT/IMPS/RTGS/UPI-shaped line across 29 real statements, only
+            // ~1% also contained the word "payment". CategoryRules' own "Transfer" keyword list
+            // ("neft to", "imps to", "autopay", "billdesk", "cc payment", "card bill payment") is
+            // reused here rather than inventing new keywords -- it is already vetted,
+            // word-boundary-matched vocabulary this project trusts for the identical
+            // categorization decision, so widening this gate with it carries no new keyword-choice
+            // risk. This does not close every gap the benchmark found (RTGS and a bare "self
+            // transfer"/wallet narration carry none of these keywords either), by design -- see
+            // the roadmap's own note that this is deliberately the smallest, lowest-risk slice,
+            // re-measured against the benchmark before any further widening.
+            boolean looksLikeTransfer = aOwnAccountMatch
+                    || CategoryRules.normalize(a.getDescription()).contains("payment")
+                    || "Transfer".equals(CategoryRules.suggestCategory(a.getDescription()));
             if (!looksLikeTransfer) continue;
 
             // Only the transactions that could possibly satisfy the daysApart check below, found
