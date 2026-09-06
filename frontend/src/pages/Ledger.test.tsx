@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Ledger from './Ledger';
-import { transactionsApi, categoriesApi } from '../api/endpoints';
+import { transactionsApi, categoriesApi, accountsApi, budgetsApi } from '../api/endpoints';
 import type { Transaction } from '../types';
 
 // Ledger has no prior test file -- this covers only what this change adds (the "Why this
@@ -18,7 +18,19 @@ vi.mock('../api/endpoints', () => ({
     update: vi.fn(),
   },
   categoriesApi: { list: vi.fn(), options: vi.fn(), create: vi.fn() },
+  // Redesign added the KPI row's account column and "This Month" budget card -- both fetch
+  // through these two, on top of the transactions/categories calls this file already mocked.
+  accountsApi: { list: vi.fn() },
+  budgetsApi: { list: vi.fn() },
 }));
+
+// Safe defaults for every test in this file -- most tests care about transactions/categories
+// behavior and never override these two, so they'd otherwise resolve to `undefined` and throw
+// inside the KPI row's `(accounts ?? []).map(...)` / `(budgets ?? []).map(...)`.
+beforeEach(() => {
+  vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+});
 
 // Real MerchantGroupReviewCard calls transactionsApi.groupsNeedsReview, which the mock above
 // doesn't define -- this file's tests are about the "Why this category?" panel, not the merchant-
@@ -187,15 +199,17 @@ describe('Ledger — Status column', () => {
     });
     renderLedger();
 
-    await screen.findByText('AMAZON PAY');
+    const description = await screen.findByText('AMAZON PAY');
+    const row = description.closest('tr')!;
 
-    // Exhaustive, not a name-pattern guess: an OK row's only buttons are "Why this category?"
-    // (the category cell's icon), the two row actions, and pagination -- anything beyond that
-    // set IS a Status badge, whatever it happens to be labelled. A regex over the six known
+    // Exhaustive within the ROW, not a name-pattern guess: an OK row's only buttons are "Why
+    // this category?" (the category cell's icon) and the two row actions -- anything beyond
+    // that set IS a Status badge, whatever it happens to be labelled. A regex over the six known
     // non-OK labels would pass even if OK itself grew a badge, since "OK"/"Ordinary" wouldn't
-    // match that pattern.
-    const buttonNames = screen.getAllByRole('button').map((b) => b.getAttribute('title') ?? b.getAttribute('aria-label'));
-    expect(buttonNames).toEqual(['Why this category?', 'Edit transaction', 'Delete transaction', 'Previous page', 'Next page']);
+    // match that pattern. Scoped to the row (not the whole page) since the redesign added
+    // page-level buttons (category chips, numbered pagination) this assertion isn't about.
+    const buttonNames = within(row).getAllByRole('button').map((b) => b.getAttribute('title') ?? b.getAttribute('aria-label'));
+    expect(buttonNames).toEqual(['Why this category?', 'Edit transaction', 'Delete transaction']);
   });
 
   it('shows a human label, not the raw enum, for a flagged transaction', async () => {
@@ -553,5 +567,74 @@ describe('Ledger — Phase 2 table skeleton and IconButton migration', () => {
 
     expect(await screen.findByRole('button', { name: 'Previous page' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next page' })).toBeInTheDocument();
+  });
+});
+
+// Redesign: KPI row (Total Spent / Transactions / Top Category / This Month) computed from a
+// bounded stats fetch, and category chips (with real counts) that filter the ledger by category.
+describe('Ledger — KPI row and category chips', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows total spend across the filtered window and lets a category chip filter the ledger', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [
+        txn({ id: 't1', categoryId: 'cat-1', categoryName: 'Shopping', amount: 1000, type: 'EXPENSE' }),
+        txn({ id: 't2', categoryId: 'cat-1', categoryName: 'Shopping', amount: 500, type: 'EXPENSE' }),
+        txn({ id: 't3', categoryId: 'cat-2', categoryName: 'Travel', amount: 200, type: 'EXPENSE' }),
+      ],
+      page: 0, size: 10, totalElements: 3, totalPages: 1,
+    });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Shopping', isSystem: false, icon: 'shopping-bag', color: 'blue' },
+      { id: 'cat-2', name: 'Travel', isSystem: false, icon: 'plane', color: 'green' },
+    ]);
+    const user = userEvent.setup();
+    renderLedger();
+
+    // Total Spent KPI: 1000 + 500 + 200.
+    expect(await screen.findByText('₹1,700')).toBeInTheDocument();
+
+    await waitFor(() => expect(transactionsApi.search).toHaveBeenCalled());
+    vi.mocked(transactionsApi.search).mockClear();
+
+    await user.click(await screen.findByRole('button', { name: /travel\s*1/i }));
+
+    await waitFor(() =>
+      expect(transactionsApi.search).toHaveBeenCalledWith(expect.objectContaining({ categoryId: 'cat-2', page: 0 }))
+    );
+  });
+});
+
+// Redesign: the new Account column resolves each row's accountId against accountsApi.list(),
+// rendering the bank's own branding and the same masked-number reveal control the rest of the
+// app already uses (MaskedAccountNumber) rather than a bespoke, unmasked rendering.
+describe('Ledger — account column', () => {
+  it("shows the row's bank name and masked account number once account data loads", async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ accountId: 'acc-1' })], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([
+      {
+        id: 'acc-1', name: 'My HDFC', accountType: 'SAVINGS', balance: 1000,
+        accountNumberMasked: 'XXXXXX4582',
+        bank: {
+          id: 'hdfc', officialName: 'HDFC Bank', shortName: 'HDFC Bank', colorHex: '#004C8F',
+          initials: 'HD', logoPath: '/assets/banks/hdfc.svg', category: 'PRIVATE',
+          websiteUrl: null, ifscPrefix: 'HDFC', supportedAccountTypes: ['SAVINGS'],
+        },
+        lastImportedAt: null, lastStatementPeriodStart: null, lastStatementPeriodEnd: null,
+        statementsCount: 0, transactionsCount: 1, status: 'ACTIVE',
+      },
+    ]);
+    renderLedger();
+
+    expect(await screen.findByText('HDFC Bank')).toBeInTheDocument();
+    // Hidden behind the same reveal-on-click placeholder as Setup.tsx/Import.tsx -- not the raw
+    // masked string rendered outright.
+    expect(screen.getByText('•••• ••••')).toBeInTheDocument();
   });
 });
