@@ -62,6 +62,7 @@ const groups: AccountStatementGroup[] = [{
     transactionsSkipped: 0,
     importedAt: '2026-08-01T10:00:00Z',
     duplicateCount: 0,
+    storedSize: null,
   }],
 }];
 

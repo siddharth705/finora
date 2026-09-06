@@ -60,6 +60,9 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
         int getTransactionsImported();
         int getTransactionsSkipped();
         Instant getImportedAt();
+        // Null for a legacy row or any row confirmed with no storage provider configured -- see
+        // StatementImport.storedSize's own doc comment.
+        Long getStoredSize();
     }
 
     @Query("""
@@ -68,7 +71,7 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
                   s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
                   s.totalAmountDue AS totalAmountDue, s.paymentDueDate AS paymentDueDate,
                   s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
-                  s.importedAt AS importedAt
+                  s.importedAt AS importedAt, s.storedSize AS storedSize
              FROM StatementImport s
             WHERE s.userId = :userId
             ORDER BY s.importedAt DESC
@@ -84,7 +87,7 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
                   s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
                   s.totalAmountDue AS totalAmountDue, s.paymentDueDate AS paymentDueDate,
                   s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
-                  s.importedAt AS importedAt
+                  s.importedAt AS importedAt, s.storedSize AS storedSize
              FROM StatementImport s
             WHERE s.userId = :userId AND s.accountId IN :accountIds
             ORDER BY s.importedAt DESC
@@ -108,7 +111,7 @@ public interface StatementImportRepository extends JpaRepository<StatementImport
                   s.openingBalance AS openingBalance, s.closingBalance AS closingBalance,
                   s.totalAmountDue AS totalAmountDue, s.paymentDueDate AS paymentDueDate,
                   s.transactionsImported AS transactionsImported, s.transactionsSkipped AS transactionsSkipped,
-                  s.importedAt AS importedAt
+                  s.importedAt AS importedAt, s.storedSize AS storedSize
              FROM StatementImport s
             WHERE s.userId = :userId AND s.accountId = :accountId
               AND s.statementPeriodStart IS NOT NULL AND s.statementPeriodEnd IS NOT NULL
