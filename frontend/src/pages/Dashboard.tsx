@@ -295,6 +295,10 @@ export default function Dashboard() {
     return `${m.category}: ${fmt(m.currentAmount)} vs ${fmt(m.priorAmount)} (${pctText})`;
   });
 
+  // iconBg/iconColor below are dead under the KPI grid's variant="elevated" (it always renders a
+  // uniform graphite/cream medallion, see MetricCard.tsx) -- kept anyway because MetricCard's
+  // default variant (Reports/Investments/Budgets) still requires them, and duplicating this array
+  // with/without color per variant would be its own bug risk.
   const kpis = [
     { label: 'Total Balance', value: fmt(summary.currentBalance), delta: null as number | null, icon: Wallet, iconBg: 'bg-blue-100', iconColor: 'text-blue-600' },
     { label: 'Total Income', value: fmt(summary.monthlyIncome), delta: summary.incomeDeltaPct, icon: ArrowDownCircle, iconBg: 'bg-green-100', iconColor: 'text-green-600', gateReasonText: comparisonGateReasonText },
@@ -305,16 +309,56 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="mb-8">
-        <h1 className="text-[26px] font-bold text-ink mb-1">{greeting(settingsQ.data?.timezone)}, {firstName}! 👋</h1>
-        <p className="text-muted text-sm">
-          Here's what's happening with your finances today.
-          {!summary.reportingMonthIsCurrent && summary.reportingMonth && (
-            // Not a warning -- reporting on the newest month with data is the intended behaviour.
-            // What was missing is that nothing said which month, so the figures read as current.
-            <> Your latest figures are from <span className="font-medium text-ink">{periodLabel}</span>.</>
-          )}
-        </p>
+      <div className="relative overflow-hidden bg-card rounded-xl2 border border-border shadow-card mb-8 px-6 py-6 lg:pr-4">
+        <div className="relative z-10 lg:max-w-[62%]">
+          <h1 className="text-[26px] font-bold text-ink mb-1">{greeting(settingsQ.data?.timezone)}, {firstName}! 👋</h1>
+          <p className="text-muted text-sm mb-4">
+            Here's what's happening with your finances today.
+            {!summary.reportingMonthIsCurrent && summary.reportingMonth && (
+              // Not a warning -- reporting on the newest month with data is the intended behaviour.
+              // What was missing is that nothing said which month, so the figures read as current.
+              <> Your latest figures are from <span className="font-medium text-ink">{periodLabel}</span>.</>
+            )}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {/* !isEmpty here too, not just healthScoreAvailable: the full Financial Health Score
+                card below gates on !isEmpty (see its own comment), and healthScoreAvailable comes
+                from a separately-computed backend transaction count that isn't guaranteed to
+                agree with recentTxnsQ's totalElements -- without this, a zero-transaction account
+                could show a score in this preview chip while the section it summarizes stays
+                hidden. */}
+            {!isEmpty && summary.healthScoreAvailable && (
+              <span className={`inline-flex items-center gap-1.5 rounded-full border border-border bg-bg px-3 py-1.5 text-xs font-semibold ${healthColor(summary.healthLabel!)}`}>
+                <ShieldCheck size={13} /> Financial Health: {summary.healthLabel} · {summary.healthScore}/100
+              </span>
+            )}
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg px-3 py-1.5 text-xs font-semibold text-primary">
+              <PiggyBank size={13} /> Savings rate {summary.savingsRatePct.toFixed(0)}%
+            </span>
+          </div>
+        </div>
+        {/* Purely decorative -- the illustration carries no information the heading/chips above
+            don't already state, so the whole region is hidden from assistive tech rather than
+            given (unhelpful, made-up) alt text. Hidden below `lg`: there isn't room for a side
+            illustration without shrinking or overlapping the greeting text on a narrow viewport. */}
+        <div
+          data-testid="dashboard-hero-illustration"
+          aria-hidden="true"
+          className="hidden lg:block absolute inset-y-0 right-0 w-[42%]"
+        >
+          <svg viewBox="0 0 380 220" className="absolute inset-0 w-full h-full" preserveAspectRatio="xMaxYMid slice">
+            <polygon
+              points="0,220 40,150 70,158 110,120 150,138 190,100 230,122 270,86 310,108 340,72 380,92 380,220"
+              className="fill-primary/[0.05]"
+            />
+            <polyline
+              points="0,170 40,150 70,158 110,120 150,138 190,100 230,122 270,86 310,108 340,72 380,92"
+              className="stroke-primary/[0.35]"
+              fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+            />
+            <circle cx="340" cy="72" r="4.5" className="fill-primary" />
+          </svg>
+        </div>
       </div>
 
       {/* Limited-history banner. The KPI deltas and health score below are real, computed numbers
@@ -358,6 +402,7 @@ export default function Dashboard() {
             invertDelta={k.invertDelta}
             gateReasonText={k.gateReasonText}
             moverLines={k.moverLines}
+            variant="elevated"
           />
         ))}
       </div>
