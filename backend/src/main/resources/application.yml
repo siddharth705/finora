@@ -235,9 +235,12 @@ app:
     # Optional display name shown alongside from-address -- unset means every real mail client
     # just shows the bare address, exactly the previous behavior.
     from-name: ${EMAIL_FROM_NAME:}
-    # Subscription billing V3 -- billing/subscription emails send from this address instead of
-    # from-address above (product decision). Override via EMAIL_BILLING_FROM if a given
-    # environment's Resend account has a different domain verified.
+    # EmailMessage.Sender.SUPPORT resolves here -- see that enum's own doc comment for which
+    # emails use it (held-import/held-statement notices, where a reply should reach a person).
+    support-from-address: ${EMAIL_FROM_SUPPORT:support@fynora.net} # synthetic-ok: Fynora's own support mailbox
+    # EmailMessage.Sender.BILLING resolves here (Subscription Billing V3) -- billing/subscription
+    # emails send from this address instead of from-address above (product decision). Override via
+    # EMAIL_BILLING_FROM if a given environment's Resend account has a different domain verified.
     billing-from-address: ${EMAIL_BILLING_FROM:billing@fynora.net} # synthetic-ok: Fynora's own billing mailbox, not customer PII
     app-base-url: ${APP_BASE_URL:http://localhost:5173}
     # Optional -- the user frontend and admin portal are two separate deployed apps at two
