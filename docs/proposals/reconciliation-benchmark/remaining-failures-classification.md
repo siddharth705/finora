@@ -82,7 +82,56 @@ groups resolve in the first two branches before ever reaching the new guard.
 
 **11 failures remain** (down from 13, 14, 16, and the original 18).
 
-Reasoning, weighing all four axes together:
+## 3b. First-match-wins → best-candidate transfer scoring — ✅ IMPLEMENTED (next in sequence)
+
+Per the sequencing already agreed (SIP/EMI guard, then this, then stop for production telemetry):
+the transfer pass's inner loop now collects every candidate that already passes the structural
+checks (different account, opposite type, not salary, amount within tolerance, within the
+applicable day window) instead of committing to the first one found in `(date, id)` sort order, and
+scores each with `transferCandidateScore(relationshipMatch, daysApart, dayWindow)`:
+
+- **Own-account relationship match: +40** — a user-configured `OWN_ACCOUNT` identifier hit on
+  either side, the strongest evidence this pass has.
+- **Date proximity: 0–20, linearly decaying from the anchor date to the window's edge** — the same
+  shape `ConfidenceScorer`'s own `date_decay` already uses elsewhere in this file, deliberately
+  reused rather than invented fresh.
+
+**Scoped down from the original four-signal sketch (own-account, same day, same description, known
+account pair) to these two, and here is why, not just what:** the benchmark's own before/after
+measurement only needed these two signals to resolve both scenarios it found. "Same description"
+has no natural meaning for a transfer pair specifically — the two legs of a real transfer routinely
+read nothing alike ("CREDIT CARD PAYMENT" vs. "PAYMENT RECEIVED THANK YOU"), unlike the duplicate
+pass, where identical description *is* the signal. "Known account pair" would mean querying past
+confirmed edges between the same two specific accounts — real, plausible future work, but a
+genuinely different, stateful mechanism from what a single candidate's own fields can answer today,
+and it isn't included by default just because a sketch named it; it would need its own evidence
+first, the same discipline every other change in this file has followed.
+
+**Re-measured result:**
+
+```
+Before this change:  81.4% overall (48/59), transfers 65% (11/17)
+After this change:   84.7% overall (50/59), transfers 76.5% (13/17)
+```
+
+`multipleCandidateMatches_firstMatchWins_...` and `ambiguousTransferSelection_...` both now pass —
+the two scenarios this fix targeted. Full regression check (`ReconciliationServiceTest`,
+`ReconciliationEndToEndTest`, the whole `com.finora.service`/`transactions`/`util`/`imports`/
+`rules`/`controller`/`repository` test surface, plus the Postgres-backed
+`ReconciliationAuditVolumeIT` and the opt-in `ReconciliationScalingBenchmark`) is unaffected — every
+scenario with only one qualifying candidate (the overwhelming majority of existing tests) picks the
+same candidate it always did, since scoring only changes the outcome when two or more candidates
+are actually competing.
+
+**9 failures remain.** Per the agreed plan, this is the stopping point for benchmark-driven changes
+this cycle — the next improvements should come from production telemetry on real user data, not
+further synthetic-scenario optimization. See §1's table above for what's left and why each is
+parked for now.
+
+---
+
+Reasoning for picking the SIP/EMI guard over this fix first, weighing all four axes together
+(preserved from before either was implemented, since it's what justified the sequencing):
 
 - **Class severity:** data loss is a strictly worse failure mode than misclassification for a
   personal-finance app specifically because it is *silent in a way nothing else in this table is* —

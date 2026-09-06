@@ -11,13 +11,14 @@ before any other reconciliation logic changed.
 `CategoryRules`, `DuplicateMatching`.
 **Benchmark:** 59 scenarios across 6 categories, executed against the real
 `ReconciliationService` code path (mocked persistence only — see `README.md`).
-**Implemented, in order:** roadmap item #1 (transfer keyword-gate widening, §7); item 1a from
-`post-fix-failure-analysis.md` (`"rtgs"`/`"self transfer"`, 76.3% / 65% transfers); item #2
-(investment keyword word-boundary fusion fix, 78.0% / 100% investment transfers); and the SIP/EMI
-duplicate-merge guard from `remaining-failures-classification.md` (a recurring-mandate marker check
-in `splitByDiscriminator`'s undiscriminated fallback — now at **81.4% overall, 78% duplicate
-detection**). See `remaining-failures-classification.md` for the full, current before/after trail
-and the 11 failures still open. Nothing else in this report has been implemented.
+**Implemented, in order:** roadmap item #1 (transfer keyword-gate widening, §7); item 1a
+(`"rtgs"`/`"self transfer"`, 76.3% / 65% transfers); item #2 (investment word-boundary fusion,
+78.0% / 100% investment transfers); the SIP/EMI duplicate-merge guard (81.4% / 78% duplicate
+detection); and best-candidate transfer scoring, replacing first-match-wins (84.7% overall, 76.5%
+transfers). See `remaining-failures-classification.md` for the full, current before/after trail —
+**9 failures remain**, and per the agreed plan this is the stopping point for benchmark-driven
+changes; further work should be driven by production telemetry. Nothing beyond these five changes
+has been implemented.
 
 ---
 
