@@ -26,6 +26,11 @@ jest.mock('../navigation/RootNavigator', () => {
   return { RootNavigator: () => <RNText>navigator</RNText> };
 });
 
+// AuthProvider (mounted for real here, via App) now calls configureRevenueCat() at sign-in --
+// unmocked, this pulls in the real react-native-purchases package, which Jest can't transform
+// (an ESM-only transitive dependency). This test has nothing to do with RevenueCat.
+jest.mock('../lib/revenueCat', () => ({ configureRevenueCat: jest.fn() }));
+
 /**
  * Two different things are proved here, and the second is the one that matters.
  *

@@ -4,6 +4,11 @@ import { QueryClient, QueryClientProvider, dehydrate } from '@tanstack/react-que
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider, useAuth } from './AuthContext';
 
+// AuthProvider now calls configureRevenueCat() at sign-in -- unmocked, this pulls in the real
+// react-native-purchases package, which Jest can't transform (an ESM-only transitive dependency).
+// This test has nothing to do with RevenueCat.
+jest.mock('../lib/revenueCat', () => ({ configureRevenueCat: jest.fn() }));
+
 /**
  * The AsyncStorage counterpart of MOB-AUTH-02 (logoutCacheIsolation.test.tsx). That test proved
  * signing out clears the IN-MEMORY React Query cache -- queryClient.clear() has no way to reach a
