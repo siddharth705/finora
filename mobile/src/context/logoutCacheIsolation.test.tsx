@@ -4,6 +4,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './AuthContext';
 import { sweepFileCache } from '../lib/fileCacheSweep';
 
+// AuthProvider now calls configureRevenueCat() at sign-in -- unmocked, this pulls in the real
+// react-native-purchases package, which Jest can't transform (an ESM-only transitive dependency).
+// This test has nothing to do with RevenueCat.
+jest.mock('../lib/revenueCat', () => ({ configureRevenueCat: jest.fn() }));
+
 /**
  * MOB-AUTH-02 -- logout must not leave one person's money in the cache for the next.
  *

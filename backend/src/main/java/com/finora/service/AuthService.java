@@ -265,7 +265,7 @@ public class AuthService {
                 user.getAccountScope());
         String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(),
-                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()), user.getId());
     }
 
     /**
@@ -676,7 +676,7 @@ public class AuthService {
                 user.getAccountScope());
         String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(), user.isPhoneVerified(),
-                PhoneMasking.mask(user.getPhoneNumber()));
+                PhoneMasking.mask(user.getPhoneNumber()), user.getId());
     }
 
     /**
@@ -872,7 +872,7 @@ public class AuthService {
                 user.getAccountScope());
         String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(),
-                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()), user.getId());
     }
 
     /** Provider-specific labels/audit-action names/signInMethod {@link #loginWithOAuthIdentity}
@@ -1127,7 +1127,7 @@ public class AuthService {
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
                 user.getAccountScope());
         return new AuthResponse(accessToken, issued.rawToken(), user.getEmail(), user.getFullName(),
-                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()));
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()), user.getId());
     }
 
     /**

@@ -126,4 +126,96 @@ describe('MetricCard', () => {
     await user.click(screen.getByRole('button', { name: 'Hide' }));
     expect(screen.queryByText(/Dining/)).not.toBeInTheDocument();
   });
+
+  it('variant="elevated" still colors the icon badge with the metric\'s own iconBg/iconColor', () => {
+    render(
+      <MetricCard
+        label="Total Expenses" value="₹5,000" icon={Wallet} iconBg="bg-red-100" iconColor="text-red-600"
+        variant="elevated"
+      />
+    );
+    const icon = document.querySelector('svg.lucide-wallet') as SVGElement;
+    expect(icon).toHaveClass('text-red-600');
+    expect(icon.parentElement).toHaveClass('bg-red-100');
+  });
+
+  it('variant="elevated" renders the delta as a colored pill instead of plain text', () => {
+    render(
+      <MetricCard
+        label="Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600"
+        delta={12.3} deltaLabel="vs last month" variant="elevated"
+      />
+    );
+    const chip = screen.getByText('▲ 12.3%');
+    expect(chip).toHaveClass('bg-success-bg', 'text-success');
+    expect(screen.getByText('vs last month')).toBeInTheDocument();
+  });
+
+  it('variant="elevated" inverts the pill color for expense-like metrics', () => {
+    render(
+      <MetricCard
+        label="Expenses" value="₹500" icon={Wallet} iconBg="bg-red-100" iconColor="text-red-600"
+        delta={-5} deltaLabel="vs last month" invertDelta variant="elevated"
+      />
+    );
+    expect(screen.getByText('▼ 5.0%')).toHaveClass('bg-success-bg', 'text-success');
+  });
+
+  it('variant="elevated" still supports the movers "Why?" disclosure', async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricCard
+        label="Total Expenses" value="₹45,000" icon={Wallet} iconBg="bg-red-100" iconColor="text-red-600"
+        delta={60} deltaLabel="vs last month" invertDelta variant="elevated"
+        moverLines={['Dining: ₹8,000 vs ₹5,000 (+60%)']}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: 'Why?' }));
+    expect(screen.getByText(/Dining: ₹8,000/)).toBeInTheDocument();
+  });
+
+  it('variant="elevated" never renders a "Why?" toggle on a real delta with no movers, even with a stale gate reason', () => {
+    render(
+      <MetricCard
+        label="Total Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600"
+        delta={12.3} deltaLabel="vs last month" variant="elevated"
+        gateReasonText="Last month has fewer than 3 transactions, too few to compare reliably."
+      />
+    );
+    expect(screen.queryByRole('button', { name: /why/i })).not.toBeInTheDocument();
+  });
+
+  it('variant="elevated" renders a muted placeholder (no pill) when there is no delta value yet', () => {
+    render(
+      <MetricCard
+        label="Balance" value="₹500" icon={Wallet} iconBg="bg-blue-100" iconColor="text-blue-600"
+        deltaLabel="vs last month" variant="elevated"
+      />
+    );
+    expect(screen.getByText('— vs last month')).toBeInTheDocument();
+  });
+
+  it('variant="elevated" reveals a gate reason on the muted placeholder, and hides it again on a second click', async () => {
+    const user = userEvent.setup();
+    render(
+      <MetricCard
+        label="Total Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600"
+        deltaLabel="vs last month" variant="elevated"
+        gateReasonText="Last month has fewer than 3 transactions, too few to compare reliably."
+      />
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Why?' }));
+    expect(screen.getByText(/fewer than 3 transactions/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Hide' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.queryByText(/fewer than 3 transactions/)).not.toBeInTheDocument();
+  });
+
+  it('defaults to the original plain-text delta line when no variant is given', () => {
+    render(<MetricCard label="Income" value="₹500" icon={Wallet} iconBg="bg-green-100" iconColor="text-green-600" delta={12.3} deltaLabel="vs last month" />);
+    const line = screen.getByText(/12\.3% vs last month/);
+    expect(line).toHaveClass('text-success');
+  });
 });

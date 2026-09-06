@@ -27,6 +27,21 @@ describe('configureRevenueCat', () => {
       expect.objectContaining({ appUserID: '11111111-1111-1111-1111-111111111111' })
     );
   });
+
+  // RevenueCat's own docs (identifying-customers.md, pulled via context7): "You should configure
+  // the SDK only once in your code." AuthContext calls configureRevenueCat() from two different
+  // convergence points (cold-start restore AND every fresh login/register/etc.) precisely because
+  // either one might be the first time a session sees an authenticated user -- without this guard,
+  // a user who was already signed in at cold start and then, say, completes phone verification
+  // would have Purchases.configure() invoked a second time in the same process.
+  it('configures only once per process even if called again for the same session', () => {
+    configureRevenueCat('11111111-1111-1111-1111-111111111111');
+    mockedPurchases.configure.mockClear();
+
+    configureRevenueCat('11111111-1111-1111-1111-111111111111');
+
+    expect(mockedPurchases.configure).not.toHaveBeenCalled();
+  });
 });
 
 describe('purchasePlan', () => {

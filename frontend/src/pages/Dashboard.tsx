@@ -305,16 +305,69 @@ export default function Dashboard() {
 
   return (
     <div>
-      <div className="mb-8">
-        <h1 className="text-[26px] font-bold text-ink mb-1">{greeting(settingsQ.data?.timezone)}, {firstName}! 👋</h1>
-        <p className="text-muted text-sm">
-          Here's what's happening with your finances today.
-          {!summary.reportingMonthIsCurrent && summary.reportingMonth && (
-            // Not a warning -- reporting on the newest month with data is the intended behaviour.
-            // What was missing is that nothing said which month, so the figures read as current.
-            <> Your latest figures are from <span className="font-medium text-ink">{periodLabel}</span>.</>
-          )}
-        </p>
+      <div className="relative overflow-hidden bg-card rounded-xl2 border border-border shadow-card mb-8 px-6 py-6 lg:pr-4">
+        <div className="relative z-10 lg:max-w-[62%]">
+          <h1 className="text-[26px] font-bold text-ink mb-1">{greeting(settingsQ.data?.timezone)}, {firstName}! 👋</h1>
+          <p className="text-muted text-sm mb-4">
+            Here's what's happening with your finances today.
+            {!summary.reportingMonthIsCurrent && summary.reportingMonth && (
+              // Not a warning -- reporting on the newest month with data is the intended behaviour.
+              // What was missing is that nothing said which month, so the figures read as current.
+              <> Your latest figures are from <span className="font-medium text-ink">{periodLabel}</span>.</>
+            )}
+          </p>
+          {/* Quick actions, not a second reading of the Financial Health / Savings Rate numbers --
+              both already sit one glance below (the KPI row and the Financial Health Score card),
+              so repeating them here added nothing. These two are the shortest path to the two
+              most common next steps, not a duplicate of the full Quick Actions grid further down
+              the page (which covers all seven). */}
+          <div className="flex flex-wrap gap-2">
+            {/* Primary styling on Import Statement, not Add Transaction: it's the one action that
+                actually grows what the whole dashboard has to show (a fresh statement adds a whole
+                month of data; one manual transaction adds one row) -- same reasoning the empty
+                states elsewhere on this page already give importing top billing over manual entry. */}
+            <Link
+              to="/app/import"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary text-on-primary hover:bg-primary-dark px-3.5 py-2 text-xs font-semibold transition-colors shadow-card"
+            >
+              <UploadCloud size={14} /> Import Statement
+            </Link>
+            <button
+              type="button"
+              onClick={() => setShowAddModal(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-bg hover:bg-surface px-3.5 py-2 text-xs font-semibold text-ink transition-colors"
+            >
+              <Plus size={14} /> Add Transaction
+            </button>
+          </div>
+        </div>
+        {/* Purely decorative -- the illustration and quote carry no information the heading/chips
+            above don't already state, so the whole region is hidden from assistive tech rather
+            than given (unhelpful, made-up) alt text. Hidden below `lg`: there isn't room for a
+            side illustration without shrinking or overlapping the greeting text on a narrow
+            viewport. */}
+        <div
+          data-testid="dashboard-hero-illustration"
+          aria-hidden="true"
+          className="hidden lg:block absolute inset-y-0 right-0 w-[42%]"
+        >
+          <p className="absolute top-0 right-1 max-w-[190px] text-right text-xs italic text-muted leading-snug">
+            "Small steps today, bigger goals tomorrow."
+            <span className="block not-italic font-semibold text-ink/50 mt-1 text-[11px]">— Fynora</span>
+          </p>
+          <svg viewBox="0 0 380 220" className="absolute inset-0 w-full h-full" preserveAspectRatio="xMaxYMid slice">
+            <polygon
+              points="0,220 40,150 70,158 110,120 150,138 190,100 230,122 270,86 310,108 340,72 380,92 380,220"
+              className="fill-primary/[0.05]"
+            />
+            <polyline
+              points="0,170 40,150 70,158 110,120 150,138 190,100 230,122 270,86 310,108 340,72 380,92"
+              className="stroke-primary/[0.35]"
+              fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+            />
+            <circle cx="340" cy="72" r="4.5" className="fill-primary" />
+          </svg>
+        </div>
       </div>
 
       {/* Limited-history banner. The KPI deltas and health score below are real, computed numbers
@@ -358,6 +411,7 @@ export default function Dashboard() {
             invertDelta={k.invertDelta}
             gateReasonText={k.gateReasonText}
             moverLines={k.moverLines}
+            variant="elevated"
           />
         ))}
       </div>
@@ -639,9 +693,26 @@ export default function Dashboard() {
                 <Doughnut
                   data={{
                     labels: categoryEntries.map(([k]) => k),
-                    datasets: [{ data: categoryEntries.map(([, v]) => v), backgroundColor: categoryEntries.map((_, i) => donutColors[i % donutColors.length]), borderWidth: 0 }],
+                    datasets: [{
+                      data: categoryEntries.map(([, v]) => v),
+                      backgroundColor: categoryEntries.map((_, i) => donutColors[i % donutColors.length]),
+                      borderWidth: 0,
+                      // The hovered slice pushes outward -- Chart.js's own built-in affordance for
+                      // "this wedge is interactive", not a plugin. No hoverBorderColor: a canvas
+                      // fillStyle/strokeStyle needs a resolved color, not a live `var(--color-card)`
+                      // reference (canvas isn't part of the CSS cascade), and hardcoding one shade
+                      // would be wrong in the other theme.
+                      hoverOffset: 10,
+                    }],
                   }}
-                  options={{ cutout: '72%', plugins: { legend: { display: false } } }}
+                  options={{
+                    cutout: '72%',
+                    plugins: { legend: { display: false } },
+                    // animateScale (grow from center) alongside the default rotate -- Chart.js's
+                    // usual arc-only rotate reads as static on a donut this small; the two together
+                    // are what actually reads as "the chart appearing", not just a color change.
+                    animation: { animateRotate: true, animateScale: true, duration: 900, easing: 'easeOutQuart' },
+                  }}
                 />
                 <div className="absolute inset-0 flex flex-col items-center justify-center">
                   <span className="text-lg font-bold text-ink">{fmt(totalSpend)}</span>
@@ -1081,8 +1152,17 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
       data={{
         labels,
         datasets: [
-          { label: 'Income', data: series.map((s) => s.income), borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)', fill: true, tension: 0.3 },
-          { label: 'Expenses', data: series.map((s) => s.expense), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3 },
+          {
+            label: 'Income', data: series.map((s) => s.income), borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)', fill: true, tension: 0.3,
+            // Points stay invisible at rest (radius 0, matching how this chart already looked) and
+            // only appear on hover -- pointHoverRadius is what actually reads as "hovering did
+            // something", not just the tooltip box appearing off to the side.
+            pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: '#16a34a', pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2,
+          },
+          {
+            label: 'Expenses', data: series.map((s) => s.expense), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3,
+            pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: '#ef4444', pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2,
+          },
         ],
       }}
       options={{
@@ -1092,6 +1172,12 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
         // DashboardService) and live the moment the component or this options object is reused
         // for a net series -- which is exactly how the same bug got everywhere else it was fixed.
         scales: { y: { ticks: { callback: (v) => fmt(Number(v)) } } },
+        animation: { duration: 900, easing: 'easeOutQuart' },
+        // mode: 'index' + intersect: false -- hovering anywhere along a month's x-position shows
+        // both Income and Expenses together, not just whichever line's pixel the cursor happens to
+        // sit exactly on (Chart.js's default `intersect: true` misses if the cursor is a pixel off
+        // a thin line, which is most of the chart's area on a click-and-drag trackpad).
+        interaction: { mode: 'index' as const, intersect: false },
       }}
     />
   );

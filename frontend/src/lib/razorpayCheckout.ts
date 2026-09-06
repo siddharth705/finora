@@ -14,7 +14,11 @@ export interface RazorpayCheckoutOptions {
   // app reads it.
   handler?: (response: { razorpay_payment_id: string }) => void;
   modal?: { ondismiss?: () => void };
-  prefill?: { email?: string; name?: string };
+  // `name` here is the CUSTOMER's name, distinct from the top-level `name` above (the merchant
+  // name shown in the widget header, always "Fynora"). `contact` is Razorpay's own field for a
+  // prefilled phone number -- bug found in review: this was missing entirely, so Fynora's
+  // already-known, OTP-verified phone number never reached the widget.
+  prefill?: { email?: string; contact?: string; name?: string };
   theme?: { color?: string };
 }
 

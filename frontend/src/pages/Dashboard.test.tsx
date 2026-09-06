@@ -286,6 +286,41 @@ describe('Dashboard — Financial Health Score', () => {
     expect(card.queryByText('Your savings rate was 18.5%.')).not.toBeInTheDocument();
     expect(card.getByText('You have no credit cards on file.')).toBeInTheDocument();
   });
+
+  it('renders KPI cards with the elevated visual treatment', async () => {
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    const balanceValue = screen.getByText('₹50,000');
+    expect(balanceValue).toHaveClass('font-display');
+  });
+
+  it('wraps the greeting in a hero card with a decorative, hidden illustration', async () => {
+    renderDashboard();
+
+    const heading = await screen.findByRole('heading', { level: 1 });
+    expect(heading.textContent).toMatch(/👋/);
+
+    const illustration = document.querySelector('[data-testid="dashboard-hero-illustration"]');
+    expect(illustration).toBeTruthy();
+    expect(illustration).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('offers Import Statement and Add Transaction quick actions in the hero, not a repeat of the Financial Health/Savings Rate numbers already shown just below', async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    const heading = await screen.findByRole('heading', { level: 1 });
+    const hero = within(heading.closest('div.bg-card') as HTMLElement);
+
+    expect(hero.queryByText(/Financial Health:/)).not.toBeInTheDocument();
+    expect(hero.queryByText(/Savings rate/)).not.toBeInTheDocument();
+
+    expect(hero.getByRole('link', { name: /import statement/i })).toHaveAttribute('href', '/app/import');
+
+    await user.click(hero.getByRole('button', { name: /add transaction/i }));
+    expect(await screen.findByRole('heading', { name: /add transaction/i })).toBeInTheDocument();
+  });
 });
 
 describe('Dashboard — Spending Breakdown category review warning', () => {
