@@ -432,6 +432,11 @@ class BillingCheckoutServiceTest {
         subscription.setBillingCycle("MONTHLY");
         subscription.setStatus(Subscription.STATUS_ACTIVE);
         subscription.setRazorpaySubscriptionId("sub_existing");
+        // Real activated Razorpay rows always have both set together (RazorpayWebhookDispatcher.
+        // handleActivated) -- this fixture omitted it, which the old hasBillingSubscription check
+        // (razorpaySubscriptionId != null) never needed but the generalized payment_provider-based
+        // check does.
+        subscription.setPaymentProvider("RAZORPAY");
         subscription.setAutoRenew(true);
         subscription.setRenewalDate(LocalDate.of(2026, 10, 5));
         when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
@@ -608,6 +613,14 @@ class BillingCheckoutServiceTest {
         var dto = service.mySubscription(userId);
 
         assertThat(dto.paymentProvider()).isEqualTo("REVENUECAT");
+        // Real bug found in bug-hunt review: hasBillingSubscription was computed as
+        // razorpaySubscriptionId != null -- a REVENUECAT row never sets that field, so this was
+        // silently false for every real paying RevenueCat customer. Mobile's SubscriptionScreen
+        // routes on hasBillingSubscription (Paywall vs. MySubscriptionScreen), so this would have
+        // shown the Paywall -- offering to buy again -- to a customer who already has a live IAP
+        // subscription, and web's "managed through the App Store/Play Store" note is itself gated
+        // on hasBillingSubscription too.
+        assertThat(dto.hasBillingSubscription()).isTrue();
     }
 
     @Test

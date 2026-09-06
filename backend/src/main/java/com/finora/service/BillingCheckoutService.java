@@ -309,10 +309,21 @@ public class BillingCheckoutService {
                 })
                 .orElse(null);
 
+        // Real bug found in bug-hunt review: this was `getRazorpaySubscriptionId() != null`, which
+        // a REVENUECAT-owned row never sets -- silently false for every real paying RevenueCat
+        // customer, breaking mobile's Paywall-vs-MySubscriptionScreen routing and web's
+        // "managed through the App Store/Play Store" note (both gated on this field). Generalized
+        // to payment_provider, mirroring the exact same provider-agnostic pattern already used by
+        // checkout()'s and changePlan()'s guards (design spec §2.1 invariant 7: payment_provider is
+        // non-null iff a real external mandate exists). For every Razorpay row this is equivalent
+        // to the old check -- handleActivated/handleHalted always set/clear razorpaySubscriptionId
+        // and paymentProvider together, never one without the other.
+        boolean hasBillingSubscription = subscription.getPaymentProvider() != null
+                && !"ADMIN_GRANT".equals(subscription.getPaymentProvider());
         return new MySubscriptionDto(
                 plan.getCode(), plan.getName(), subscription.getBillingCycle(), subscription.getStatus(),
                 subscription.getRenewalDate(), subscription.isAutoRenew(),
-                subscription.getRazorpaySubscriptionId() != null, pendingChange, pendingOrder,
+                hasBillingSubscription, pendingChange, pendingOrder,
                 subscription.getPaymentProvider());
     }
 }

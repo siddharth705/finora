@@ -54,15 +54,39 @@ public class RevenueCatWebhookDispatcher {
         }
     }
 
+    /** Used only by handleInitialPurchase. Looks up the user's single subscriptions row (design
+     *  spec §4.1: exactly one row per user for life) regardless of its current status -- NOT via
+     *  findActiveOrTrial, whose ACTIVE/TRIAL filter would miss a user who is currently PAST_DUE
+     *  (bug-hunt finding: a user stuck PAST_DUE who cancels through the store's own UI and
+     *  resubscribes fresh right there sends a genuine new INITIAL_PURCHASE with a new
+     *  original_transaction_id for the same app_user_id; findActiveOrTrial would silently drop it). */
     private Optional<Subscription> subscriptionForAppUserId(Map<String, Object> eventPayload) {
         String appUserId = (String) eventPayload.get("app_user_id");
         if (appUserId == null) return Optional.empty();
         try {
-            return subscriptionRepository.findActiveOrTrial(UUID.fromString(appUserId));
+            UUID userId = UUID.fromString(appUserId);
+            return subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId).stream().findFirst();
         } catch (IllegalArgumentException e) {
             log.warn("RevenueCat webhook app_user_id '{}' is not a valid Fynora user id, ignoring.", appUserId);
             return Optional.empty();
         }
+    }
+
+    /** Used by every handler EXCEPT handleInitialPurchase. Looks the subscription up by its stable
+     *  external id (original_transaction_id) rather than by app_user_id + findActiveOrTrial's
+     *  ACTIVE/TRIAL filter -- exactly why RazorpayWebhookDispatcher's own
+     *  handleCharged/handlePending/handleHalted/handleCancelled all key off
+     *  findByRazorpaySubscriptionId instead of the user's current status. Without this, a
+     *  subscription already moved to PAST_DUE (handleBillingIssue) would be invisible to every
+     *  later event for it: a successful-retry RENEWAL could never reactivate it, and a
+     *  retries-exhausted EXPIRATION could never downgrade it either, leaving it stuck in PAST_DUE
+     *  indefinitely (bug-hunt finding, no design-doc precedent for it). handleInitialPurchase alone
+     *  still needs the app_user_id path -- there is no original_transaction_id to match against
+     *  before the row's first purchase happens. */
+    private Optional<Subscription> subscriptionForOriginalTransactionId(Map<String, Object> eventPayload) {
+        String originalTransactionId = (String) eventPayload.get("original_transaction_id");
+        if (originalTransactionId == null) return Optional.empty();
+        return subscriptionRepository.findByRevenuecatOriginalTransactionId(originalTransactionId);
     }
 
     /** spec §6.1 step 4 / §5. app_user_id is always the real Fynora user id (spec §2's "purchase
@@ -108,9 +132,11 @@ public class RevenueCatWebhookDispatcher {
         subscriptionRepository.save(subscription);
     }
 
-    /** spec §5. Renewal is passive -- just refresh the expiration date. */
+    /** spec §5. Renewal is passive -- just refresh the expiration date. Looked up by
+     *  original_transaction_id (not app_user_id), so a subscription currently PAST_DUE from a
+     *  prior BILLING_ISSUE is still reachable -- see subscriptionForOriginalTransactionId. */
     void handleRenewal(Map<String, Object> eventPayload) {
-        Subscription subscription = subscriptionForAppUserId(eventPayload).orElse(null);
+        Subscription subscription = subscriptionForOriginalTransactionId(eventPayload).orElse(null);
         if (subscription == null) return;
         subscription.setStatus(Subscription.STATUS_ACTIVE);
         applyExpiration(subscription, eventPayload);
@@ -119,16 +145,27 @@ public class RevenueCatWebhookDispatcher {
 
     /** spec §5/§3. Turns off auto-renew only -- status/plan/renewal_date untouched, exactly
      *  Razorpay's own cancel() (BillingCheckoutService.cancel()). Access continues until
-     *  expiration; EXPIRATION below is the actual downgrade point. */
+     *  expiration; EXPIRATION below is the actual downgrade point.
+     *
+     *  <p>Real bug found in bug-hunt review, verified against RevenueCat's own docs (event-flows.md,
+     *  event-types-and-fields.md): a billing issue ALWAYS fires BILLING_ISSUE and a companion
+     *  CANCELLATION event with {@code cancel_reason=BILLING_ERROR} together, "dispatched in order at
+     *  the same time" -- this is not a distinct user action, it's the same underlying event
+     *  handleBillingIssue already reflects (STATUS_PAST_DUE). Flipping auto_renew=false here too
+     *  would mislabel an in-progress billing retry as "won't renew" -- and since handleRenewal never
+     *  restores auto_renew, a subscription that later recovers (a real RENEWAL event, per RevenueCat's
+     *  own subscription-lifecycle docs) would stay stuck showing that label forever even though it's
+     *  healthy and actively renewing. */
     void handleCancellation(Map<String, Object> eventPayload) {
-        subscriptionForAppUserId(eventPayload).ifPresent(subscription -> {
+        if ("BILLING_ERROR".equals(eventPayload.get("cancel_reason"))) return;
+        subscriptionForOriginalTransactionId(eventPayload).ifPresent(subscription -> {
             subscription.setAutoRenew(false);
             subscriptionRepository.save(subscription);
         });
     }
 
     void handleUncancellation(Map<String, Object> eventPayload) {
-        subscriptionForAppUserId(eventPayload).ifPresent(subscription -> {
+        subscriptionForOriginalTransactionId(eventPayload).ifPresent(subscription -> {
             subscription.setAutoRenew(true);
             subscriptionRepository.save(subscription);
         });
@@ -136,9 +173,11 @@ public class RevenueCatWebhookDispatcher {
 
     /** spec §3/§5. Mirrors RazorpayWebhookDispatcher.handleHalted EXACTLY (checked against the real
      *  code, not assumed): resets the plan to FREE, clears every provider-specific field, and sets
-     *  status=ACTIVE on FREE directly -- no intermediate status. */
+     *  status=ACTIVE on FREE directly -- no intermediate status. Looked up by
+     *  original_transaction_id: a subscription already PAST_DUE (retries exhausted) must still be
+     *  reachable here, or it would stay PAST_DUE forever instead of ever downgrading. */
     void handleExpiration(Map<String, Object> eventPayload) {
-        subscriptionForAppUserId(eventPayload).ifPresent(subscription -> {
+        subscriptionForOriginalTransactionId(eventPayload).ifPresent(subscription -> {
             Plan free = planRepository.findByCode("FREE")
                     .orElseThrow(() -> new IllegalStateException("FREE plan missing -- V99 seed data not applied"));
             subscription.setPlanId(free.getId());
@@ -156,7 +195,7 @@ public class RevenueCatWebhookDispatcher {
      *  renewal charge, access is untouched. Deliberately NOT STATUS_PAYMENT_FAILED -- that status
      *  has no live writer anywhere in the existing Razorpay flow this design otherwise mirrors. */
     void handleBillingIssue(Map<String, Object> eventPayload) {
-        subscriptionForAppUserId(eventPayload).ifPresent(subscription -> {
+        subscriptionForOriginalTransactionId(eventPayload).ifPresent(subscription -> {
             subscription.setStatus(Subscription.STATUS_PAST_DUE);
             subscriptionRepository.save(subscription);
         });
@@ -164,12 +203,22 @@ public class RevenueCatWebhookDispatcher {
 
     /** spec §3/§5/§9. The user changed plan tier and/or billing cycle through the store's own
      *  native UI -- something Razorpay has no equivalent for. Reconciles BOTH plan and cycle via
-     *  iap_products, mirroring RazorpayWebhookDispatcher.handleCharged's plan-id reconciliation. */
+     *  iap_products, mirroring RazorpayWebhookDispatcher.handleCharged's plan-id reconciliation.
+     *
+     *  <p>Real bug found in bug-hunt review, verified against RevenueCat's own docs
+     *  (event-types-and-fields.md, cross-checked against four independent sample payloads), not
+     *  assumed: on PRODUCT_CHANGE, {@code product_id} is the OLD product the subscriber switched
+     *  FROM -- the plan they're leaving -- and {@code new_product_id} is the one they switched TO.
+     *  Reading {@code product_id} here would silently reconcile to the plan being abandoned instead
+     *  of the one actually purchased. Falls back to {@code product_id} only because RevenueCat's own
+     *  docs say {@code new_product_id} is itself omitted for an immediate (non-deferred) Google Play
+     *  change -- better to reconcile against something than silently no-op in that one case. */
     void handleProductChange(Map<String, Object> eventPayload) {
-        Subscription subscription = subscriptionForAppUserId(eventPayload).orElse(null);
+        Subscription subscription = subscriptionForOriginalTransactionId(eventPayload).orElse(null);
         if (subscription == null) return;
 
-        String productId = (String) eventPayload.get("product_id");
+        String newProductId = (String) eventPayload.get("new_product_id");
+        String productId = newProductId != null ? newProductId : (String) eventPayload.get("product_id");
         String store = (String) eventPayload.get("store");
         String platform = "PLAY_STORE".equals(store) ? "ANDROID" : "IOS";
         iapProductRepository.findByProviderProductIdAndPlatformAndActiveTrue(productId, platform).ifPresent(product -> {

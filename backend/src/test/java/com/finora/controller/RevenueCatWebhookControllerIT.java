@@ -84,7 +84,7 @@ class RevenueCatWebhookControllerIT extends AbstractIntegrationTest {
     void cancellationFlipsAutoRenewWithoutTouchingStatusOrPlan() {
         User user = createActiveRevenueCatUser("PLUS", "MONTHLY");
 
-        postSigned(revenueCatBody("CANCELLATION", user.getId(), Map.of()));
+        postSigned(revenueCatBody("CANCELLATION", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
 
         var subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
         assertThat(subscription.isAutoRenew()).isFalse();
@@ -94,9 +94,9 @@ class RevenueCatWebhookControllerIT extends AbstractIntegrationTest {
     @Test
     void uncancellationTurnsAutoRenewBackOn() {
         User user = createActiveRevenueCatUser("PLUS", "MONTHLY");
-        postSigned(revenueCatBody("CANCELLATION", user.getId(), Map.of()));
+        postSigned(revenueCatBody("CANCELLATION", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
 
-        postSigned(revenueCatBody("UNCANCELLATION", user.getId(), Map.of()));
+        postSigned(revenueCatBody("UNCANCELLATION", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
 
         assertThat(subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow().isAutoRenew()).isTrue();
     }
@@ -105,7 +105,7 @@ class RevenueCatWebhookControllerIT extends AbstractIntegrationTest {
     void expirationDowngradesDirectlyToFreeMirroringHandleHalted() {
         User user = createActiveRevenueCatUser("PREMIUM", "MONTHLY");
 
-        postSigned(revenueCatBody("EXPIRATION", user.getId(), Map.of()));
+        postSigned(revenueCatBody("EXPIRATION", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
 
         var subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
         Plan free = planRepository.findByCode("FREE").orElseThrow();
@@ -120,13 +120,110 @@ class RevenueCatWebhookControllerIT extends AbstractIntegrationTest {
     void billingIssueSetsPastDueNotPaymentFailed() {
         User user = createActiveRevenueCatUser("PLUS", "MONTHLY");
 
-        postSigned(revenueCatBody("BILLING_ISSUE", user.getId(), Map.of()));
+        postSigned(revenueCatBody("BILLING_ISSUE", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
 
         // findActiveOrTrial() deliberately excludes PAST_DUE (see SubscriptionRepository) --
         // findByUserIdOrderByCreatedAtDesc mirrors how RazorpayWebhookDispatcherIT's own
         // pendingSetsStatusToPastDueButDoesNotRevokeAccess test verifies the same status.
         Subscription reloaded = subscriptionRepository.findByUserIdOrderByCreatedAtDesc(user.getId()).get(0);
         assertThat(reloaded.getStatus()).isEqualTo(Subscription.STATUS_PAST_DUE);
+    }
+
+    /** Real bug found in bug-hunt review, not in the original design doc: every handler except
+     *  handleInitialPurchase originally looked the subscription up via subscriptionForAppUserId,
+     *  which calls findActiveOrTrial(userId) -- filtered to ACTIVE/TRIAL only. Once BILLING_ISSUE
+     *  sets status=PAST_DUE, that lookup returns empty for every subsequent event, so a successful
+     *  retry's RENEWAL would silently no-op and the user would stay stuck in PAST_DUE forever, even
+     *  though the store confirms payment succeeded. RazorpayWebhookDispatcher never has this
+     *  problem: handleCharged/handlePending/handleHalted/handleCancelled all look up by the stable
+     *  external id (findByRazorpaySubscriptionId), independent of the row's current status --
+     *  RevenueCat's own analog of that stable id is original_transaction_id (design spec §4.1), so
+     *  the fix mirrors Razorpay's own pattern exactly. */
+    @Test
+    void billingIssueThenRenewalReactivatesTheSubscriptionDespitePastDueStatus() {
+        User user = createActiveRevenueCatUser("PLUS", "MONTHLY");
+        postSigned(revenueCatBody("BILLING_ISSUE", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
+        assertThat(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(user.getId()).get(0).getStatus())
+                .isEqualTo(Subscription.STATUS_PAST_DUE);
+
+        postSigned(revenueCatBody("RENEWAL", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
+
+        var subscription = subscriptionRepository.findActiveOrTrial(user.getId())
+                .orElseThrow(() -> new AssertionError("RENEWAL after BILLING_ISSUE did not reactivate the subscription"));
+        assertThat(subscription.getStatus()).isEqualTo(Subscription.STATUS_ACTIVE);
+    }
+
+    /** Same root cause as above, other direction: retries exhausted (EXPIRATION) after a
+     *  BILLING_ISSUE must still downgrade to Free -- a subscription stuck in PAST_DUE forever,
+     *  never reachable by the event that's supposed to end it, is the worse failure mode of the two
+     *  (a user who should have lost paid access keeps it indefinitely). */
+    @Test
+    void billingIssueThenExpirationStillDowngradesToFreeDespitePastDueStatus() {
+        User user = createActiveRevenueCatUser("PREMIUM", "MONTHLY");
+        postSigned(revenueCatBody("BILLING_ISSUE", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
+
+        postSigned(revenueCatBody("EXPIRATION", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
+
+        var subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        Plan free = planRepository.findByCode("FREE").orElseThrow();
+        assertThat(subscription.getPlanId()).isEqualTo(free.getId());
+        assertThat(subscription.getPaymentProvider()).isNull();
+    }
+
+    /** Real bug found in bug-hunt review, verified against RevenueCat's own docs (event-flows.md):
+     *  a billing issue ALWAYS fires BILLING_ISSUE and a companion CANCELLATION event with
+     *  cancel_reason=BILLING_ERROR together -- not a distinct user cancellation. Before this fix,
+     *  handleCancellation flipped auto_renew=false unconditionally, so a healthy subscription that
+     *  later recovered via a real RENEWAL (RevenueCat's own subscription-lifecycle docs confirm
+     *  RENEWAL is the recovery signal) would stay permanently mislabeled "won't renew" -- handleRenewal
+     *  never restores auto_renew. */
+    @Test
+    void billingErrorCancellationDoesNotFlipAutoRenewUnlikeARealUserCancellation() {
+        User user = createActiveRevenueCatUser("PLUS", "MONTHLY");
+
+        postSigned(revenueCatBody("BILLING_ISSUE", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
+        postSigned(revenueCatBody("CANCELLATION", user.getId(),
+                Map.of("original_transaction_id", txnIdFor(user), "cancel_reason", "BILLING_ERROR")));
+
+        Subscription pastDue = subscriptionRepository.findByUserIdOrderByCreatedAtDesc(user.getId()).get(0);
+        assertThat(pastDue.isAutoRenew()).isTrue();
+
+        postSigned(revenueCatBody("RENEWAL", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
+
+        var recovered = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        assertThat(recovered.getStatus()).isEqualTo(Subscription.STATUS_ACTIVE);
+        assertThat(recovered.isAutoRenew()).isTrue();
+    }
+
+    /** Same root cause as the two tests above, third variant: a user stuck PAST_DUE cancels through
+     *  the store's own UI and resubscribes fresh right there (bypassing Fynora's Paywall, which
+     *  isn't reachable while a REVENUECAT-owned row exists per §6.3) -- RevenueCat sends a genuine
+     *  new INITIAL_PURCHASE with a NEW original_transaction_id for the same app_user_id. Before this
+     *  fix, handleInitialPurchase's own lookup (subscriptionForAppUserId -> findActiveOrTrial) would
+     *  ALSO have missed the still-PAST_DUE row and silently dropped this real, paid purchase. */
+    @Test
+    void initialPurchaseActivatesEvenWhenTheExistingRowIsCurrentlyPastDue() {
+        User user = createActiveRevenueCatUser("PLUS", "MONTHLY");
+        postSigned(revenueCatBody("BILLING_ISSUE", user.getId(), Map.of("original_transaction_id", txnIdFor(user))));
+        assertThat(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(user.getId()).get(0).getStatus())
+                .isEqualTo(Subscription.STATUS_PAST_DUE);
+
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        IapProduct freshProduct = new IapProduct();
+        freshProduct.setProviderProductId("premium_monthly_it_" + UUID.randomUUID());
+        freshProduct.setPlanId(premium.getId());
+        freshProduct.setBillingCycle("MONTHLY");
+        freshProduct.setPlatform("IOS");
+        freshProduct = iapProductRepository.save(freshProduct);
+
+        postSigned(revenueCatBody("INITIAL_PURCHASE", user.getId(),
+                Map.of("product_id", freshProduct.getProviderProductId(), "store", "APP_STORE",
+                        "original_transaction_id", "txn_fresh_" + UUID.randomUUID())));
+
+        var subscription = subscriptionRepository.findActiveOrTrial(user.getId())
+                .orElseThrow(() -> new AssertionError("Fresh INITIAL_PURCHASE after PAST_DUE was not activated"));
+        assertThat(subscription.getStatus()).isEqualTo(Subscription.STATUS_ACTIVE);
+        assertThat(subscription.getPlanId()).isEqualTo(premium.getId());
     }
 
     /** Design spec §2.1 invariants 1/2 -- at most one active paid subscription per user, owned by
@@ -178,9 +275,15 @@ class RevenueCatWebhookControllerIT extends AbstractIntegrationTest {
         assertThat(subscription.getRevenuecatOriginalTransactionId()).isNull();
     }
 
-    /** Mandatory per design spec §11 -- the one event type with no Razorpay precedent to lean on. */
+    /** Mandatory per design spec §11 -- the one event type with no Razorpay precedent to lean on.
+     *  Real bug found in bug-hunt review: RevenueCat's own docs (event-types-and-fields.md,
+     *  cross-checked against four independent sample payloads) are explicit that on PRODUCT_CHANGE,
+     *  {@code product_id} is the OLD product the subscriber switched FROM -- the plan they're
+     *  leaving -- and {@code new_product_id} is the one they switched TO. This test deliberately
+     *  sets {@code product_id} to a mapping that does NOT exist in iap_products (the old plan
+     *  wouldn't need a fresh lookup) to prove the handler reads new_product_id, not product_id. */
     @Test
-    void productChangeReconcilesBothPlanAndBillingCycle() {
+    void productChangeReconcilesBothPlanAndBillingCycleUsingNewProductIdNotProductId() {
         User user = createActiveRevenueCatUser("PLUS", "MONTHLY");
         Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
         IapProduct yearlyPremium = new IapProduct();
@@ -191,7 +294,9 @@ class RevenueCatWebhookControllerIT extends AbstractIntegrationTest {
         yearlyPremium = iapProductRepository.save(yearlyPremium);
 
         postSigned(revenueCatBody("PRODUCT_CHANGE", user.getId(),
-                Map.of("product_id", yearlyPremium.getProviderProductId(), "store", "APP_STORE")));
+                Map.of("product_id", "old_product_with_no_iap_products_row_" + UUID.randomUUID(),
+                        "new_product_id", yearlyPremium.getProviderProductId(), "store", "APP_STORE",
+                        "original_transaction_id", txnIdFor(user))));
 
         var subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
         assertThat(subscription.getPlanId()).isEqualTo(premium.getId());
@@ -220,8 +325,15 @@ class RevenueCatWebhookControllerIT extends AbstractIntegrationTest {
 
         postSigned(revenueCatBody("INITIAL_PURCHASE", user.getId(),
                 Map.of("product_id", product.getProviderProductId(), "store", "APP_STORE",
-                        "original_transaction_id", "txn_" + UUID.randomUUID())));
+                        "original_transaction_id", txnIdFor(user))));
         return user;
+    }
+
+    /** Deterministic from the user id rather than a field returned by createActiveRevenueCatUser --
+     *  lets every follow-up event in a test reference the same original_transaction_id its
+     *  INITIAL_PURCHASE used, without threading an extra return value through every call site. */
+    private String txnIdFor(User user) {
+        return "txn_" + user.getId();
     }
 
     private String revenueCatBody(String type, UUID appUserId, Map<String, Object> extra) {
