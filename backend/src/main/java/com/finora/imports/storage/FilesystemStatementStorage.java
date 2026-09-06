@@ -42,6 +42,19 @@ public class FilesystemStatementStorage implements StatementStorage {
         } catch (IOException e) {
             throw new StatementStorageException("Could not create statement storage root " + this.root, e);
         }
+        // createDirectories() above is a no-op when root already exists -- it does not check
+        // permissions on a directory it didn't have to create. So a pre-existing but read-only
+        // mount (e.g. misconfigured volume permissions) would otherwise sail through construction
+        // and only fail later, at the first store() call, with the same "Could not create a
+        // scratch file" error this constructor exists to make diagnosable. Checked explicitly here
+        // so that failure mode also surfaces at startup, naming the property, rather than at a
+        // customer's first upload.
+        if (!Files.isWritable(this.root)) {
+            throw new StatementStorageException(
+                    "Statement storage root " + this.root + " is not writable. Set "
+                    + "app.statement-storage.filesystem.root (STATEMENT_STORAGE_FS_ROOT) to a "
+                    + "writable path.");
+        }
     }
 
     /**
