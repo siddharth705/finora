@@ -286,6 +286,54 @@ describe('Dashboard — Financial Health Score', () => {
     expect(card.queryByText('Your savings rate was 18.5%.')).not.toBeInTheDocument();
     expect(card.getByText('You have no credit cards on file.')).toBeInTheDocument();
   });
+
+  it('renders KPI cards with the elevated visual treatment', async () => {
+    renderDashboard();
+
+    await screen.findByText('Financial Health Score');
+    const balanceValue = screen.getByText('₹50,000');
+    expect(balanceValue).toHaveClass('font-display');
+  });
+
+  it('wraps the greeting in a hero card with Financial Health and Savings Rate chips', async () => {
+    renderDashboard();
+
+    const heading = await screen.findByRole('heading', { level: 1 });
+    expect(heading.textContent).toMatch(/👋/);
+
+    expect(screen.getByText('Financial Health: Excellent · 82/100')).toBeInTheDocument();
+    expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
+
+    const illustration = document.querySelector('[data-testid="dashboard-hero-illustration"]');
+    expect(illustration).toBeTruthy();
+    expect(illustration).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('omits the Financial Health chip when the score is not yet available', async () => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(
+      summary({ healthScoreAvailable: false, healthScore: null, healthLabel: null, healthScoreTransactionCount: 3 }),
+    );
+    renderDashboard();
+
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByText(/Financial Health:/)).not.toBeInTheDocument();
+    expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
+  });
+
+  it('omits the Financial Health chip for a zero-transaction account even if healthScoreAvailable is stale-true', async () => {
+    // healthScoreAvailable comes from a separate backend computation than recentTxnsQ's
+    // totalElements -- this fixture combo (isEmpty true, healthScoreAvailable true) shouldn't
+    // occur in practice, but the chip must not trust healthScoreAvailable alone, the same reason
+    // the full Financial Health Score card below it gates on !isEmpty rather than that flag.
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [], page: 0, size: 4, totalElements: 0, totalPages: 0,
+    });
+    renderDashboard();
+
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByText(/Financial Health:/)).not.toBeInTheDocument();
+    expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
+  });
 });
 
 describe('Dashboard — Spending Breakdown category review warning', () => {
