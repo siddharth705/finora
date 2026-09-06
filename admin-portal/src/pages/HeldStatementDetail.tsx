@@ -162,7 +162,11 @@ function HeldStatementDetailContent({ heldId }: { heldId: string }) {
     onError,
   });
   const download = useMutation({
-    mutationFn: () => adminHeldStatementApi.download(heldId),
+    // Falls back to `${heldId}.pdf` only in the rare case detail.data.fileName is null -- the
+    // underlying ImportJob no longer exists (requireJob's own doc: deleted out from under an open
+    // review) -- and even then the download itself still fails server-side with a 409 before this
+    // fallback name would ever actually get used to save anything.
+    mutationFn: () => adminHeldStatementApi.download(heldId, detail.data?.fileName ?? `${heldId}.pdf`),
     onError,
   });
 
