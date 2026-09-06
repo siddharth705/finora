@@ -78,7 +78,7 @@ jobs:
       - uses: actions/checkout@v7
 
       # Must track backend/pom.xml's java.version -- this job packages the backend itself.
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@v6
         with:
           java-version: '25'
           distribution: temurin
