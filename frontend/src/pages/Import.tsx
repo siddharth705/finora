@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 
 import { useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet, Trash2, RefreshCw } from 'lucide-react';
+import { CheckCircle2, UploadCloud, AlertTriangle, Clock, FileText, FileSpreadsheet, Trash2, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type StagingResult } from '../api/endpoints';
 import { newIdempotencyKey } from '../lib/idempotencyKey';
 import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
@@ -1158,26 +1158,9 @@ export default function Import() {
                 <h2 className="font-semibold text-ink text-sm mb-1">
                   This statement covers {multiSections.length} accounts
                 </h2>
-                <p className="text-xs text-muted flex items-center gap-2 flex-wrap">
-                  <span>
-                    We found {multiSections.length} separate accounts in this file — review each one below, then confirm
-                    them all together.
-                  </span>
-                  {sessionId && (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDiscardReviewOpen(true)}
-                      // Disabled mid-confirm. This was harmless before Phase 4b, because reaching
-                      // the summary step early-returned above the dialog's own render; collapsing
-                      // those returns into one AnimatePresence tree means a dialog opened during an
-                      // in-flight confirm now overlays the success screen instead -- and its
-                      // "Discard" would fire discardSession() against an already-confirmed session.
-                      disabled={confirming}
-                      className="text-xs text-muted underline flex-shrink-0 disabled:opacity-50"
-                    >
-                      Not what you expected? Discard and start over
-                    </button>
-                  )}
+                <p className="text-xs text-muted">
+                  We found {multiSections.length} separate accounts in this file — review each one below, then confirm
+                  them all together.
                 </p>
               </div>
 
@@ -1262,20 +1245,34 @@ export default function Import() {
                     {blockedSectionLabels.join(' and ')}. Nothing is imported or skipped until you decide.
                   </p>
                 )}
-                <Button
-                  onClick={confirmMultiImport}
-                  loading={confirming}
-                  disabled={
-                    multiSections.some((s) => s.accountChoice === 'existing' && !s.selectedAccountId) ||
-                    // The same gate the single-account path applies, summed across every section. A
-                    // statement covering two accounts is not two imports the user can partially
-                    // approve -- confirmMulti posts them together, so one unanswered row anywhere
-                    // blocks all of it, exactly as one unanswered row blocks a single-account import.
-                    outstandingMultiDuplicates > 0
-                  }
-                >
-                  Confirm All {multiSections.length} Accounts
-                </Button>
+                <div className="flex items-center gap-3">
+                  <Button
+                    onClick={confirmMultiImport}
+                    loading={confirming}
+                    disabled={
+                      multiSections.some((s) => s.accountChoice === 'existing' && !s.selectedAccountId) ||
+                      // The same gate the single-account path applies, summed across every section. A
+                      // statement covering two accounts is not two imports the user can partially
+                      // approve -- confirmMulti posts them together, so one unanswered row anywhere
+                      // blocks all of it, exactly as one unanswered row blocks a single-account import.
+                      outstandingMultiDuplicates > 0
+                    }
+                  >
+                    Confirm All {multiSections.length} Accounts
+                  </Button>
+                  {sessionId && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setConfirmDiscardReviewOpen(true)}
+                      // Same guard the link this replaced had: a dialog opened during an in-flight
+                      // confirm must not fire discardSession() against an already-confirmed session.
+                      disabled={confirming}
+                    >
+                      Cancel Import
+                    </Button>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -1353,21 +1350,6 @@ export default function Import() {
                       {fileFormat === 'PDF' ? <FileText size={11} /> : <FileSpreadsheet size={11} />} {fileFormat}
                     </span>
                   )}
-                  {sessionId && !reimportState && (
-                    <button
-                      type="button"
-                      onClick={() => setConfirmDiscardReviewOpen(true)}
-                      // Disabled mid-confirm. This was harmless before Phase 4b, because reaching
-                      // the summary step early-returned above the dialog's own render; collapsing
-                      // those returns into one AnimatePresence tree means a dialog opened during an
-                      // in-flight confirm now overlays the success screen instead -- and its
-                      // "Discard" would fire discardSession() against an already-confirmed session.
-                      disabled={confirming}
-                      className="text-xs text-muted underline flex-shrink-0 disabled:opacity-50"
-                    >
-                      Not what you expected? Discard and start over
-                    </button>
-                  )}
                 </p>
                 <TransactionPreviewTable
                   rows={rows}
@@ -1388,21 +1370,34 @@ export default function Import() {
                   onDecideAll={decideAllDuplicates}
                 />
 
-                <Button
-                  onClick={() => void confirmImport()}
-                  loading={confirming}
-                  className="mt-4"
-                  disabled={
-                    (!reimportState && !sessionId) ||
-                    (!reimportState && accountChoice === 'existing' && !selectedAccountId) ||
-                    // The gate. Every flagged row must have an explicit answer before anything is
-                    // written to the ledger -- which is what stops a duplicate being resolved by
-                    // inattention rather than by a decision.
-                    unresolvedCount(rows, review.decisions) > 0
-                  }
-                >
-                  Confirm Import
-                </Button>
+                <div className="flex items-center gap-3 mt-4">
+                  <Button
+                    onClick={() => void confirmImport()}
+                    loading={confirming}
+                    disabled={
+                      (!reimportState && !sessionId) ||
+                      (!reimportState && accountChoice === 'existing' && !selectedAccountId) ||
+                      // The gate. Every flagged row must have an explicit answer before anything is
+                      // written to the ledger -- which is what stops a duplicate being resolved by
+                      // inattention rather than by a decision.
+                      unresolvedCount(rows, review.decisions) > 0
+                    }
+                  >
+                    Confirm Import
+                  </Button>
+                  {sessionId && !reimportState && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      onClick={() => setConfirmDiscardReviewOpen(true)}
+                      // Same guard the link this replaced had: a dialog opened during an in-flight
+                      // confirm must not fire discardSession() against an already-confirmed session.
+                      disabled={confirming}
+                    >
+                      Cancel Import
+                    </Button>
+                  )}
+                </div>
               </div>
             </>
           )}
@@ -1773,56 +1768,103 @@ function TransactionPreviewTable({
   setChosenCategory: (updater: (arr: string[]) => string[]) => void;
   categories: string[];
 }) {
+  const PAGE_SIZE = 10;
+  const [page, setPage] = useState(0);
+
+  // A new file staged (or a re-upload replacing this one) always means page 0 is the right place
+  // to land, not whatever page the previous file happened to leave selected.
+  useEffect(() => {
+    setPage(0);
+  }, [rows]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages - 1);
+  const start = currentPage * PAGE_SIZE;
+  // Pair each row with its ORIGINAL index before slicing -- onToggleIncluded/setChosenCategory
+  // both index into the full rows/review/chosenCategory arrays, so a page-relative index would
+  // silently toggle or recategorize the wrong row the moment the user isn't on page 1.
+  const pageEntries = rows.map((r, i): [StagedRow, number] => [r, i]).slice(start, start + PAGE_SIZE);
+
   return (
-    <table className="w-full text-xs font-mono mb-4">
-      <thead>
-        <tr className="text-left text-[10px] uppercase text-gray-500">
-          <th className="p-1"></th><th className="p-1">Date</th><th className="p-1">Description</th>
-          <th className="p-1 text-right">DR</th><th className="p-1 text-right">CR</th><th className="p-1">Category</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows.map((r, i) => (
-          <tr key={i} className="border-b border-dashed">
-            <td className="p-1">
-              <input
-                type="checkbox"
-                aria-label={`Include ${r.description}`}
-                checked={review.included[i]}
-                onChange={(e) => onToggleIncluded(i, e.target.checked)}
-              />
-            </td>
-            <td className="p-1">{formatDateDDMMMYYYY(r.date)}</td>
-            <td className="p-1">
-              {r.description}
-              {r.merchant && (
-                <div className="text-[10px] text-muted">Detected: {r.merchant}</div>
-              )}
-              {r.likelyDuplicate && <span className="text-danger text-[10px] uppercase ml-1">duplicate</span>}
-              {isUnconfirmedGuess(r.categorySource) && (
-                <span className="text-[10px] uppercase ml-1" style={{ color: '#d97706' }}>low confidence</span>
-              )}
-            </td>
-            {/* r.type is the backend's own authoritative direction signal (StagedRow.type,
-                'INCOME' | 'EXPENSE') -- amount itself is always the absolute value, never signed,
-                so direction must come from type, never inferred from the number's sign. */}
-            <td className="p-1 text-right">{r.type === 'EXPENSE' ? `₹${r.amount}` : '—'}</td>
-            <td className="p-1 text-right">{r.type === 'INCOME' ? `₹${r.amount}` : '—'}</td>
-            <td className="p-1">
-              <select
-                value={chosenCategory[i]}
-                onChange={(e) => setChosenCategory((arr) => arr.map((v, j) => (j === i ? e.target.value : v)))}
-                className="bg-card text-ink border border-border rounded px-1 py-0.5 text-xs"
-              >
-                {categories.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-            </td>
+    <>
+      <table className="w-full text-xs font-mono mb-4">
+        <thead>
+          <tr className="text-left text-[10px] uppercase text-gray-500">
+            <th className="p-1"></th><th className="p-1">Date</th><th className="p-1">Description</th>
+            <th className="p-1 text-right">DR</th><th className="p-1 text-right">CR</th><th className="p-1">Category</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {pageEntries.map(([r, i]) => (
+            <tr key={i} className="border-b border-dashed">
+              <td className="p-1">
+                <input
+                  type="checkbox"
+                  aria-label={`Include ${r.description}`}
+                  checked={review.included[i]}
+                  onChange={(e) => onToggleIncluded(i, e.target.checked)}
+                />
+              </td>
+              <td className="p-1">{formatDateDDMMMYYYY(r.date)}</td>
+              <td className="p-1">
+                {r.description}
+                {r.merchant && (
+                  <div className="text-[10px] text-muted">Detected: {r.merchant}</div>
+                )}
+                {r.likelyDuplicate && <span className="text-danger text-[10px] uppercase ml-1">duplicate</span>}
+                {isUnconfirmedGuess(r.categorySource) && (
+                  <span className="text-[10px] uppercase ml-1" style={{ color: '#d97706' }}>low confidence</span>
+                )}
+              </td>
+              {/* r.type is the backend's own authoritative direction signal (StagedRow.type,
+                  'INCOME' | 'EXPENSE') -- amount itself is always the absolute value, never signed,
+                  so direction must come from type, never inferred from the number's sign. */}
+              <td className="p-1 text-right">{r.type === 'EXPENSE' ? `₹${r.amount}` : '—'}</td>
+              <td className="p-1 text-right">{r.type === 'INCOME' ? `₹${r.amount}` : '—'}</td>
+              <td className="p-1">
+                <select
+                  value={chosenCategory[i]}
+                  onChange={(e) => setChosenCategory((arr) => arr.map((v, j) => (j === i ? e.target.value : v)))}
+                  className="bg-card text-ink border border-border rounded px-1 py-0.5 text-xs"
+                >
+                  {categories.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </select>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length > PAGE_SIZE && (
+        <div className="flex items-center justify-between text-xs text-muted mb-4 font-sans">
+          <p>
+            Showing <span className="text-ink font-medium">{start + 1}</span>
+            {'–'}
+            <span className="text-ink font-medium">{Math.min(start + PAGE_SIZE, rows.length)}</span>
+            {' of '}
+            <span className="text-ink font-medium">{rows.length}</span>
+          </p>
+          <div className="flex items-center gap-2">
+            <IconButton
+              size="sm"
+              icon={<ChevronLeft size={14} />}
+              aria-label="Previous page"
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={currentPage === 0}
+            />
+            <span className="text-ink">Page {currentPage + 1} of {totalPages}</span>
+            <IconButton
+              size="sm"
+              icon={<ChevronRight size={14} />}
+              aria-label="Next page"
+              onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+              disabled={currentPage + 1 >= totalPages}
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
