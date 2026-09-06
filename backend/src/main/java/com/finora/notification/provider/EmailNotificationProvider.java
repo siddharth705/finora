@@ -1,5 +1,6 @@
 package com.finora.notification.provider;
 
+import com.finora.config.EmailProperties;
 import com.finora.entity.User;
 import com.finora.notification.domain.Notification;
 import com.finora.notification.domain.NotificationChannel;
@@ -39,10 +40,13 @@ public class EmailNotificationProvider implements NotificationChannelProvider {
 
     private final EmailProvider emailProvider;
     private final UserRepository userRepository;
+    private final EmailProperties emailProperties;
 
-    public EmailNotificationProvider(EmailProvider emailProvider, UserRepository userRepository) {
+    public EmailNotificationProvider(EmailProvider emailProvider, UserRepository userRepository,
+                                      EmailProperties emailProperties) {
         this.emailProvider = emailProvider;
         this.userRepository = userRepository;
+        this.emailProperties = emailProperties;
     }
 
     @Override
@@ -98,7 +102,8 @@ public class EmailNotificationProvider implements NotificationChannelProvider {
     private EmailMessage buildMessage(String to, NotificationType type, String subject, String body) {
         EmailMessage.Sender sender = SUPPORT_SENDER_TYPES.contains(type)
                 ? EmailMessage.Sender.SUPPORT : EmailMessage.Sender.DEFAULT;
-        String html = EmailLayout.wrap(subject, body, sender == EmailMessage.Sender.SUPPORT);
+        String html = EmailLayout.wrap(subject, body, sender == EmailMessage.Sender.SUPPORT,
+                emailProperties.getSupportFromAddress());
         return new EmailMessage(to, subject, html, body, null, null, sender);
     }
 }

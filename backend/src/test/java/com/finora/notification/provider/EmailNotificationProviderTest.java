@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.finora.config.EmailProperties;
 import com.finora.entity.User;
 import com.finora.notification.domain.Notification;
 import com.finora.notification.domain.NotificationCategory;
@@ -35,7 +36,9 @@ class EmailNotificationProviderTest {
     void setUp() {
         emailProvider = mock(EmailProvider.class);
         userRepository = mock(UserRepository.class);
-        provider = new EmailNotificationProvider(emailProvider, userRepository);
+        EmailProperties emailProperties = new EmailProperties();
+        emailProperties.setSupportFromAddress("support@example.test");
+        provider = new EmailNotificationProvider(emailProvider, userRepository, emailProperties);
         when(emailProvider.isConfigured()).thenReturn(true);
     }
 
@@ -209,5 +212,26 @@ class EmailNotificationProviderTest {
         EmailMessage sent = captor.getValue();
         assertThat(sent.html()).contains("FYNORA").contains("We finished importing your statement.");
         assertThat(sent.text()).isEqualTo("We finished importing your statement.");
+    }
+
+    /**
+     * End-to-end proof for the fix found in review: the branded email footer must show whatever
+     * EmailProperties.getSupportFromAddress() actually resolves to, not a hardcoded literal that
+     * could silently disagree with it. Uses PASSWORD_CHANGED (a DEFAULT-sender type) so the
+     * footer takes the "name the address explicitly" branch rather than the "just reply" one.
+     */
+    @Test
+    void send_pointsTheFooterAtWhateverAddressIsActuallyConfigured() {
+        when(userRepository.findById(any())).thenReturn(Optional.of(activeUser()));
+        when(emailProvider.send(any())).thenReturn(EmailResult.success(ProviderType.RESEND, "id-1"));
+        EmailProperties emailProperties = new EmailProperties();
+        emailProperties.setSupportFromAddress("reconfigured-support@example.test");
+        provider = new EmailNotificationProvider(emailProvider, userRepository, emailProperties);
+        ArgumentCaptor<EmailMessage> captor = ArgumentCaptor.forClass(EmailMessage.class);
+
+        provider.send(notification(NotificationType.PASSWORD_CHANGED));
+
+        verify(emailProvider).send(captor.capture());
+        assertThat(captor.getValue().html()).contains("reconfigured-support@example.test");
     }
 }
