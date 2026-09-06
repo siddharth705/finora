@@ -103,7 +103,7 @@ public class SubscriptionService {
                     s.getId(), s.getUserId(),
                     user != null ? user.getEmail() : null, user != null ? user.getFullName() : null,
                     plan != null ? plan.getCode() : null, plan != null ? plan.getName() : null,
-                    s.getStatus(), s.getStartDate(), s.getEndDate(), s.getRenewalDate());
+                    s.getStatus(), s.getPaymentProvider(), s.getStartDate(), s.getEndDate(), s.getRenewalDate());
         }));
     }
 

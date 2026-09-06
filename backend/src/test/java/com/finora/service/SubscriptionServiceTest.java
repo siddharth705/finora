@@ -200,6 +200,26 @@ class SubscriptionServiceTest {
         assertThat(result.content().get(0).planCode()).isEqualTo("PLUS");
     }
 
+    @Test
+    void listAllIncludesThePaymentProviderForEachRow() {
+        UUID planId = UUID.randomUUID();
+        Subscription sub = new Subscription();
+        ReflectionTestUtils.setField(sub, "id", UUID.randomUUID());
+        sub.setUserId(userId);
+        sub.setPlanId(planId);
+        sub.setStatus(Subscription.STATUS_ACTIVE);
+        sub.setPaymentProvider("RAZORPAY");
+        when(subscriptionRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 20)))
+                .thenReturn(new PageImpl<>(List.of(sub)));
+        when(planRepository.findAll()).thenReturn(List.of());
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+
+        PagedResponse<SubscriptionSummaryDto> result = service.listAll(0, 20);
+
+        assertThat(result.content()).hasSize(1);
+        assertThat(result.content().get(0).paymentProvider()).isEqualTo("RAZORPAY");
+    }
+
     /** PageBounds.safePage/safeSize clamp before the query -- a negative page or an oversized
      *  size must never reach PageRequest.of directly (it throws IllegalArgumentException with no
      *  handler, surfacing as an opaque 500), same reasoning as AdminUserService.list. */

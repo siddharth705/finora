@@ -20,10 +20,14 @@ public class BillingDtos {
      *  and EntitlementService.hasEntitlement both treat "absent" the same as "false". */
     public record EntitlementsDto(String planCode, String planName, Map<String, Boolean> features) {}
 
-    /** Admin Portal, Subscription Management -- one row per user's current subscription. */
+    /** Admin Portal, Subscription Management -- one row per user's current subscription.
+     *  paymentProvider (Plan 3) is what the admin UI reads to know whether the plain FREE/PLUS/
+     *  PREMIUM dropdown is safe to fire directly, or whether it must go through the
+     *  cancel-paid-subscription confirm flow first (design spec §6.6) -- "RAZORPAY" means a live
+     *  Razorpay mandate exists, "ADMIN_GRANT" or null means it doesn't. */
     public record SubscriptionSummaryDto(
             UUID subscriptionId, UUID userId, String userEmail, String userFullName,
-            String planCode, String planName, String status,
+            String planCode, String planName, String status, String paymentProvider,
             LocalDate startDate, LocalDate endDate, LocalDate renewalDate
     ) {}
 
@@ -57,4 +61,28 @@ public class BillingDtos {
             @NotBlank(message = "Plan code is required") String planCode,
             @NotBlank(message = "Billing cycle is required") String billingCycle
     ) {}
+
+    /** GET /api/v1/billing/subscription -- what the web/mobile Billing Portal reads. Distinct from
+     *  {@link EntitlementsDto} (which only carries plan/features, for gating) and from
+     *  {@link SubscriptionSummaryDto} (the admin list row, keyed by userId/email for a table, not
+     *  by "the caller's own subscription"). */
+    public record MySubscriptionDto(
+            String planCode, String planName, String billingCycle, String status,
+            LocalDate renewalDate, boolean autoRenew, boolean hasBillingSubscription,
+            PendingPlanChangeDto pendingChange, PendingOrderDto pendingOrder
+    ) {}
+
+    /** Null on {@link MySubscriptionDto} unless a downgrade has been scheduled (design spec §6.4)
+     *  and not yet reconciled -- see {@code BillingCheckoutService.mySubscription}'s own doc
+     *  comment for how "not yet reconciled" is detected. */
+    public record PendingPlanChangeDto(String toPlanCode, String toPlanName, Instant effectiveAt) {}
+
+    /** Non-null on {@link MySubscriptionDto} exactly when a {@code subscription_orders} row is
+     *  still {@code PENDING} for this user -- an abandoned or in-flight checkout the Billing
+     *  Portal can offer to resume (the same {@code razorpaySubscriptionId}/{@code keyId} Checkout
+     *  needs, with no new Razorpay call) or cancel via
+     *  {@code POST /api/v1/billing/pending-order/cancel}. Added during Plan 3 review: before this,
+     *  nothing gave a user visibility into, or a way to clear, a stuck pending order. */
+    public record PendingOrderDto(String planCode, String planName, String billingCycle,
+                                   String razorpaySubscriptionId, String keyId) {}
 }

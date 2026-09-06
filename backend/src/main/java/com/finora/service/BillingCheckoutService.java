@@ -1,6 +1,9 @@
 package com.finora.service;
 
 import com.finora.dto.BillingDtos.CheckoutResponseDto;
+import com.finora.dto.BillingDtos.MySubscriptionDto;
+import com.finora.dto.BillingDtos.PendingOrderDto;
+import com.finora.dto.BillingDtos.PendingPlanChangeDto;
 import com.finora.entity.BillingPrice;
 import com.finora.entity.Plan;
 import com.finora.entity.PlanChange;
@@ -76,7 +79,6 @@ public class BillingCheckoutService {
                     throw new ApiException(HttpStatus.CONFLICT,
                             "You already have a billing subscription. Cancel it before starting a new one.");
                 });
-        ensureNoOrderInFlight(userId);
 
         Plan plan = planRepository.findByCode(planCode)
                 .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "Unknown plan code: " + planCode));
@@ -86,6 +88,11 @@ public class BillingCheckoutService {
         if (price.getRazorpayPlanId() == null) {
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
                     "This plan is not yet set up for checkout (missing Razorpay plan id).");
+        }
+
+        CheckoutResponseDto resumable = resumableOrderOrGuard(userId, plan.getId(), billingCycle);
+        if (resumable != null) {
+            return resumable;
         }
 
         RazorpaySubscriptionDto razorpaySubscription = gateway.createSubscription(
@@ -174,7 +181,11 @@ public class BillingCheckoutService {
      *  payment ({@code RazorpayWebhookDispatcher.handleActivated}, extended in Task 2 of this plan
      *  to also stop the old mandate at that point, not before). */
     private CheckoutResponseDto upgradeToNewSubscription(UUID userId, Plan newPlan, BillingPrice newPrice, String billingCycle) {
-        ensureNoOrderInFlight(userId);
+        CheckoutResponseDto resumable = resumableOrderOrGuard(userId, newPlan.getId(), billingCycle);
+        if (resumable != null) {
+            return resumable;
+        }
+
         RazorpaySubscriptionDto razorpaySubscription = gateway.createSubscription(
                 newPrice.getRazorpayPlanId(), billingCycle,
                 Map.of("fynoraUserId", userId.toString(), "planCode", newPlan.getCode(), "billingCycle", billingCycle));
@@ -212,15 +223,89 @@ public class BillingCheckoutService {
     }
 
     /** Closes the double-submit window between "create the Razorpay subscription" and "the
-     *  activation webhook lands": a double-tap, client retry, or two open tabs calling either
-     *  {@code checkout()} or an upgrade in quick succession would otherwise each create their own
-     *  real, live Razorpay subscription before either one's {@code subscriptions} row reflects it
-     *  -- the same failure class {@code checkout()}'s "already has a live subscription" guard
-     *  closes only for a repeat call made AFTER activation, not before it. */
-    private void ensureNoOrderInFlight(UUID userId) {
-        if (subscriptionOrderRepository.existsByUserIdAndStatus(userId, SubscriptionOrder.STATUS_PENDING)) {
-            throw new ApiException(HttpStatus.CONFLICT,
-                    "A billing checkout is already in progress. Please wait for it to complete or try again shortly.");
-        }
+     *  activation webhook lands" -- WITHOUT creating a dead end for a user who simply abandoned
+     *  checkout (Plan 3 review finding): a double-tap, retry, or a genuinely abandoned first
+     *  attempt at the SAME plan+cycle resumes the existing pending order's already-created
+     *  Razorpay subscription instead of either creating a second one (the original bug this guard
+     *  fixed) or refusing forever (the bug this guard's first version introduced -- nothing else
+     *  in this codebase ever clears a PENDING order, so an unconditional refusal here was a
+     *  permanent lockout). A pending order for a DIFFERENT plan+cycle still blocks --
+     *  {@code cancelPendingOrder} below is how the caller clears that to start over.
+     *
+     *  @return an existing, resumable {@link CheckoutResponseDto} if one applies, or {@code null}
+     *  if the caller should proceed to create a new Razorpay subscription. */
+    private CheckoutResponseDto resumableOrderOrGuard(UUID userId, UUID planId, String billingCycle) {
+        return subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(userId, SubscriptionOrder.STATUS_PENDING)
+                .map(order -> {
+                    if (order.getPlanId().equals(planId) && order.getBillingCycle().equals(billingCycle)) {
+                        return new CheckoutResponseDto(order.getRazorpaySubscriptionId(), properties.getKeyId());
+                    }
+                    throw new ApiException(HttpStatus.CONFLICT,
+                            "You have a checkout already in progress for a different plan. " +
+                            "Cancel it (POST /api/v1/billing/pending-order/cancel) before starting a new one.");
+                })
+                .orElse(null);
+    }
+
+    /** Gives {@code SubscriptionOrder.STATUS_ABANDONED} its first real writer. Without this, a
+     *  user who abandons checkout (or wants a DIFFERENT plan than the one they have a stale
+     *  pending order for) has no way to ever check out again, since
+     *  {@code resumableOrderOrGuard} above refuses every subsequent attempt for a different plan
+     *  forever otherwise. Deliberately does not call the Razorpay API: a "created" Razorpay
+     *  subscription that was never authorized never charges anything (Razorpay's own model), so
+     *  nothing on Razorpay's side needs stopping -- only Fynora's own "this user has a checkout
+     *  in flight" bookkeeping needs clearing. */
+    @Transactional
+    public void cancelPendingOrder(UUID userId) {
+        SubscriptionOrder order = subscriptionOrderRepository
+                .findFirstByUserIdAndStatusOrderByCreatedAtDesc(userId, SubscriptionOrder.STATUS_PENDING)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No pending checkout to cancel."));
+        order.setStatus(SubscriptionOrder.STATUS_ABANDONED);
+        subscriptionOrderRepository.save(order);
+    }
+
+    /** What the web/mobile Billing Portal reads (design spec §8, Plan 3). */
+    @Transactional(readOnly = true)
+    public MySubscriptionDto mySubscription(UUID userId) {
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No active subscription."));
+        Plan plan = planRepository.findById(subscription.getPlanId())
+                .orElseThrow(() -> new IllegalStateException("Subscription references a missing plan."));
+
+        // A scheduled downgrade (Plan 2, §6.4) writes a plan_changes row immediately, at request
+        // time -- long before it actually takes effect at the next subscription.charged webhook.
+        // The most recent row is "still pending" exactly when its target plan doesn't match what
+        // the subscription is on RIGHT NOW: once handleCharged reconciles plan_id to match, this
+        // same query naturally stops returning it as pending, with no separate "applied" flag to
+        // maintain.
+        PendingPlanChangeDto pendingChange = planChangeRepository
+                .findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()).stream()
+                .findFirst()
+                .filter(c -> PlanChange.REASON_DOWNGRADE_SCHEDULED.equals(c.getReason()))
+                .filter(c -> !c.getToPlanId().equals(subscription.getPlanId()))
+                .map(c -> {
+                    Plan toPlan = planRepository.findById(c.getToPlanId()).orElse(null);
+                    return new PendingPlanChangeDto(
+                            toPlan != null ? toPlan.getCode() : null,
+                            toPlan != null ? toPlan.getName() : null,
+                            c.getEffectiveAt());
+                })
+                .orElse(null);
+
+        PendingOrderDto pendingOrder = subscriptionOrderRepository
+                .findFirstByUserIdAndStatusOrderByCreatedAtDesc(userId, SubscriptionOrder.STATUS_PENDING)
+                .map(order -> {
+                    Plan orderPlan = planRepository.findById(order.getPlanId()).orElse(null);
+                    return new PendingOrderDto(
+                            orderPlan != null ? orderPlan.getCode() : null,
+                            orderPlan != null ? orderPlan.getName() : null,
+                            order.getBillingCycle(), order.getRazorpaySubscriptionId(), properties.getKeyId());
+                })
+                .orElse(null);
+
+        return new MySubscriptionDto(
+                plan.getCode(), plan.getName(), subscription.getBillingCycle(), subscription.getStatus(),
+                subscription.getRenewalDate(), subscription.isAutoRenew(),
+                subscription.getRazorpaySubscriptionId() != null, pendingChange, pendingOrder);
     }
 }

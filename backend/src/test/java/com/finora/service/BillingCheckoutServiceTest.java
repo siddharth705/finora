@@ -117,14 +117,75 @@ class BillingCheckoutServiceTest {
     }
 
     @Test
-    void refusesCheckoutWhenAPendingOrderAlreadyExistsForThisUser() {
-        when(subscriptionOrderRepository.existsByUserIdAndStatus(userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
-                .thenReturn(true);
+    void checkoutResumesAnExistingPendingOrderForTheSamePlanAndCycle() {
+        BillingPrice price = new BillingPrice();
+        price.setPlanId(planId);
+        price.setBillingCycle("MONTHLY");
+        price.setPrice(new BigDecimal("799.00"));
+        price.setRazorpayPlanId("plan_razorpay_123");
+        when(billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(eq(planId), eq("MONTHLY")))
+                .thenReturn(Optional.of(price));
+
+        com.finora.entity.SubscriptionOrder existingOrder = new com.finora.entity.SubscriptionOrder();
+        existingOrder.setPlanId(planId);
+        existingOrder.setBillingCycle("MONTHLY");
+        existingOrder.setRazorpaySubscriptionId("sub_already_created");
+        existingOrder.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(existingOrder));
+
+        CheckoutResponseDto response = service.checkout(userId, "PREMIUM", "MONTHLY");
+
+        assertThat(response.razorpaySubscriptionId()).isEqualTo("sub_already_created");
+        verify(gateway, never()).createSubscription(any(), any(), anyMap());
+        verify(subscriptionOrderRepository, never()).save(any());
+    }
+
+    @Test
+    void checkoutRefusesADifferentPlanWhileAnotherIsPending() {
+        BillingPrice price = new BillingPrice();
+        price.setPlanId(planId);
+        price.setBillingCycle("MONTHLY");
+        price.setPrice(new BigDecimal("799.00"));
+        price.setRazorpayPlanId("plan_razorpay_123");
+        when(billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(eq(planId), eq("MONTHLY")))
+                .thenReturn(Optional.of(price));
+
+        com.finora.entity.SubscriptionOrder existingOrder = new com.finora.entity.SubscriptionOrder();
+        existingOrder.setPlanId(UUID.randomUUID()); // a DIFFERENT plan than the one being requested
+        existingOrder.setBillingCycle("MONTHLY");
+        existingOrder.setRazorpaySubscriptionId("sub_other_plan");
+        existingOrder.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(existingOrder));
 
         assertThatThrownBy(() -> service.checkout(userId, "PREMIUM", "MONTHLY"))
                 .isInstanceOf(ApiException.class);
 
         verify(gateway, never()).createSubscription(any(), any(), anyMap());
+    }
+
+    @Test
+    void cancelPendingOrderMarksItAbandoned() {
+        com.finora.entity.SubscriptionOrder order = new com.finora.entity.SubscriptionOrder();
+        order.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(order));
+
+        service.cancelPendingOrder(userId);
+
+        assertThat(order.getStatus()).isEqualTo(com.finora.entity.SubscriptionOrder.STATUS_ABANDONED);
+        verify(subscriptionOrderRepository).save(order);
+        verify(gateway, never()).cancelSubscription(any(), anyBoolean());
+    }
+
+    @Test
+    void cancelPendingOrderThrowsWhenNoneExists() {
+        assertThatThrownBy(() -> service.cancelPendingOrder(userId))
+                .isInstanceOf(ApiException.class);
     }
 
     @Test
@@ -340,13 +401,185 @@ class BillingCheckoutServiceTest {
         premiumMonthly.setRazorpayPlanId("plan_premium_monthly");
         when(billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(premiumPlanId, "MONTHLY"))
                 .thenReturn(Optional.of(premiumMonthly));
-        when(subscriptionOrderRepository.existsByUserIdAndStatus(userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
-                .thenReturn(true);
+
+        com.finora.entity.SubscriptionOrder existingOrder = new com.finora.entity.SubscriptionOrder();
+        existingOrder.setPlanId(UUID.randomUUID()); // different plan than PREMIUM, still blocks
+        existingOrder.setBillingCycle("MONTHLY");
+        existingOrder.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(existingOrder));
 
         assertThatThrownBy(() -> service.changePlan(userId, "PREMIUM", "MONTHLY"))
                 .isInstanceOf(ApiException.class);
 
         verify(gateway, never()).createSubscription(any(), any(), anyMap());
         verify(subscriptionOrderRepository, never()).save(any());
+    }
+
+    @Test
+    void mySubscriptionReturnsThePlanAndRenewalDateForAPaidSubscriber() {
+        UUID plusPlanId = planId; // reuse the PREMIUM-labelled fixture id from setUp() -- code doesn't matter here, only that findById resolves it
+        Plan plus = new Plan();
+        ReflectionTestUtils.setField(plus, "id", plusPlanId);
+        plus.setCode("PLUS");
+        plus.setName("Plus");
+        when(planRepository.findById(plusPlanId)).thenReturn(Optional.of(plus));
+
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
+        subscription.setPlanId(plusPlanId);
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setRazorpaySubscriptionId("sub_existing");
+        subscription.setAutoRenew(true);
+        subscription.setRenewalDate(LocalDate.of(2026, 10, 5));
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()))
+                .thenReturn(List.of());
+        // Mockito's default answer for an Optional-returning method is Optional.empty() -- no
+        // pending order in this scenario, so subscriptionOrderRepository needs no stub here.
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.planCode()).isEqualTo("PLUS");
+        assertThat(dto.planName()).isEqualTo("Plus");
+        assertThat(dto.billingCycle()).isEqualTo("MONTHLY");
+        assertThat(dto.status()).isEqualTo("ACTIVE");
+        assertThat(dto.renewalDate()).isEqualTo(LocalDate.of(2026, 10, 5));
+        assertThat(dto.autoRenew()).isTrue();
+        assertThat(dto.hasBillingSubscription()).isTrue();
+        assertThat(dto.pendingChange()).isNull();
+        assertThat(dto.pendingOrder()).isNull();
+    }
+
+    @Test
+    void mySubscriptionSurfacesAPendingScheduledDowngrade() {
+        UUID premiumPlanId = planId;
+        UUID plusPlanId = UUID.randomUUID();
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        when(planRepository.findById(premiumPlanId)).thenReturn(Optional.of(premium));
+        Plan plus = new Plan();
+        ReflectionTestUtils.setField(plus, "id", plusPlanId);
+        plus.setCode("PLUS");
+        plus.setName("Plus");
+        when(planRepository.findById(plusPlanId)).thenReturn(Optional.of(plus));
+
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
+        subscription.setPlanId(premiumPlanId); // still Premium -- the downgrade hasn't applied yet
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setRazorpaySubscriptionId("sub_existing");
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
+
+        PlanChange scheduled = new PlanChange();
+        scheduled.setSubscriptionId(subscription.getId());
+        scheduled.setFromPlanId(premiumPlanId);
+        scheduled.setToPlanId(plusPlanId);
+        scheduled.setEffectiveAt(java.time.Instant.parse("2026-10-05T00:00:00Z"));
+        scheduled.setReason(PlanChange.REASON_DOWNGRADE_SCHEDULED);
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()))
+                .thenReturn(List.of(scheduled));
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.pendingChange()).isNotNull();
+        assertThat(dto.pendingChange().toPlanCode()).isEqualTo("PLUS");
+        assertThat(dto.pendingChange().toPlanName()).isEqualTo("Plus");
+        assertThat(dto.pendingChange().effectiveAt()).isEqualTo(java.time.Instant.parse("2026-10-05T00:00:00Z"));
+    }
+
+    @Test
+    void mySubscriptionOmitsAPendingChangeOnceItHasAlreadyApplied() {
+        UUID plusPlanId = planId;
+        Plan plus = new Plan();
+        ReflectionTestUtils.setField(plus, "id", plusPlanId);
+        plus.setCode("PLUS");
+        plus.setName("Plus");
+        when(planRepository.findById(plusPlanId)).thenReturn(Optional.of(plus));
+
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
+        subscription.setPlanId(plusPlanId); // already Plus -- the downgrade already reconciled
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setRazorpaySubscriptionId("sub_existing");
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
+
+        PlanChange applied = new PlanChange();
+        applied.setSubscriptionId(subscription.getId());
+        applied.setFromPlanId(UUID.randomUUID());
+        applied.setToPlanId(plusPlanId); // matches the subscription's CURRENT plan
+        applied.setEffectiveAt(java.time.Instant.now());
+        applied.setReason(PlanChange.REASON_DOWNGRADE_SCHEDULED);
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()))
+                .thenReturn(List.of(applied));
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.pendingChange()).isNull();
+    }
+
+    @Test
+    void mySubscriptionReflectsFreeWithNoBillingSubscription() {
+        Subscription free = new Subscription();
+        ReflectionTestUtils.setField(free, "id", UUID.randomUUID());
+        free.setPlanId(planId);
+        free.setStatus(Subscription.STATUS_ACTIVE);
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(free));
+        Plan freePlan = new Plan();
+        ReflectionTestUtils.setField(freePlan, "id", planId);
+        freePlan.setCode("FREE");
+        freePlan.setName("Free");
+        when(planRepository.findById(planId)).thenReturn(Optional.of(freePlan));
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(free.getId())).thenReturn(List.of());
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.planCode()).isEqualTo("FREE");
+        assertThat(dto.hasBillingSubscription()).isFalse();
+        assertThat(dto.billingCycle()).isNull();
+        assertThat(dto.renewalDate()).isNull();
+    }
+
+    @Test
+    void mySubscriptionSurfacesAPendingOrderTheUserCanResumeOrCancel() {
+        Subscription free = new Subscription();
+        ReflectionTestUtils.setField(free, "id", UUID.randomUUID());
+        free.setPlanId(planId);
+        free.setStatus(Subscription.STATUS_ACTIVE);
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(free));
+        Plan freePlan = new Plan();
+        ReflectionTestUtils.setField(freePlan, "id", planId);
+        freePlan.setCode("FREE");
+        freePlan.setName("Free");
+        when(planRepository.findById(planId)).thenReturn(Optional.of(freePlan));
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(free.getId())).thenReturn(List.of());
+
+        UUID premiumPlanId = UUID.randomUUID();
+        Plan premium = new Plan();
+        ReflectionTestUtils.setField(premium, "id", premiumPlanId);
+        premium.setCode("PREMIUM");
+        premium.setName("Premium");
+        when(planRepository.findById(premiumPlanId)).thenReturn(Optional.of(premium));
+
+        com.finora.entity.SubscriptionOrder order = new com.finora.entity.SubscriptionOrder();
+        order.setPlanId(premiumPlanId);
+        order.setBillingCycle("YEARLY");
+        order.setRazorpaySubscriptionId("sub_abandoned");
+        order.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(order));
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.pendingOrder()).isNotNull();
+        assertThat(dto.pendingOrder().planCode()).isEqualTo("PREMIUM");
+        assertThat(dto.pendingOrder().planName()).isEqualTo("Premium");
+        assertThat(dto.pendingOrder().billingCycle()).isEqualTo("YEARLY");
+        assertThat(dto.pendingOrder().razorpaySubscriptionId()).isEqualTo("sub_abandoned");
+        assertThat(dto.pendingOrder().keyId()).isEqualTo("rzp_test_123");
     }
 }
