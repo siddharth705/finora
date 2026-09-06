@@ -194,16 +194,16 @@ Ledger or Insights screen mounts for a user who hasn't completed that item yet.
 
 ## 6. Backend API
 
-New `OnboardingController` at `/api/onboarding/*` (mirrors how this codebase already separates
+New `OnboardingController` at `/api/v1/onboarding/*` (mirrors how this codebase already separates
 `AdminUserController` from `UserController` for a distinct concern):
 
-- `GET /api/onboarding/status` → `{ onboardingCompleted: boolean, financialFocus: string[] }`
-- `POST /api/onboarding/financial-focus` → body `{ focusKeys: string[] }` (empty array allowed —
+- `GET /api/v1/onboarding/status` → `{ onboardingCompleted: boolean, financialFocus: string[] }`
+- `POST /api/v1/onboarding/financial-focus` → body `{ focusKeys: string[] }` (empty array allowed —
   "Skip for Now" / no chips selected); replaces the user's focus set.
-- `POST /api/onboarding/onboarding-complete` → sets `onboarding_completed_at = now()` if null; idempotent.
-- `POST /api/onboarding/onboarding-reset` → sets `onboarding_completed_at = NULL`; backs "Retake Product
+- `POST /api/v1/onboarding/complete` → sets `onboarding_completed_at = now()` if null; idempotent.
+- `POST /api/v1/onboarding/reset` → sets `onboarding_completed_at = NULL`; backs "Retake Product
   Tour."
-- `GET /api/onboarding/checklist` → `{ items: [{ key, completed }], completedCount, totalCount:
+- `GET /api/v1/onboarding/checklist` → `{ items: [{ key, completed }], completedCount, totalCount:
   6 }`. Computes `COMPLETE_PROFILE`/`IMPORT_STATEMENT`/`CREATE_BUDGET`/`CREATE_GOAL` live from
   existing tables and reads `REVIEW_TRANSACTIONS`/`VIEW_INSIGHTS` from `user_checklist_events`.
   Derivation rules for the 4 computed items (fixed at implementation time against whatever the
@@ -211,29 +211,44 @@ New `OnboardingController` at `/api/onboarding/*` (mirrors how this codebase alr
   `COMPLETE_PROFILE` = name set and email verified and (phone verified or no phone on file);
   `IMPORT_STATEMENT` = at least one `ImportJob`/`StatementImport` row exists; `CREATE_BUDGET` =
   at least one `Budget` row exists; `CREATE_GOAL` = at least one `Goal` row exists.
-- `POST /api/onboarding/checklist/{itemKey}/complete` → `itemKey` restricted to
+- `POST /api/v1/onboarding/checklist/{itemKey}/complete` → `itemKey` restricted to
   `REVIEW_TRANSACTIONS`/`VIEW_INSIGHTS` only (400 for anything else — the other 4 items are
   derived, never explicitly settable); idempotent insert into `user_checklist_events`.
 
 ## 7. Frontend / mobile architecture
 
-**Interception point.** On successful auth, both platforms fetch `/api/onboarding/status` once.
-If `onboardingCompleted` is false, the onboarding flow renders instead of the requested route (web: a
-check inside `Protected` in `App.tsx`; mobile: the equivalent check in `RootNavigator.tsx`) —
-same gate that already exists for "unverified" states, extended with one more condition.
+**Interception point.** `onboardingCompleted` rides on the same channel `phoneVerified` already
+uses on both platforms, rather than a separate boot-time round trip — `AuthResponse` (login/
+register/Google/Apple) and `UserSettingsDto` (`GET /users/me`, read on web's silent-refresh
+bootstrap and on any manual re-fetch) both gain the field, exactly where `phoneVerified` already
+lives in each. If `onboardingCompleted` is false, the onboarding flow renders instead of the
+requested route (web: a check inside `Protected` in `App.tsx`; mobile: the equivalent check in
+`RootNavigator.tsx`) — same gate that already exists for "unverified" states, extended with one
+more condition. `GET /api/v1/onboarding/status` still exists, but only as the read call the
+onboarding flow itself uses to resume `financialFocus` state, not as the routing signal.
 
 **Tour engine — built in-house, no new dependency.** Neither platform has a tour library today
 (§2), and adopting one means fighting its default styling to match Fynora's existing design
 system. A small `TourOverlay` component takes an ordered `{ targetRef, title, body }[]`, dims the
 screen, cuts a spotlight hole around the measured target, and renders a tooltip with
-Next/Back/Skip:
+Next/Back/Skip.
+
+Web's `Sidebar` already renders every one of the 7 tour targets (Dashboard, Accounts, Import,
+Transactions, Budgets, Goals, Insights) as persistent `NavLink`s regardless of which page is
+active, so the tour never navigates — it spotlights sidebar links in place over the Dashboard.
+Mobile's bottom tab bar is narrower (`Home`/`Transactions`/`Import`/`More` only —
+`mobile/src/navigation/AppTabs.tsx`); Accounts/Budgets/Goals/Insights live as rows inside the
+`More` tab's own list screen (`MoreScreen.tsx`), not as separate top-level tabs. The mobile tour
+therefore navigates the tab bar as it advances — Home → More (staying on `MoreScreen` for the
+Accounts/Budgets/Goals/Insights steps, spotlighting each row in turn) → Import → Transactions,
+matching the step order in §3 — rather than assuming tab-bar parity with web's sidebar.
 - Web: `getBoundingClientRect()` on the target ref, an absolutely-positioned SVG mask.
 - Mobile: `measureInWindow()` on the target ref inside `onLayout`, an `react-native-svg` mask
   (already a dependency — no new library needed there either).
 
 **Getting-started checklist widget.** A dashboard card, both platforms, fetching
-`GET /api/onboarding/checklist`; hidden once `completedCount === totalCount`. The Ledger and
-Insights screens each fire `POST /api/onboarding/checklist/{key}/complete` on a **1.5s dwell
+`GET /api/v1/onboarding/checklist`; hidden once `completedCount === totalCount`. The Ledger and
+Insights screens each fire `POST /api/v1/onboarding/checklist/{key}/complete` on a **1.5s dwell
 timer** started on mount (not on mount itself), cleared on unmount — so a screen opened and
 immediately left doesn't get credited — if that item isn't already complete (checked against the
 same fetched status, no extra round trip
