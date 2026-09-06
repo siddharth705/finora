@@ -11,8 +11,10 @@ before any other reconciliation logic changed.
 `CategoryRules`, `DuplicateMatching`.
 **Benchmark:** 59 scenarios across 6 categories, executed against the real
 `ReconciliationService` code path (mocked persistence only — see `README.md`).
-**Implemented:** roadmap item #1 only (transfer keyword-gate widening) — see §7. Nothing else in
-this report has been implemented.
+**Implemented:** roadmap item #1 (transfer keyword-gate widening, see §7) and its recommended
+follow-up, item 1a from `post-fix-failure-analysis.md` (adding `"rtgs"`/`"self transfer"` to
+`CategoryRules`' `"Transfer"` keyword list, the same mechanism, re-measured at 76.3% overall / 65%
+transfers). Nothing else in this report has been implemented.
 
 ---
 

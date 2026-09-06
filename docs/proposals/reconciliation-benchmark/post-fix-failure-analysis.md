@@ -59,11 +59,38 @@ its risk is not uniform — that distinction is the main finding of this section
 | 9 | Split-transfer many-to-one aggregation | **High** (different, combinatorial matching model) | **High** | 1/16 | Unmeasured | None — explicitly deferred already, no new evidence |
 | — | CC-payment late-window | Low, but should not ship alone (see audit) | Medium if widened without better tiebreak evidence | 1/16 | Medium | Weak; also flagged as inconsistently scored against two sibling window-boundary cases — a policy decision, not a queued fix |
 
-## 4. Recommendation: exactly one next implementation target
+## 4. Recommendation: exactly one next implementation target — ✅ IMPLEMENTED
 
-**Recommended: #1a — add `"rtgs"` and an explicit self-transfer phrase (e.g., `"self transfer"`) to
-the transfer pass's gate, as a second, narrowly-scoped extension of the exact mechanism shipped in
-PR #1082.**
+**Recommended and implemented: #1a — added `"rtgs"` and `"self transfer"` to `CategoryRules`'
+`"Transfer"` keyword list**, which `ReconciliationService`'s transfer pass already reads via
+`suggestCategory()` (the mechanism PR #1082 wired in). No `ReconciliationService` change was needed
+this time — the entire fix is the two new keywords in `CategoryRules`, which benefits
+categorization and reconciliation identically, for free.
+
+**Re-measured result:**
+
+```
+Before this change:  72.9% overall (43/59), 53% transfers (9/17)
+After this change:   76.3% overall (45/59), 65% transfers (11/17)
+```
+
+`rtgsTransfer_noPaymentKeyword_missed` and `upiSelfTransfer_noPaymentKeyword_noRelationshipConfigured_missed`
+both now pass, exactly the 2 scenarios this fix targeted — nothing else moved, as expected (this
+was a narrow, additive change). Full regression check
+(`ReconciliationServiceTest`, `ReconciliationEndToEndTest`, `CategoryRulesTest`,
+`PersonToPersonTransferDetectorTest`, `RuleServiceTest`, `RuleEngineServiceTest`, and the whole
+`com.finora.service.*Test`/`com.finora.transactions.*Test`/`com.finora.util.*Test` surface) is
+unaffected.
+
+**14 failures remain** (down from 16, down from the original 18): the same §2/§3 grouping and
+ranking above still applies to what's left, minus the two closed scenarios — the "missing transfer
+vocabulary" cluster is now 2 (`walletFunding`, `savingsToCreditCardAutoDebit`), both deliberately
+left unfixed this round for the reasons already given in §3's row 1b: `"wallet"` and `"auto debit"`
+are broader, higher-collision-risk terms than `"rtgs"`/`"self transfer"` were, and `"auto debit"`
+specifically would misfire on real EMI/insurance auto-debits.
+
+The original reasoning for this pick (kept for the record, since it's what justified making this
+change before it was made):
 
 This is a close call against #2 (investment word-boundary fusion) and #3 (first-match-wins) — all
 three score well. The reasoning for picking #1a specifically:
