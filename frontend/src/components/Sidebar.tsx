@@ -26,7 +26,11 @@ const links = [
   { to: '/app/budgets', label: 'Budgets', icon: PiggyBank },
   { to: '/app/goals', label: 'Goals', icon: Target },
   { to: '/app/investments', label: 'Investments', icon: TrendingUp },
-  { to: '/app/reports', label: 'Reports', icon: BarChart3 },
+  // end: true -- '/app/reports/advanced' below is a nested child route, and NavLink's default
+  // (prefix) matching would otherwise also highlight this link whenever Advanced Reports is the
+  // active page, showing two nav items selected at once (found live: both got the active
+  // background, plus Advanced Reports' own focus ring).
+  { to: '/app/reports', label: 'Reports', icon: BarChart3, end: true },
   // Free/no-subscription users still see this link -- clicking it shows the upgrade prompt
   // (PremiumFeatureGate on AdvancedReports.tsx), not a 404 or a hidden nav item. Hiding it
   // entirely would mean a Free user can't discover the feature exists at all.
