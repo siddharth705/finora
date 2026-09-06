@@ -294,6 +294,31 @@ describe('Dashboard — Financial Health Score', () => {
     const balanceValue = screen.getByText('₹50,000');
     expect(balanceValue).toHaveClass('font-display');
   });
+
+  it('wraps the greeting in a hero card with Financial Health and Savings Rate chips', async () => {
+    renderDashboard();
+
+    const heading = await screen.findByRole('heading', { level: 1 });
+    expect(heading.textContent).toMatch(/👋/);
+
+    expect(screen.getByText('Financial Health: Excellent · 82/100')).toBeInTheDocument();
+    expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
+
+    const illustration = document.querySelector('[data-testid="dashboard-hero-illustration"]');
+    expect(illustration).toBeTruthy();
+    expect(illustration).toHaveAttribute('aria-hidden', 'true');
+  });
+
+  it('omits the Financial Health chip when the score is not yet available', async () => {
+    vi.mocked(dashboardApi.summary).mockReset().mockResolvedValue(
+      summary({ healthScoreAvailable: false, healthScore: null, healthLabel: null, healthScoreTransactionCount: 3 }),
+    );
+    renderDashboard();
+
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByText(/Financial Health:/)).not.toBeInTheDocument();
+    expect(screen.getByText('Savings rate 44%')).toBeInTheDocument();
+  });
 });
 
 describe('Dashboard — Spending Breakdown category review warning', () => {
