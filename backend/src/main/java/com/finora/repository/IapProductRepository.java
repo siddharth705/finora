@@ -7,5 +7,5 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface IapProductRepository extends JpaRepository<IapProduct, UUID> {
-    Optional<IapProduct> findByProviderProductIdAndPlatform(String providerProductId, String platform);
+    Optional<IapProduct> findByProviderProductIdAndPlatformAndActiveTrue(String providerProductId, String platform);
 }

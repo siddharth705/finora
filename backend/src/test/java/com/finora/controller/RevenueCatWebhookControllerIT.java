@@ -129,6 +129,55 @@ class RevenueCatWebhookControllerIT extends AbstractIntegrationTest {
         assertThat(reloaded.getStatus()).isEqualTo(Subscription.STATUS_PAST_DUE);
     }
 
+    /** Design spec §2.1 invariants 1/2 -- at most one active paid subscription per user, owned by
+     *  exactly one provider. A RevenueCat INITIAL_PURCHASE arriving for a user who already has a
+     *  live RAZORPAY mandate (e.g. a client-side gate bypass, or the mobile app's cached
+     *  hasBillingSubscription read being stale) must not silently clobber the existing Razorpay
+     *  row -- that would orphan a real, still-charging Razorpay subscription that nothing in
+     *  Fynora would ever reference again the moment payment_provider flips to REVENUECAT. Symmetric
+     *  to §6.4's already-implemented web-side guard (BillingCheckoutService.checkout()), which
+     *  blocks the opposite direction.
+     */
+    @Test
+    void initialPurchaseDoesNotOverwriteAnExistingRazorpayOwnedSubscription() {
+        User user = new User();
+        user.setEmail("revenuecat-it-" + UUID.randomUUID() + "@example.com");
+        user.setPasswordHash("irrelevant");
+        user.setFullName("RevenueCat IT User");
+        user.setRole("USER");
+        user.setPhoneVerified(true);
+        user = userRepository.save(user);
+        subscriptionService.provisionFreeSubscription(user.getId());
+
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        Subscription razorpaySubscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        razorpaySubscription.setPlanId(premium.getId());
+        razorpaySubscription.setBillingCycle("MONTHLY");
+        razorpaySubscription.setPaymentProvider("RAZORPAY");
+        razorpaySubscription.setRazorpaySubscriptionId("sub_existing_razorpay_it");
+        razorpaySubscription.setStatus(Subscription.STATUS_ACTIVE);
+        razorpaySubscription.setAutoRenew(true);
+        subscriptionRepository.save(razorpaySubscription);
+
+        Plan plus = planRepository.findByCode("PLUS").orElseThrow();
+        IapProduct product = new IapProduct();
+        product.setProviderProductId("plus_monthly_it_" + UUID.randomUUID());
+        product.setPlanId(plus.getId());
+        product.setBillingCycle("MONTHLY");
+        product.setPlatform("IOS");
+        product = iapProductRepository.save(product);
+
+        postSigned(revenueCatBody("INITIAL_PURCHASE", user.getId(),
+                Map.of("product_id", product.getProviderProductId(), "store", "APP_STORE",
+                        "original_transaction_id", "txn_conflict_it")));
+
+        var subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        assertThat(subscription.getPaymentProvider()).isEqualTo("RAZORPAY");
+        assertThat(subscription.getRazorpaySubscriptionId()).isEqualTo("sub_existing_razorpay_it");
+        assertThat(subscription.getPlanId()).isEqualTo(premium.getId());
+        assertThat(subscription.getRevenuecatOriginalTransactionId()).isNull();
+    }
+
     /** Mandatory per design spec §11 -- the one event type with no Razorpay precedent to lean on. */
     @Test
     void productChangeReconcilesBothPlanAndBillingCycle() {

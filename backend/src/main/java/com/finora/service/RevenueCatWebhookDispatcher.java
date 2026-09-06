@@ -72,10 +72,25 @@ public class RevenueCatWebhookDispatcher {
         Subscription subscription = subscriptionForAppUserId(eventPayload).orElse(null);
         if (subscription == null) return;
 
+        // Ownership-source rule (spec §2.1, invariants 1/2) -- symmetric to §6.4's web-side
+        // checkout guard, which blocks the opposite direction. The mobile Paywall is only ever
+        // shown when mySubscription() has no active billing subscription (design spec §6.3), so
+        // this should not normally fire -- but the store already captured real payment by the
+        // time this webhook arrives, so the backend cannot refuse the purchase, only refuse to
+        // silently overwrite and orphan a still-live Razorpay mandate. REVENUECAT and ADMIN_GRANT
+        // (a complimentary plan, not a real external mandate) are both fine to take over.
+        String existingProvider = subscription.getPaymentProvider();
+        if (existingProvider != null && !"REVENUECAT".equals(existingProvider) && !"ADMIN_GRANT".equals(existingProvider)) {
+            log.error("RevenueCat INITIAL_PURCHASE for user {} conflicts with an existing {}-owned " +
+                            "subscription -- not overwriting. Needs manual reconciliation (the store " +
+                            "has already charged this user).", subscription.getUserId(), existingProvider);
+            return;
+        }
+
         String productId = (String) eventPayload.get("product_id");
         String store = (String) eventPayload.get("store");
         String platform = "PLAY_STORE".equals(store) ? "ANDROID" : "IOS";
-        IapProduct product = iapProductRepository.findByProviderProductIdAndPlatform(productId, platform).orElse(null);
+        IapProduct product = iapProductRepository.findByProviderProductIdAndPlatformAndActiveTrue(productId, platform).orElse(null);
         if (product == null) {
             log.warn("RevenueCat product_id '{}' ({}) has no iap_products mapping, ignoring.", productId, platform);
             return;
@@ -157,7 +172,7 @@ public class RevenueCatWebhookDispatcher {
         String productId = (String) eventPayload.get("product_id");
         String store = (String) eventPayload.get("store");
         String platform = "PLAY_STORE".equals(store) ? "ANDROID" : "IOS";
-        iapProductRepository.findByProviderProductIdAndPlatform(productId, platform).ifPresent(product -> {
+        iapProductRepository.findByProviderProductIdAndPlatformAndActiveTrue(productId, platform).ifPresent(product -> {
             subscription.setPlanId(product.getPlanId());
             subscription.setBillingCycle(product.getBillingCycle());
             subscriptionRepository.save(subscription);
