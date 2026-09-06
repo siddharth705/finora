@@ -1371,9 +1371,31 @@ git commit -m "feat(onboarding): wire onboardingCompleted into AuthContext"
 
 ---
 
-### Task 8: `ProtectedRoute` gate
+### Task 8: `OnboardingUIContext` + `ProtectedRoute` gate
+
+**Design correction made while starting execution:** the spec (§7) is explicit that the tour
+"spotlights sidebar links in place over the Dashboard" — the real app underneath, not a copy of
+it. That's the entire reason a live spotlight tour was chosen over a welcome-carousel/mockup
+approach during brainstorming. An earlier draft of this task had `OnboardingFlow` own the 'tour'
+step as a full-screen takeover with nothing real mounted behind it, which would have quietly
+built the mockup version instead. Fixed here, before any code exists to make it a real
+regression: `ProtectedRoute` needs to tell "step is 'tour'" apart from every other step, and for
+'tour' specifically render the **real** `children` (which includes the real `Sidebar`, since
+`Dashboard.tsx` renders its own `Sidebar` — confirm this by reading `Dashboard.tsx`'s return JSX
+before writing this task's code, since the plan's earlier read of `App.tsx`'s routes did not
+confirm whether `Sidebar` is rendered per-page or via a shared layout route) with `TourOverlay`
+layered on top. Every other step (Welcome/Focus/TourIntro/Success) is still a full-screen
+takeover with no real page mounted underneath — those are static content screens with no live UI
+to spotlight, so this correction only changes the 'tour' step's rendering path.
+
+This needs one small piece of shared state `ProtectedRoute` and `OnboardingFlow` both read:
+which onboarding step is active. A tiny context (`OnboardingUIContext`) carries it, mounted once
+above the router in `App.tsx`.
 
 **Files:**
+- Create: `frontend/src/onboarding/OnboardingUIContext.tsx`
+- Create: `frontend/src/onboarding/OnboardingUIContext.test.tsx`
+- Modify: `frontend/src/App.tsx` — mount `<OnboardingUIProvider>`
 - Modify: `frontend/src/components/ProtectedRoute.tsx`
 - Modify: `frontend/src/components/ProtectedRoute.test.tsx` (create if it doesn't exist yet —
   check first)
@@ -1382,26 +1404,101 @@ git commit -m "feat(onboarding): wire onboardingCompleted into AuthContext"
 
 **Interfaces:**
 - Consumes: `useAuth().onboardingCompleted` (Task 7).
-- Produces: `<OnboardingFlow />` — the component `ProtectedRoute` renders in place of `children`
-  when onboarding isn't complete.
+- Produces: `OnboardingUIProvider`, `useOnboardingUI(): { step: OnboardingStep; setStep:
+  (s: OnboardingStep) => void }` where `OnboardingStep = 'welcome' | 'focus' | 'tourIntro' |
+  'tour' | 'success'` — consumed by `OnboardingFlow` (Task 9/10/11, which drives `step`) and by
+  `ProtectedRoute` (which reads it to decide overlay-vs-takeover).
 
-- [ ] **Step 1: Write the minimal `OnboardingFlow` stub**
+- [ ] **Step 1: Write `OnboardingUIContext`'s failing test**
+
+```typescript
+import { render, screen, act } from '@testing-library/react';
+import { OnboardingUIProvider, useOnboardingUI } from './OnboardingUIContext';
+
+function Probe() {
+  const { step, setStep } = useOnboardingUI();
+  return <button onClick={() => setStep('tour')}>{step}</button>;
+}
+
+describe('OnboardingUIContext', () => {
+  it('starts at the welcome step and updates on setStep', () => {
+    render(<OnboardingUIProvider><Probe /></OnboardingUIProvider>);
+    expect(screen.getByText('welcome')).toBeInTheDocument();
+    act(() => screen.getByRole('button').click());
+    expect(screen.getByText('tour')).toBeInTheDocument();
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `cd frontend && npx vitest run src/onboarding/OnboardingUIContext.test.tsx`
+Expected: FAIL.
+
+- [ ] **Step 3: Write `OnboardingUIContext.tsx`**
+
+```typescript
+import { createContext, useContext, useState, type ReactNode } from 'react';
+
+export type OnboardingStep = 'welcome' | 'focus' | 'tourIntro' | 'tour' | 'success';
+
+interface OnboardingUIState {
+  step: OnboardingStep;
+  setStep: (step: OnboardingStep) => void;
+}
+
+const OnboardingUIContext = createContext<OnboardingUIState | null>(null);
+
+export function OnboardingUIProvider({ children }: { children: ReactNode }) {
+  const [step, setStep] = useState<OnboardingStep>('welcome');
+  return (
+    <OnboardingUIContext.Provider value={{ step, setStep }}>
+      {children}
+    </OnboardingUIContext.Provider>
+  );
+}
+
+export function useOnboardingUI() {
+  const ctx = useContext(OnboardingUIContext);
+  if (!ctx) throw new Error('useOnboardingUI must be used within OnboardingUIProvider');
+  return ctx;
+}
+```
+
+- [ ] **Step 4: Run again to verify it passes**
+
+Run: same as Step 2.
+Expected: PASS.
+
+- [ ] **Step 5: Mount the provider in `App.tsx`**
+
+Wrap it around whatever already wraps the `<Routes>` tree (read `App.tsx` first — it likely
+already nests `AuthProvider`/`ThemeProvider`; add `OnboardingUIProvider` alongside them, inside
+`AuthProvider` since it doesn't depend on auth state itself but every consumer of it does need to
+be inside the router).
+
+- [ ] **Step 6: Write the minimal `OnboardingFlow` stub**
 
 ```typescript
 // frontend/src/onboarding/OnboardingFlow.tsx
-// Full implementation lands in Task 9-11 (Welcome/FinancialFocus/Tour/Success). This stub exists
-// only so ProtectedRoute has something real to render and test against in this task.
+// Full implementation lands in Task 9-11 (Welcome/FinancialFocus/TourIntro/Success). The 'tour'
+// step itself is deliberately NOT rendered by this component -- see Task 8's design-correction
+// note: ProtectedRoute renders the real app + TourOverlay for that step instead, so the tour
+// spotlights the live Sidebar rather than a copy of it. This stub exists only so ProtectedRoute
+// has something real to render and test against in this task.
 export function OnboardingFlow() {
   return <div data-testid="onboarding-flow">Onboarding flow placeholder</div>;
 }
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 7: Write the failing `ProtectedRoute` tests**
 
 ```typescript
 // Add to (or create) frontend/src/components/ProtectedRoute.test.tsx
-it('renders the onboarding flow instead of children when onboarding is not complete', () => {
+// Mock useOnboardingUI alongside whatever this file already mocks useAuth as.
+it('renders the onboarding flow instead of children when onboarding is not complete and step is not tour', () => {
   mockUseAuth.mockReturnValue({ token: 'tok', bootstrapping: false, phoneVerified: true, onboardingCompleted: false });
+  mockUseOnboardingUI.mockReturnValue({ step: 'welcome', setStep: vi.fn() });
 
   render(
     <MemoryRouter>
@@ -1413,8 +1510,23 @@ it('renders the onboarding flow instead of children when onboarding is not compl
   expect(screen.queryByTestId('real-page')).not.toBeInTheDocument();
 });
 
+it('renders the real children plus the tour overlay when step is tour', () => {
+  mockUseAuth.mockReturnValue({ token: 'tok', bootstrapping: false, phoneVerified: true, onboardingCompleted: false });
+  mockUseOnboardingUI.mockReturnValue({ step: 'tour', setStep: vi.fn() });
+
+  render(
+    <MemoryRouter>
+      <ProtectedRoute><div data-testid="real-page" /></ProtectedRoute>
+    </MemoryRouter>
+  );
+
+  expect(screen.getByTestId('real-page')).toBeInTheDocument();
+  expect(screen.queryByTestId('onboarding-flow')).not.toBeInTheDocument();
+});
+
 it('renders children when onboarding is already complete', () => {
   mockUseAuth.mockReturnValue({ token: 'tok', bootstrapping: false, phoneVerified: true, onboardingCompleted: true });
+  mockUseOnboardingUI.mockReturnValue({ step: 'welcome', setStep: vi.fn() });
 
   render(
     <MemoryRouter>
@@ -1428,41 +1540,64 @@ it('renders children when onboarding is already complete', () => {
 
 Match whatever mocking convention this repo's other `ProtectedRoute`-adjacent tests already use
 for `useAuth` (check `frontend/src/context/AuthContext.test.tsx` and any existing route test for
-the exact `vi.mock('../context/AuthContext', ...)` shape before writing this).
+the exact `vi.mock('../context/AuthContext', ...)` shape before writing this) and mock
+`../onboarding/OnboardingUIContext` the same way.
 
-- [ ] **Step 3: Run to verify it fails**
+- [ ] **Step 8: Run to verify these fail**
 
 Run: `cd frontend && npx vitest run src/components/ProtectedRoute.test.tsx`
-Expected: FAIL.
+Expected: FAIL — the second test in particular, since `ProtectedRoute` doesn't know about `step`
+yet.
 
-- [ ] **Step 4: Update `ProtectedRoute.tsx`**
+- [ ] **Step 9: Update `ProtectedRoute.tsx`**
 
 ```typescript
 import { OnboardingFlow } from '../onboarding/OnboardingFlow';
+import { useOnboardingUI } from '../onboarding/OnboardingUIContext';
 
 export function ProtectedRoute({ children, allowUnverified = false }: ProtectedRouteProps) {
   const { token, bootstrapping, phoneVerified, onboardingCompleted } = useAuth();
+  const { step, setStep } = useOnboardingUI();
   if (bootstrapping) return null;
   if (!token) return <Navigate to="/auth" replace />;
   if (!allowUnverified && !phoneVerified) return <Navigate to="/verify-phone" replace />;
   // Onboarding only ever applies to a verified session -- allowUnverified routes (VerifyPhone
   // itself) must never be blocked behind it, same reasoning as the phoneVerified check above.
-  if (!allowUnverified && !onboardingCompleted) return <OnboardingFlow />;
+  if (!allowUnverified && !onboardingCompleted) {
+    if (step === 'tour') {
+      // Task 10 replaces this stub with the real TourOverlay (that file doesn't exist until
+      // Task 10 creates it -- importing it here would break this task's own build). onFinish/
+      // onSkip both just advance to 'success': neither the tour finishing nor being skipped
+      // completes onboarding by itself -- only SuccessScreen's own buttons do that (Task 11).
+      // Falling through to `step !== 'tour'` below is what makes OnboardingFlow render Success
+      // once Task 11 adds that branch to it.
+      return (
+        <>
+          {children}
+          <div data-testid="tour-overlay-stub">
+            <button onClick={() => setStep('success')}>Finish tour (stub)</button>
+          </div>
+        </>
+      );
+    }
+    return <OnboardingFlow />;
+  }
   return <>{children}</>;
 }
 ```
 
-- [ ] **Step 5: Run again to verify it passes**
+- [ ] **Step 10: Run again to verify the tests pass**
 
-Run: same as Step 3.
+Run: same as Step 8.
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
-git add frontend/src/components/ProtectedRoute.tsx frontend/src/components/ProtectedRoute.test.tsx \
+git add frontend/src/onboarding/OnboardingUIContext.tsx frontend/src/onboarding/OnboardingUIContext.test.tsx \
+        frontend/src/App.tsx frontend/src/components/ProtectedRoute.tsx frontend/src/components/ProtectedRoute.test.tsx \
         frontend/src/onboarding/OnboardingFlow.tsx
-git commit -m "feat(onboarding): gate protected routes on onboarding completion"
+git commit -m "feat(onboarding): gate protected routes on onboarding, overlay tour on the real app"
 ```
 
 ---
@@ -1886,14 +2021,19 @@ export function TourOverlay({ steps, onFinish, onSkip }: Props) {
 Run: same as Step 4.
 Expected: PASS.
 
-- [ ] **Step 7: Add the Tour Intro screen inline in `OnboardingFlow`, and wire the tour in**
+- [ ] **Step 7: Add the Tour Intro screen inline in `OnboardingFlow`**
+
+`OnboardingFlow` owns `'tourIntro'` only — it does NOT render `'tour'` itself. Per Task 8's
+design correction, `ProtectedRoute` renders the tour (real app + overlay) directly once `step ===
+'tour'`, so `OnboardingFlow` never mounts while the tour is active. `OnboardingFlow`'s only job
+here is to get *into* that step:
 
 ```typescript
 // Add to OnboardingFlow.tsx, replacing the 'tourIntro'/'tour'/'success' placeholder branch:
-import { TourOverlay } from './TourOverlay';
-import { TOUR_STEPS } from './tourSteps';
+import { useOnboardingUI } from './OnboardingUIContext';
 
-  // ...inside OnboardingFlow():
+  // ...inside OnboardingFlow(): (step/setStep now come from useOnboardingUI(), not local state --
+  // see this task's Step 9 below, which also removes OnboardingFlow's own useState<Step>)
   if (step === 'tourIntro') {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen px-6 text-center">
@@ -1903,40 +2043,70 @@ import { TOUR_STEPS } from './tourSteps';
         </p>
         <div className="flex gap-3">
           <Button variant="primary" onClick={() => setStep('tour')}>Start Tour</Button>
-          <Button variant="secondary" onClick={finishOnboarding}>Skip</Button>
+          <Button variant="secondary" onClick={() => setStep('success')}>Skip</Button>
         </div>
       </div>
     );
   }
-  if (step === 'tour') {
-    return <TourOverlay steps={TOUR_STEPS} onFinish={finishOnboarding} onSkip={finishOnboarding} />;
-  }
+  // 'tour' is rendered by ProtectedRoute directly (Task 8), never by OnboardingFlow.
   // 'success' lands in Task 11.
   return <div data-testid="onboarding-flow">Onboarding flow placeholder</div>;
 ```
 
-Note the tour renders as a full-screen overlay with nothing behind it in this stub — Task 11
-doesn't change this, since the spec's flow control never requires the real Dashboard to be
-visible underneath the tour for `OnboardingFlow` to work (the sidebar `data-tour` targets are
-real DOM elements, but `ProtectedRoute` intercepts routing entirely while onboarding is
-incomplete, so there is no live Dashboard mounted behind this overlay yet in v1 — this is a
-known, accepted simplification: the tour's "spotlight" targets are illustrative copies rendered
-by `OnboardingFlow` itself, not the live Sidebar). **Re-read this against the spec before
-implementing**: if this simplification is unacceptable, `OnboardingFlow` needs to render inside
-the real authenticated shell (Sidebar + routed content) rather than replacing it, with `/app`
-force-navigated underneath — flag this to the plan's reviewer as an open question rather than
-silently picking one interpretation, since it changes Task 8's `ProtectedRoute` design.
+Tour Intro's own "Skip" goes straight to `'success'`, matching the spec's flow-control table
+(Tour Intro's Skip and the tour's own Skip both end at Success) — it does **not** call
+`onboardingApi.complete()` here; only `SuccessScreen`'s buttons do that (Task 11), consistent with
+the corrected `ProtectedRoute` sequencing from Task 8.
 
-- [ ] **Step 8: Run the full onboarding test folder**
+- [ ] **Step 8: Replace `ProtectedRoute`'s tour stub with the real `TourOverlay`**
 
-Run: `cd frontend && npx vitest run src/onboarding src/components/Sidebar.test.tsx`
+```typescript
+// frontend/src/components/ProtectedRoute.tsx -- replace the Task 8 stub:
+import { TourOverlay } from '../onboarding/TourOverlay';
+import { TOUR_STEPS } from '../onboarding/tourSteps';
+
+  if (step === 'tour') {
+    const goToSuccess = () => setStep('success');
+    return (
+      <>
+        {children}
+        <TourOverlay steps={TOUR_STEPS} onFinish={goToSuccess} onSkip={goToSuccess} />
+      </>
+    );
+  }
+```
+
+Remove the now-unused inline stub (`data-tour="tour-overlay-stub"` button) entirely.
+
+- [ ] **Step 9: Switch `OnboardingFlow` from local `useState<Step>` to `useOnboardingUI()`**
+
+`OnboardingFlow`'s `step` must be the same shared state `ProtectedRoute` reads (Task 8's whole
+point), not a separate local `useState` that would drift out of sync the moment `ProtectedRoute`
+calls `setStep('success')` from outside `OnboardingFlow`. In `OnboardingFlow.tsx`, replace
+`const [step, setStep] = useState<Step>('welcome');` with
+`const { step, setStep } = useOnboardingUI();`, and delete the now-unused local `Step` type (it
+now lives in `OnboardingUIContext.tsx`, exported as `OnboardingStep`) and the `useState` import if
+nothing else in the file still needs it.
+
+- [ ] **Step 10: Update `ProtectedRoute.test.tsx`'s stub-era assertions**
+
+The Step 7 test from Task 8 ("renders the real children plus the tour overlay when step is
+tour") asserted only on `real-page`/`onboarding-flow` testids, which still holds — no change
+needed there. Add one more case confirming the real `TourOverlay` renders its first step's title
+when `step === 'tour'` (mock `useOnboardingUI` to return `{ step: 'tour', setStep: vi.fn() }` as
+Task 8 already does, then assert `screen.getByText('Your Financial Command Center')` is present).
+
+- [ ] **Step 11: Run the full onboarding test folder plus `ProtectedRoute`'s**
+
+Run: `cd frontend && npx vitest run src/onboarding src/components/Sidebar.test.tsx src/components/ProtectedRoute.test.tsx`
 Expected: all PASS.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add frontend/src/onboarding/ frontend/src/components/Sidebar.tsx
-git commit -m "feat(onboarding): add TourOverlay and wire the 7-step tour"
+git add frontend/src/onboarding/ frontend/src/components/Sidebar.tsx frontend/src/components/ProtectedRoute.tsx \
+        frontend/src/components/ProtectedRoute.test.tsx
+git commit -m "feat(onboarding): add TourOverlay, spotlighting the real app via ProtectedRoute"
 ```
 
 ---
@@ -2049,31 +2219,17 @@ Expected: PASS.
 
 - [ ] **Step 6: Wire `SuccessScreen` into `OnboardingFlow`, replacing the final placeholder**
 
+Task 8/10 already established the correct routing: `ProtectedRoute` renders the tour directly and
+sends both `onFinish`/`onSkip` to `setStep('success')`; Tour Intro's own Skip also goes straight to
+`'success'` (Task 10 Step 7). This task's only remaining piece is `OnboardingFlow`'s `'success'`
+branch itself — `SuccessScreen.onDone` is the one and only place that calls `finishOnboarding()`
+(which POSTs `/onboarding/complete` and flips `onboardingCompleted` to `true`, at which point
+`ProtectedRoute` stops rendering the onboarding branch at all):
+
 ```typescript
 import { SuccessScreen } from './SuccessScreen';
 
-  if (step === 'success') {
-    return <SuccessScreen onDone={() => setStep('done' as Step)} />; // see note below
-  }
-```
-
-Since `finishOnboarding()` already flips `onboardingCompleted` to `true` (which makes
-`ProtectedRoute` stop rendering `OnboardingFlow` at all), the tour's `onFinish`/`onSkip` should
-route to `'success'` rather than calling `finishOnboarding()` directly, and `SuccessScreen.onDone`
-is what actually calls `finishOnboarding()`. Adjust the Task 10 wiring:
-
-```typescript
-  if (step === 'tour') {
-    return <TourOverlay steps={TOUR_STEPS} onFinish={() => setStep('success')} onSkip={() => setStep('success')} />;
-  }
-  if (step === 'tourIntro') {
-    // ...unchanged Start Tour button, but Skip now also goes to 'success' after completing:
-    // onClick={async () => { await finishOnboarding(); }} stays as-is for Tour Intro's own Skip,
-    // since spec §"Flow control" only requires the TOUR's skip (not Tour Intro's) to reach
-    // Success -- re-read spec §"Flow control" bullet 3 before finalizing which Skip buttons route
-    // through Success vs straight to done, since both are defensible readings and this plan
-    // should not silently pick one without flagging it, same as Task 10 Step 7's note.
-  }
+  // Replaces OnboardingFlow's final placeholder return:
   if (step === 'success') {
     return <SuccessScreen onDone={finishOnboarding} />;
   }
@@ -2756,9 +2912,9 @@ const styles = StyleSheet.create({
 `onDone` fires, `RootNavigator` unmounts `OnboardingNavigator` and mounts `AppTabs` fresh at its
 default `Home` tab — there is no navigator instance yet to imperatively navigate within from
 inside `OnboardingNavigator`. If distinct destinations are required, this needs a documented
-follow-up (a pending-navigation-target ref consumed by `AppTabs` on mount), not a guess made
-silently here — flag it rather than resolve it unilaterally, same posture as Task 10 Step 7's and
-Task 11 Step 6's flagged simplifications.
+follow-up (a pending-navigation-target ref consumed by `AppTabs` on mount) — flagged here as a
+deliberate, accepted v1 scope decision rather than left open, since building that follow-up
+mechanism now would be exactly the kind of unrequested scope the spec's §9 already rules out.
 
 - [ ] **Step 13: Wire `WelcomeScreen`/`FinancialFocusScreen`/`SuccessScreen` into
   `OnboardingNavigator`**, replacing its stub body with the same `step` state machine shape as
@@ -3127,14 +3283,17 @@ on a platform this codebase's own conventions require visual verification for.
 - §9 explicitly-out-of-scope items — none were added; no dashboard reordering logic, no admin
   view, no A/B testing, no server-driven step config exists anywhere in this plan.
 
-**Placeholder scan:** two places in this plan intentionally flag an open design question rather
-than silently resolving it (Task 10 Step 7 — whether the tour overlay needs the real Dashboard
-mounted behind it; Task 15 Step 9-12 — where Success screen's Import/Connect CTAs should actually
-navigate on mobile) and one defers an implementation detail to a same-task follow-up with a
-concrete next step (Task 16 Step 7 — the spotlight cutout itself, blocked on Step 1's navigation-
-timing question). These are flagged, not vague — each names exactly what's unresolved and what
-resolving it would change. No other "TBD"/"handle appropriately"/unshown code was found on
-re-scan.
+**Placeholder scan:** the web tour's "spotlight the real app, not a copy" question (originally
+flagged as open in an earlier draft of Task 10) was resolved during execution — see Task 8's
+design-correction note — rather than left as a caveat: `ProtectedRoute` now renders the real
+`children` plus `TourOverlay` for the `'tour'` step, matching the spec's §7 description exactly.
+Two items remain genuinely, deliberately deferred rather than silently resolved: mobile's
+Success-screen CTA destinations (Task 15 Step 9-12 — all three buttons call `onDone` in v1, with
+the real-destination follow-up named explicitly as future scope, not built) and the tour's
+spotlight cutout rendering on mobile (Task 16 Step 7 — the tooltip/Next/Back/Skip/Finish flow
+ships first; the visual highlight itself is a same-task follow-up blocked on Step 1's navigation-
+timing question). Both are flagged with a concrete next step, not vague. No other
+"TBD"/"handle appropriately"/unshown code was found on re-scan.
 
 **Type consistency:** `OnboardingDto.StatusResponse`/`ChecklistResponse`/`ChecklistItemDto`
 (Task 2/3) are used with the same field names in every later task (Tasks 4-6 backend; Tasks 7-12
