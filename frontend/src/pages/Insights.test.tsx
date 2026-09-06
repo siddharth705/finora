@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Insights from './Insights';
 import { insightsApi, recurringApi, onboardingApi, type InsightsData, type RecurringItem } from '../api/endpoints';
 
@@ -40,6 +41,18 @@ function pending<T>(): Promise<T> {
   return new Promise<T>(() => {});
 }
 
+// Insights now reads useQueryClient() (for the checklist-invalidation bug fix on the dwell
+// timer below) -- every render needs a real QueryClientProvider ancestor, same pattern
+// Ledger.test.tsx's own renderLedger() already uses.
+function renderInsights() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <Insights />
+    </QueryClientProvider>
+  );
+}
+
 describe('Insights — section-scoped loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -54,7 +67,7 @@ describe('Insights — section-scoped loading', () => {
     vi.mocked(insightsApi.get).mockReturnValue(pending<InsightsData>());
     vi.mocked(recurringApi.list).mockResolvedValue([recurringItem()]);
 
-    render(<Insights />);
+    renderInsights();
 
     expect(await screen.findByText(/netflix/i)).toBeInTheDocument();
     // ...while the other two cards are still, correctly, loading.
@@ -66,7 +79,7 @@ describe('Insights — section-scoped loading', () => {
     vi.mocked(insightsApi.get).mockResolvedValue(insights());
     vi.mocked(recurringApi.list).mockReturnValue(pending<RecurringItem[]>());
 
-    render(<Insights />);
+    renderInsights();
 
     expect(await screen.findByText(/You spent more on Food/)).toBeInTheDocument();
     expect(screen.getByText('Loading recurring payments')).toBeInTheDocument();
@@ -80,7 +93,7 @@ describe('Insights — section-scoped loading', () => {
     vi.mocked(insightsApi.get).mockResolvedValue(insights());
     vi.mocked(recurringApi.list).mockRejectedValue(new Error('boom'));
 
-    render(<Insights />);
+    renderInsights();
 
     expect(await screen.findByText(/Couldn't load your recurring payments/)).toBeInTheDocument();
     expect(screen.getByText(/You spent more on Food/)).toBeInTheDocument();
@@ -91,7 +104,7 @@ describe('Insights — section-scoped loading', () => {
     vi.mocked(insightsApi.get).mockRejectedValue(new Error('boom'));
     vi.mocked(recurringApi.list).mockResolvedValue([recurringItem()]);
 
-    render(<Insights />);
+    renderInsights();
 
     expect(await screen.findByText(/netflix/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Couldn't load your insights/)).toHaveLength(2);
@@ -107,7 +120,7 @@ describe('Insights — section-scoped loading', () => {
     vi.mocked(insightsApi.get).mockReturnValue(pending<InsightsData>());
     vi.mocked(recurringApi.list).mockReturnValue(pending<RecurringItem[]>());
 
-    render(<Insights />);
+    renderInsights();
 
     const regions = screen.getAllByRole('status');
     expect(regions).toHaveLength(3);
@@ -132,7 +145,7 @@ describe('Insights — getting-started checklist dwell timer', () => {
     });
     const completeSpy = vi.mocked(onboardingApi.completeChecklistItem).mockResolvedValue(undefined as any);
 
-    render(<Insights />);
+    renderInsights();
 
     // Flushes the getChecklist().then(setChecklist) microtask (and the re-render/effect it
     // triggers) before advancing to the dwell timer itself -- vi.waitFor's own polling is timer-
@@ -151,7 +164,7 @@ describe('Insights — getting-started checklist dwell timer', () => {
     });
     const completeSpy = vi.mocked(onboardingApi.completeChecklistItem).mockResolvedValue(undefined as any);
 
-    render(<Insights />);
+    renderInsights();
 
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(1500);

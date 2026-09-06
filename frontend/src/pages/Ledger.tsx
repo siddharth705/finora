@@ -89,10 +89,17 @@ export default function Ledger() {
     const item = checklistQ.data?.items.find((i) => i.key === 'REVIEW_TRANSACTIONS');
     if (!item || item.completed) return;
     const timer = setTimeout(() => {
-      onboardingApi.completeChecklistItem('REVIEW_TRANSACTIONS').catch(() => {});
+      // Bug fix: this used to leave the ['onboarding'] cache untouched after a successful
+      // completion, unlike every other checklist-affecting write (Import/Budgets/Goals) which
+      // invalidates it. Dashboard's ChecklistWidget holds its own `useQuery` on the same key with
+      // the default 30s staleTime, so without this it could keep showing "Review transactions" as
+      // unchecked for up to 30s after it was actually completed here.
+      onboardingApi.completeChecklistItem('REVIEW_TRANSACTIONS')
+        .then(() => queryClient.invalidateQueries({ queryKey: ['onboarding'] }))
+        .catch(() => {});
     }, 1500);
     return () => clearTimeout(timer);
-  }, [checklistQ.data]);
+  }, [checklistQ.data, queryClient]);
 
   // Ledger doesn't unmount between two TopBar searches fired while already on this page (same
   // route, just a new ?q=), so the useState initializer above only covers the first visit —

@@ -9,8 +9,15 @@ interface Props {
 export function SuccessScreen({ onDone }: Props) {
   const navigate = useNavigate();
 
-  function goThenNavigate(path: string) {
-    onDone();
+  // Bug fix: this used to fire onDone() (the real prop is async -- it awaits
+  // onboardingApi.complete() before flipping onboardingCompleted) and navigate() in the same tick,
+  // not sequenced. navigate() landed on the target route before onboardingCompleted actually
+  // flipped true, so ProtectedRoute -- which gates on that flag, not on the URL -- still treated
+  // the session as mid-onboarding and rendered OnboardingFlow's Success screen again at the new
+  // URL. Awaiting onDone() first means the target page only ever renders once onboarding is
+  // actually marked complete.
+  async function goThenNavigate(path: string) {
+    await onDone();
     void navigate(path);
   }
 

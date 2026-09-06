@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Repeat, TrendingUp } from 'lucide-react';
 import { insightsApi, recurringApi, onboardingApi, type InsightsData, type RecurringItem, type ChecklistStatus } from '../api/endpoints';
 import { FinoraCard, EmptyState, SectionHeader, Skeleton } from '../design-system';
@@ -55,6 +56,7 @@ export default function Insights() {
   const [insightsError, setInsightsError] = useState(false);
   const [recurringError, setRecurringError] = useState(false);
   const [checklist, setChecklist] = useState<ChecklistStatus | null>(null);
+  const queryClient = useQueryClient();
 
   // Getting-started checklist: "View insights" fires once, on a 1.5s dwell rather than on mount
   // itself, so a user who opens this page and immediately navigates away doesn't get credited for
@@ -66,10 +68,18 @@ export default function Insights() {
     const item = checklist?.items.find((i) => i.key === 'VIEW_INSIGHTS');
     if (!item || item.completed) return;
     const timer = setTimeout(() => {
-      onboardingApi.completeChecklistItem('VIEW_INSIGHTS').catch(() => {});
+      // Bug fix: this used to leave the shared ['onboarding'] react-query cache untouched after a
+      // successful completion -- this page tracks its own `checklist` via local state, not that
+      // cache, so nothing here needed it. But Dashboard's ChecklistWidget reads the SAME backend
+      // state through that cache key with a 30s staleTime, so without invalidating it here, it
+      // could keep showing "View insights" as unchecked for up to 30s after it was actually
+      // completed. Same fix as Ledger.tsx's own REVIEW_TRANSACTIONS dwell timer.
+      onboardingApi.completeChecklistItem('VIEW_INSIGHTS')
+        .then(() => queryClient.invalidateQueries({ queryKey: ['onboarding'] }))
+        .catch(() => {});
     }, 1500);
     return () => clearTimeout(timer);
-  }, [checklist]);
+  }, [checklist, queryClient]);
 
   useEffect(() => {
     insightsApi.get()
