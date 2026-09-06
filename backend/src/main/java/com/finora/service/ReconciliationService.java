@@ -73,12 +73,15 @@ public class ReconciliationService {
     private final TransactionGraphService transactionGraphService;
     private final com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
     private final com.finora.repository.StatementImportRepository statementImportRepository;
+    private final com.finora.observability.ReconciliationMetrics reconciliationMetrics;
 
     public ReconciliationService(TransactionRepository transactionRepository, AccountRepository accountRepository,
                                   RelationshipService relationshipService,
                                   AuditService auditService, TransactionGraphService transactionGraphService,
                                   com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher,
-                                  com.finora.repository.StatementImportRepository statementImportRepository) {
+                                  com.finora.repository.StatementImportRepository statementImportRepository,
+                                  com.finora.observability.ReconciliationMetrics reconciliationMetrics) {
+        this.reconciliationMetrics = reconciliationMetrics;
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.relationshipService = relationshipService;
@@ -470,6 +473,7 @@ public class ReconciliationService {
                 dirty.add(a);
                 dirty.add(b);
                 newTransfers++; // one pair = one match, not two (see WorkspaceSummaryDto's own note on this asymmetry)
+                reconciliationMetrics.transferMatched(relationshipMatch);
                 // One edge per direction, matching transferPairId's own symmetric shape (see
                 // V114's backfill comment) rather than picking an arbitrary canonical side.
                 // MERCHANT_AND_AMOUNT tier: matched on amount + date window (+ an own-account

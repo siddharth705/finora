@@ -53,6 +53,7 @@ class TransactionServiceTest {
     private SmsProvider smsProvider;
     private AuditService auditService;
     private TransactionGroupingService transactionGroupingService;
+    private com.finora.observability.ReconciliationMetrics reconciliationMetrics;
     private TransactionService transactionService;
 
     private final UUID userId = UUID.randomUUID();
@@ -95,9 +96,11 @@ class TransactionServiceTest {
         // Default: no merchant has a needs-review group, so every existing test that doesn't care
         // about grouping sees needsReview() behave exactly as it did before this exclusion existed.
         when(transactionGroupingService.groupNeedsReviewByMerchant(any())).thenReturn(List.of());
+        reconciliationMetrics = mock(com.finora.observability.ReconciliationMetrics.class);
         transactionService = new TransactionService(transactionRepository, categoryRepository, accountRepository,
                 statementImportRepository, categorizationService, reconciliationService, recurringService,
-                auditService, bankManagementService, userRepository, smsProvider, transactionGroupingService);
+                auditService, bankManagementService, userRepository, smsProvider, transactionGroupingService,
+                reconciliationMetrics);
 
         dummyCategory = new Category();
         ReflectionTestUtils.setField(dummyCategory, "id", UUID.randomUUID());
@@ -150,6 +153,26 @@ class TransactionServiceTest {
         a.setAccountType(type);
         a.setBalance(balance);
         return a;
+    }
+
+    // --- confirmNotDuplicate telemetry wiring (docs/proposals/reconciliation-benchmark/
+    // remaining-failures-classification.md's own finding: this is the one user-facing correction
+    // that exists today for a wrong reconciliation verdict, unlike an equivalent "not a transfer"
+    // action -- worth counting via ReconciliationMetrics.duplicateOverridden separately from
+    // ReconciliationService's own transferMatched telemetry, which this file does not own). ---
+
+    @Test
+    void confirmNotDuplicate_reportsTheOverrideToReconciliationMetrics_taggedByTheRowsSource() {
+        UUID txnId = UUID.randomUUID();
+        Transaction flagged = ownedTransaction(txnId, userId);
+        flagged.setSource(Transaction.Source.GMAIL_IMPORT);
+        flagged.setIsDuplicateOf(UUID.randomUUID());
+        flagged.setReconciliationStatus(Transaction.ReconciliationStatus.DUPLICATE);
+        when(transactionRepository.findById(txnId)).thenReturn(Optional.of(flagged));
+
+        transactionService.confirmNotDuplicate(userId, txnId);
+
+        verify(reconciliationMetrics).duplicateOverridden(Transaction.Source.GMAIL_IMPORT);
     }
 
     @Test

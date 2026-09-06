@@ -34,6 +34,7 @@ class ReconciliationServiceTest {
     private TransactionGraphService transactionGraphService;
     private com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
     private com.finora.repository.StatementImportRepository statementImportRepository;
+    private com.finora.observability.ReconciliationMetrics reconciliationMetrics;
     private ReconciliationService reconciliationService;
     private final UUID userId = UUID.randomUUID();
     private Account liveAccount;
@@ -62,6 +63,7 @@ class ReconciliationServiceTest {
         // every existing test here sees zero credit-card statements and is unaffected by the new
         // CC_PAYMENT pass. The dedicated CC-payment tests below stub it.
         statementImportRepository = mock(com.finora.repository.StatementImportRepository.class);
+        reconciliationMetrics = mock(com.finora.observability.ReconciliationMetrics.class);
         liveAccount = new Account();
         ReflectionTestUtils.setField(liveAccount, "id", UUID.randomUUID());
         liveAccount.setUserId(userId);
@@ -69,7 +71,7 @@ class ReconciliationServiceTest {
         when(accountRepository.findByUserId(userId)).thenAnswer(inv -> new ArrayList<>(liveAccounts));
 
         reconciliationService = new ReconciliationService(transactionRepository, accountRepository, relationshipService, auditService,
-                transactionGraphService, gmailReconciliationMatcher, statementImportRepository);
+                transactionGraphService, gmailReconciliationMatcher, statementImportRepository, reconciliationMetrics);
     }
 
     private Transaction txn(UUID id, UUID accountId, LocalDate date, BigDecimal amount,
@@ -447,6 +449,30 @@ class ReconciliationServiceTest {
         assertThat(debitFromSavings.getTransferPairId()).isEqualTo(creditOnCard.getId());
         assertThat(creditOnCard.getTransferPairId()).isEqualTo(debitFromSavings.getId());
         assertThat(debitFromSavings.getReconciliationStatus()).isEqualTo(Transaction.ReconciliationStatus.TRANSFER);
+    }
+
+    @Test
+    void reconcileForUser_reportsAMatchedTransferPairToReconciliationMetrics() {
+        // ReconciliationMetrics is the CI-permanent, real-corpus-driven telemetry answer to a
+        // question the reconciliation benchmark itself could never answer from synthetic scenarios
+        // alone: how often the engine's auto-decisions actually happen in production (docs/
+        // proposals/reconciliation-benchmark/). Verified here at the wiring level -- the metric's
+        // own export shape (real Prometheus scrape, real tag values) is
+        // ReconciliationMetricsExportIT's job, not a mocked unit test's.
+        UUID savingsAccount = UUID.randomUUID();
+        UUID cardAccount = UUID.randomUUID();
+        Transaction debitFromSavings = txn(UUID.randomUUID(), savingsAccount, LocalDate.of(2026, 7, 10),
+                new BigDecimal("18500.00"), Transaction.Type.EXPENSE, "NEFT Payment to Card", Instant.now());
+        Transaction creditOnCard = txn(UUID.randomUUID(), cardAccount, LocalDate.of(2026, 7, 11),
+                new BigDecimal("18500.00"), Transaction.Type.INCOME, "Payment Received - Thank You", Instant.now());
+        when(transactionRepository.findByUserIdAndAccountIdIn(eq(userId), any())).thenReturn(List.of(debitFromSavings, creditOnCard));
+
+        reconciliationService.reconcileForUser(userId);
+
+        // relationshipMatch=false: neither side matched a configured OWN_ACCOUNT identifier here --
+        // this pair was found by the generic amount/date heuristic alone.
+        verify(reconciliationMetrics).transferMatched(false);
+        org.mockito.Mockito.verifyNoMoreInteractions(reconciliationMetrics);
     }
 
     @Test

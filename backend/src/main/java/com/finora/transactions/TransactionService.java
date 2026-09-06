@@ -53,6 +53,7 @@ public class TransactionService {
     private final UserRepository userRepository;
     private final SmsProvider smsProvider;
     private final TransactionGroupingService transactionGroupingService;
+    private final com.finora.observability.ReconciliationMetrics reconciliationMetrics;
 
     public TransactionService(TransactionRepository transactionRepository, CategoryRepository categoryRepository,
                                AccountRepository accountRepository,
@@ -64,7 +65,8 @@ public class TransactionService {
                                BankManagementService bankManagementService,
                                UserRepository userRepository,
                                SmsProvider smsProvider,
-                               TransactionGroupingService transactionGroupingService) {
+                               TransactionGroupingService transactionGroupingService,
+                               com.finora.observability.ReconciliationMetrics reconciliationMetrics) {
         this.transactionRepository = transactionRepository;
         this.categoryRepository = categoryRepository;
         this.accountRepository = accountRepository;
@@ -77,6 +79,7 @@ public class TransactionService {
         this.userRepository = userRepository;
         this.smsProvider = smsProvider;
         this.transactionGroupingService = transactionGroupingService;
+        this.reconciliationMetrics = reconciliationMetrics;
     }
 
     // Never a real bank id (BankRegistry ids are short uppercase codes like "PNB"/"OTHER") --
@@ -591,6 +594,7 @@ public class TransactionService {
         t.setReconciliationStatus(Transaction.ReconciliationStatus.OK);
         t.setReconciliationExplanation(null);
         Transaction saved = transactionRepository.save(t);
+        reconciliationMetrics.duplicateOverridden(saved.getSource());
 
         // Usually the balance is NOT touched: a manually-entered duplicate-flagged row was always
         // counted in Account.balance (the flag only ever governed what the reports exclude), so
