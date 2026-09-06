@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -637,6 +637,59 @@ describe('Ledger — KPI row and category chips', () => {
     await waitFor(() => expect(screen.getByText('Total Spent')).toBeInTheDocument());
     expect(screen.queryByText('Total Spent (filtered)')).not.toBeInTheDocument();
     expect(screen.getByText('₹1,200')).toBeInTheDocument();
+  });
+
+  // Bug fix: the KPI row's loading skeleton only checked the transactions-stats query, not the
+  // separate budgets query "This Month" reads -- so that card could render a real-looking
+  // "₹0 / 0% of budget" before /budgets had actually responded.
+  it('keeps showing the KPI skeleton until both the transactions stats AND budgets have loaded', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ amount: 500, type: 'EXPENSE' })], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    // Never resolves -- budgets stays "loading" for the whole test.
+    vi.mocked(budgetsApi.list).mockReset().mockReturnValue(new Promise(() => {}));
+    renderLedger();
+
+    // The transactions side has already resolved (real content is visible below)...
+    await screen.findByText('AMAZON PAY');
+    // ...but the KPI row must still be the skeleton, not a "This Month" card claiming ₹0/0%.
+    expect(screen.queryByText('This Month')).not.toBeInTheDocument();
+    expect(screen.queryByText('0% of budget')).not.toBeInTheDocument();
+    expect(screen.getByText('Loading transaction summary')).toBeInTheDocument();
+  });
+
+  // Bug fix: selecting a category, then narrowing another filter until that category has zero
+  // matches, used to make its chip vanish entirely -- leaving neither "All" nor any chip
+  // highlighted even though `categoryId` was still silently applied to the table query.
+  it('keeps the selected category chip visible at zero count once another filter empties its matches', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockImplementation((filters: any) => {
+      const content = filters.dateFrom === '2026-01-01'
+        ? [txn({ id: 't1', categoryId: 'cat-1', categoryName: 'Shopping', amount: 500, type: 'EXPENSE' })]
+        : [
+            txn({ id: 't1', categoryId: 'cat-1', categoryName: 'Shopping', amount: 500, type: 'EXPENSE' }),
+            txn({ id: 't2', categoryId: 'cat-2', categoryName: 'Travel', amount: 200, type: 'EXPENSE' }),
+          ];
+      return Promise.resolve({ content, page: 0, size: 10, totalElements: content.length, totalPages: 1 });
+    });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Shopping', isSystem: false, icon: 'shopping-bag', color: 'blue' },
+      { id: 'cat-2', name: 'Travel', isSystem: false, icon: 'plane', color: 'green' },
+    ]);
+    const user = userEvent.setup();
+    renderLedger();
+
+    await user.click(await screen.findByRole('button', { name: /travel\s*1/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /travel\s*1/i })).toHaveAttribute('class', expect.stringContaining('bg-primary')));
+
+    // Narrow the date range to a window with no Travel transactions at all.
+    fireEvent.change(screen.getByLabelText('From date'), { target: { value: '2026-01-01' } });
+
+    // The Travel chip must still exist (now at zero count) and still read as selected -- not
+    // vanish, and not silently fall back to "All" looking selected instead.
+    const travelChip = await screen.findByRole('button', { name: /travel\s*0/i });
+    expect(travelChip).toHaveAttribute('class', expect.stringContaining('bg-primary'));
+    expect(screen.getByRole('button', { name: /^all/i })).not.toHaveAttribute('class', expect.stringContaining('bg-primary'));
   });
 });
 

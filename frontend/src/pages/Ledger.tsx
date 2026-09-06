@@ -224,7 +224,7 @@ export default function Ledger() {
   const { data: accounts } = useQuery({ queryKey: ['accounts'], queryFn: () => accountsApi.list() });
   const accountsById = useMemo(() => new Map((accounts ?? []).map((a) => [a.id, a])), [accounts]);
 
-  const { data: budgets } = useQuery({ queryKey: ['budgets'], queryFn: () => budgetsApi.list() });
+  const { data: budgets, isLoading: budgetsLoading } = useQuery({ queryKey: ['budgets'], queryFn: () => budgetsApi.list() });
   const budgetSpend = (budgets ?? []).reduce((s, b) => s + b.spentThisMonth, 0);
   const budgetLimit = (budgets ?? []).reduce((s, b) => s + b.monthlyLimit, 0);
   const budgetPct = budgetLimit > 0 ? Math.min(100, Math.round((budgetSpend / budgetLimit) * 100)) : 0;
@@ -242,10 +242,18 @@ export default function Ledger() {
       }
       totals.set(t.categoryId, cur);
     }
+    // The currently-selected chip must always be present, even at zero count in this window --
+    // otherwise narrowing another filter (date, search, ...) after selecting a category can make
+    // its chip vanish entirely while `filters.categoryId` is still silently applied, leaving
+    // NEITHER "All" nor any chip highlighted with no indication a category filter is still active.
+    if (filters.categoryId && !totals.has(filters.categoryId)) {
+      const cat = categoriesById.get(filters.categoryId);
+      totals.set(filters.categoryId, { id: filters.categoryId, name: cat?.name ?? 'Selected category', count: 0, spend: 0 });
+    }
     const chips = [...totals.values()].sort((a, b) => b.count - a.count);
     const top = [...totals.values()].sort((a, b) => b.spend - a.spend)[0] ?? null;
     return { totalSpend: spend, categoryChips: chips, topCategory: top && top.spend > 0 ? top : null };
-  }, [statsPage]);
+  }, [statsPage, filters.categoryId, categoriesById]);
 
   // Deleting a transaction can shrink the total below the page currently being viewed (e.g. the
   // only row left on the last page) -- without this, that page would just render empty with no
@@ -305,8 +313,11 @@ export default function Ledger() {
           bounded fetch (see its own comment); Transactions is the exact server-reported count for
           the same window. This Month reuses the same budgetsApi aggregation Budgets.tsx already
           shows, since a budget is inherently a calendar-month concept independent of whatever
-          date range is filtered here. Deliberately no "vs last month" deltas -- see PR description. */}
-      {statsLoading && !statsPage ? (
+          date range is filtered here. Deliberately no "vs last month" deltas -- see PR description.
+          Gated on BOTH queries' first-load state -- gating on statsLoading alone let This Month
+          render `budgets ?? []` (i.e. ₹0 / 0% of budget) as if that were a real answer whenever
+          /budgets happened to resolve slower than /transactions. */}
+      {(statsLoading && !statsPage) || (budgetsLoading && !budgets) ? (
         <Skeleton.Region label="Loading transaction summary" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           {[0, 1, 2, 3].map((i) => <Skeleton.Card key={i} />)}
         </Skeleton.Region>
