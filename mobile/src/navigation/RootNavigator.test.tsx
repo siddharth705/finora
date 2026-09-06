@@ -58,6 +58,16 @@ jest.mock('./AppTabs', () => ({
   },
 }));
 
+// Same reasoning as AppTabs above: RootNavigator.test.tsx is about which top-level branch gets
+// selected, not OnboardingNavigator's own screens (which pull in real Button/theme styling this
+// file's minimal '../theme' mock doesn't provide).
+jest.mock('../onboarding/OnboardingNavigator', () => ({
+  OnboardingNavigator: () => {
+    const { Text } = require('react-native');
+    return <Text testID="onboarding-navigator">OnboardingNavigator</Text>;
+  },
+}));
+
 // RootNavigator imports these five screens directly (not lazily), and every one of them pulls in
 // real styling that reads spacing/radius off '../theme' at module-load time -- which the mock
 // above doesn't provide (it only covers what RootNavigator itself calls, useTheme/
