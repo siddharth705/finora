@@ -157,7 +157,7 @@ export function Sidebar() {
                 onClick={() => setMenuOpen(false)}
                 className="flex items-center gap-2.5 px-3.5 py-2.5 text-sm text-gray-300 hover:text-white hover:bg-white/5"
               >
-                <Receipt size={15} /> Billing History
+                <Receipt size={15} /> Billing
               </NavLink>
               <NavLink
                 to="/app/referrals"
