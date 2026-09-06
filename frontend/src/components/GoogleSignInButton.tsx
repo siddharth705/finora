@@ -11,13 +11,17 @@ interface GoogleSignInButtonProps {
   // and hands back what Google gave it.
   onCredential: (idToken: string) => void | Promise<void>;
   onError: (message: string) => void;
+  // Called with Google's own rendered button width once it's known, and again whenever it
+  // changes -- see the comment above the iframe ResizeObserver below for why a caller needs this
+  // at all instead of just reading the (documented, capped-at-400) `width` param back.
+  onRenderedWidth?: (px: number) => void;
 }
 
 // D-23: renders Google's own Identity Services button. Deliberately NOT rendered at all when
 // VITE_GOOGLE_LOGIN_CLIENT_ID is unset (isGoogleLoginConfigured()) -- same "unconfigured is a
 // supported state, degrade silently" posture as BankLogo/MerchantLogo's Logo.dev fallback and
 // Firebase's lazy init elsewhere in this codebase, rather than shipping a button that can't work.
-export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignInButtonProps) {
+export function GoogleSignInButton({ text, onCredential, onError, onRenderedWidth }: GoogleSignInButtonProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
   // Held in a ref, not a dependency of the initialize() effect below, so a parent re-render
@@ -27,11 +31,14 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
   onCredentialRef.current = onCredential;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+  const onRenderedWidthRef = useRef(onRenderedWidth);
+  onRenderedWidthRef.current = onRenderedWidth;
 
   useEffect(() => {
     if (!isGoogleLoginConfigured() || !containerRef.current) return;
     let cancelled = false;
     let resizeObserver: ResizeObserver | null = null;
+    let iframeResizeObserver: ResizeObserver | null = null;
 
     loadGoogleIdentityServices()
       .then((accountsId) => {
@@ -79,6 +86,24 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
             logo_alignment: 'center',
           });
           setReady(true);
+
+          // Google's `width` param above is capped at 400 (its own documented max), but the
+          // iframe it actually draws doesn't come back at exactly that number -- measured live on
+          // app.fynora.net, requesting 400 rendered a 420px-wide iframe. That gap is why a
+          // full-width Apple button (no such cap) used to look visibly longer than Google's next
+          // to it: matching Apple to the *requested* 400 would still leave a real, visible ~20px
+          // difference. Reporting the iframe's own real rendered width, not the number we asked
+          // Google for, is what lets a parent (SocialSignInButtons) size Apple to match reality
+          // instead of a number Google doesn't actually honor.
+          iframeResizeObserver?.disconnect();
+          const iframe = containerRef.current.querySelector('iframe');
+          if (iframe) {
+            iframeResizeObserver = new ResizeObserver((iframeEntries) => {
+              const width = iframeEntries[0]?.contentRect.width;
+              if (width) onRenderedWidthRef.current?.(width);
+            });
+            iframeResizeObserver.observe(iframe);
+          }
         };
 
         resizeObserver = new ResizeObserver(render);
@@ -91,6 +116,7 @@ export function GoogleSignInButton({ text, onCredential, onError }: GoogleSignIn
     return () => {
       cancelled = true;
       resizeObserver?.disconnect();
+      iframeResizeObserver?.disconnect();
     };
     // text intentionally omitted: Register.tsx and Login.tsx each mount their own instance with a
     // fixed text prop that never changes across that instance's lifetime.
