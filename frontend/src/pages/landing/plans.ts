@@ -80,6 +80,11 @@ export const PLANS: Plan[] = [
     features: [
       'Import statements (PDF & CSV)',
       'Password-protected and multi-account files',
+      // Billing Plan Taxonomy Decision, 2026-08-12's "Unlimited accounts" / "Extended financial
+      // history" Plus differentiators only mean something if Free has a stated limit to grow out
+      // of -- this is that limit, enforced by AccountService.create/ImportController (backend),
+      // not just descriptive copy.
+      'Up to 2 accounts, one month per statement',
       'Automatic categorization that learns',
       'Budgets, goals and reports',
       'Financial dashboard and insights',

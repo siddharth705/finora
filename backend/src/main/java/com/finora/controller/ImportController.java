@@ -2,18 +2,24 @@ package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
 import com.finora.dto.ImportDto.*;
+import com.finora.entity.FeatureEntitlement;
 import com.finora.entity.ImportSession;
+import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.imports.ImportConcurrencyLimiter;
 import com.finora.imports.ImportSessionService;
 import com.finora.imports.analysis.StatementAnalysisRecorder;
 import com.finora.security.CurrentUser;
 import com.finora.imports.ImportService;
 import com.finora.imports.StatementUpload;
+import com.finora.service.EntitlementService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.UUID;
 
@@ -27,20 +33,28 @@ public class ImportController {
     // history is a later, separate concern if it turns out to be needed.
     private static final int RECENT_FAILURES_LIMIT = 20;
 
+    // plans.ts's "Extended financial history" Plus/Premium promise: a Free-plan statement's
+    // detected period (start/end, inclusive) may not exceed this many days. Chosen as a flat day
+    // count rather than a calendar-month boundary -- a statement covering Jan 15-Feb 14 is exactly
+    // as long as one covering Jan 1-31 and there is no principled reason to treat them differently.
+    private static final long FREE_STATEMENT_PERIOD_MAX_DAYS = 31;
+
     private final ImportService importService;
     private final ImportSessionService importSessionService;
     private final ImportConcurrencyLimiter concurrencyLimiter;
     private final CurrentUser currentUser;
     private final StatementAnalysisRecorder analysisRecorder;
+    private final EntitlementService entitlementService;
 
     public ImportController(ImportService importService, ImportSessionService importSessionService,
                              ImportConcurrencyLimiter concurrencyLimiter, CurrentUser currentUser,
-                             StatementAnalysisRecorder analysisRecorder) {
+                             StatementAnalysisRecorder analysisRecorder, EntitlementService entitlementService) {
         this.importService = importService;
         this.importSessionService = importSessionService;
         this.concurrencyLimiter = concurrencyLimiter;
         this.currentUser = currentUser;
         this.analysisRecorder = analysisRecorder;
+        this.entitlementService = entitlementService;
     }
 
     // ADR-0002: staging now persists the reviewed-later state server-side, so a dropped session
@@ -91,6 +105,7 @@ public class ImportController {
     // request.sessionId()).
     @PostMapping("/csv/confirm")
     public ResponseEntity<ApiResponse<ConfirmResponse>> confirm(@Valid @RequestBody ConfirmRequest request) {
+        requireStatementPeriodWithinFreeLimit(request.statementPeriodStart(), request.statementPeriodEnd());
         return ResponseEntity.ok(ApiResponse.ok(importService.confirmSession(currentUser.id(), request), "Import complete"));
     }
 
@@ -98,7 +113,26 @@ public class ImportController {
     // ImportService.confirmMultiSection) -- used only when /pdf/stage returned multiAccount: true.
     @PostMapping("/pdf/confirm-multi")
     public ResponseEntity<ApiResponse<MultiAccountConfirmResponse>> confirmMulti(@Valid @RequestBody MultiAccountConfirmRequest request) {
+        // Every section checked, not just the first -- a composite statement (e.g. HSBC's
+        // savings+credit-card bundle) can have one section within the Free limit and another that
+        // isn't, and the whole confirm must be rejected before ImportService writes anything for
+        // either, not partially committed.
+        request.sections().forEach(section ->
+                requireStatementPeriodWithinFreeLimit(section.statementPeriodStart(), section.statementPeriodEnd()));
         return ResponseEntity.ok(ApiResponse.ok(importService.confirmMultiSection(currentUser.id(), request), "Import complete"));
+    }
+
+    // plans.ts's "Extended financial history" Plus/Premium promise, enforced (FeatureEntitlement
+    // .EXTENDED_HISTORY -- seeded since V99, never checked anywhere until this). A null start or
+    // end is never itself a reason to block -- same "carried, not dropped" treatment
+    // ImportService.periodOf() already gives a statement with no printed period at all.
+    private void requireStatementPeriodWithinFreeLimit(LocalDate start, LocalDate end) {
+        if (start == null || end == null) return;
+        if (entitlementService.hasEntitlement(currentUser.id(), FeatureEntitlement.EXTENDED_HISTORY)) return;
+        long days = ChronoUnit.DAYS.between(start, end) + 1;
+        if (days > FREE_STATEMENT_PERIOD_MAX_DAYS) {
+            throw new ApiException(ErrorCode.STATEMENT_PERIOD_TOO_LONG);
+        }
     }
 
     // ADR-0002: "your unfinished imports" -- lets the frontend offer to resume a staged-but-not-

@@ -1,8 +1,10 @@
 package com.finora.accounts;
 
 import com.finora.entity.Account;
+import com.finora.entity.FeatureEntitlement;
 import com.finora.entity.Transaction;
 import com.finora.exception.ApiException;
+import com.finora.exception.ErrorCode;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.StatementImportRepository.StatementMetadata;
@@ -10,6 +12,7 @@ import com.finora.repository.TransactionRepository;
 import com.finora.security.OwnershipGuard;
 import com.finora.service.AuditService;
 import com.finora.service.BankManagementService;
+import com.finora.service.EntitlementService;
 import com.finora.service.TransactionGraphService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -24,22 +27,29 @@ import java.util.stream.Collectors;
 @Service
 public class AccountService {
 
+    // plans.ts's "Unlimited accounts" Plus/Premium promise, enforced -- see create()'s own doc
+    // comment for why this only applies to self-service creation.
+    private static final int FREE_ACCOUNT_LIMIT = 2;
+
     private final AccountRepository accountRepository;
     private final StatementImportRepository statementImportRepository;
     private final TransactionRepository transactionRepository;
     private final AuditService auditService;
     private final BankManagementService bankManagementService;
     private final TransactionGraphService transactionGraphService;
+    private final EntitlementService entitlementService;
 
     public AccountService(AccountRepository accountRepository, StatementImportRepository statementImportRepository,
                            TransactionRepository transactionRepository, AuditService auditService,
-                           BankManagementService bankManagementService, TransactionGraphService transactionGraphService) {
+                           BankManagementService bankManagementService, TransactionGraphService transactionGraphService,
+                           EntitlementService entitlementService) {
         this.accountRepository = accountRepository;
         this.statementImportRepository = statementImportRepository;
         this.transactionRepository = transactionRepository;
         this.auditService = auditService;
         this.bankManagementService = bankManagementService;
         this.transactionGraphService = transactionGraphService;
+        this.entitlementService = entitlementService;
     }
 
     @Transactional(readOnly = true)
@@ -95,9 +105,48 @@ public class AccountService {
      * passes its own caller's id for both userId and actingAdminId -- same "actorId" convention as
      * RelationshipService/MerchantService/RuleService, which records the id of whoever actually
      * performed the action regardless of whose data it acted on.
+     *
+     * <p>Free-tier cap (plans.ts's "Unlimited accounts" Plus/Premium promise, previously
+     * unenforced): a caller without {@link FeatureEntitlement#UNLIMITED_ACCOUNTS} may not create a
+     * 3rd account. This is the single choke point for every new-Account write in the app -- the
+     * manual "Add Another Bank" flow (AccountController) AND ImportService's auto-detected-account
+     * path during confirm both land here -- so gating here covers both without duplicating the
+     * check. Checked live via {@code countByUserId} on every call rather than once per request, so
+     * a multi-account PDF confirm that would create two new accounts at once correctly blocks the
+     * second the moment the first brings the count to the cap, not just a stale pre-count.
+     *
+     * <p>Deliberately skipped when {@code actingAdminId} differs from {@code userId} -- that shape
+     * means AdminAccountController (a support agent creating/fixing an account on a user's behalf),
+     * and a support agent's corrective action must never be blocked by the same user's own billing
+     * plan. Self-service calls always pass the same id for both (see the paragraph above), so this
+     * cannot be used to bypass the cap from the ordinary account-creation UI.
      */
     @Transactional
     public AccountDto create(UUID userId, AccountDto.CreateRequest req, UUID actingAdminId) {
+        return create(userId, req, actingAdminId, true);
+    }
+
+    /**
+     * GmailReviewService.resolveGmailReceiptsAccount's escape hatch: it auto-creates a "Gmail
+     * Receipts" bookkeeping account (self-service shape -- {@code actingAdminId == userId}) the
+     * first time a user approves any Gmail-matched receipt, with no user-facing "add account" click
+     * behind it at all -- Gmail review has no plan gate of its own today, so a Free user two real
+     * banks in would otherwise have an ordinary receipt approval throw {@code
+     * ACCOUNT_LIMIT_REACHED} from deep inside a background-feeling flow with nothing on screen to
+     * explain it. That is not the account plans.ts's "Unlimited accounts" promise is about -- the
+     * user never chose to connect a third bank -- so this bucket is exempt from the cap.
+     *
+     * <p>Every other caller goes through the 3-arg {@link #create(UUID, AccountDto.CreateRequest,
+     * UUID)} above, which always enforces it.
+     */
+    @Transactional
+    public AccountDto create(UUID userId, AccountDto.CreateRequest req, UUID actingAdminId, boolean enforceFreeAccountLimit) {
+        boolean selfService = actingAdminId.equals(userId);
+        if (enforceFreeAccountLimit && selfService
+                && !entitlementService.hasEntitlement(userId, FeatureEntitlement.UNLIMITED_ACCOUNTS)
+                && accountRepository.countByUserId(userId) >= FREE_ACCOUNT_LIMIT) {
+            throw new ApiException(ErrorCode.ACCOUNT_LIMIT_REACHED);
+        }
         Account a = new Account();
         a.setUserId(userId);
         a.setName(req.name());

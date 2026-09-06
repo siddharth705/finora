@@ -1,12 +1,15 @@
 package com.finora.accounts;
 
 import com.finora.entity.Account;
+import com.finora.entity.FeatureEntitlement;
 import com.finora.entity.Transaction;
+import com.finora.exception.ApiException;
 import com.finora.repository.AccountRepository;
 import com.finora.repository.StatementImportRepository;
 import com.finora.repository.TransactionRepository;
 import com.finora.service.AuditService;
 import com.finora.service.BankManagementService;
+import com.finora.service.EntitlementService;
 import com.finora.service.TransactionGraphService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +41,7 @@ class AccountServiceTest {
     private TransactionRepository transactionRepository;
     private AuditService auditService;
     private TransactionGraphService transactionGraphService;
+    private EntitlementService entitlementService;
     private AccountService accountService;
     private final UUID userId = UUID.randomUUID();
     private final UUID accountId = UUID.randomUUID();
@@ -68,8 +72,22 @@ class AccountServiceTest {
 
         auditService = mock(AuditService.class);
         transactionGraphService = mock(TransactionGraphService.class);
+        // Default: Free plan (no UNLIMITED_ACCOUNTS) for every test unless overridden -- matches
+        // this class's existing "safe default, override per-test" convention above, and
+        // EntitlementService's own fail-closed contract (a caller with no stub at all should not
+        // silently behave like a paid plan).
+        entitlementService = mock(EntitlementService.class);
+        when(entitlementService.hasEntitlement(any(), any())).thenReturn(false);
+        // Default: zero existing accounts, so create() tests that don't care about the cap aren't
+        // forced to stub this too.
+        when(accountRepository.countByUserId(any())).thenReturn(0L);
         accountService = new AccountService(accountRepository, statementImportRepository,
-                transactionRepository, auditService, bankManagementService, transactionGraphService);
+                transactionRepository, auditService, bankManagementService, transactionGraphService,
+                entitlementService);
+    }
+
+    private AccountDto.CreateRequest newAccountRequest(String name) {
+        return new AccountDto.CreateRequest(name, "SAVINGS", BigDecimal.ZERO, null, null, null, null, null, null, null, null);
     }
 
     private Account existingAccount() {
@@ -373,5 +391,52 @@ class AccountServiceTest {
 
         verify(auditService).record(eq(userId), eq("ACCOUNT_DELETED"), eq("Account"), eq(accountId),
                 argThat(metadata -> Integer.valueOf(3).equals(metadata.get("graphEdgesRejected"))));
+    }
+
+    // plans.ts's "Unlimited accounts" Plus/Premium promise, enforced (FeatureEntitlement
+    // .UNLIMITED_ACCOUNTS). See create()'s own doc comment for the self-service-only scoping this
+    // suite exercises below.
+    @Test
+    void create_onFreePlan_isRejectedOnceTheUserAlreadyHasTwoAccounts() {
+        when(accountRepository.countByUserId(userId)).thenReturn(2L);
+
+        assertThatThrownBy(() -> accountService.create(userId, newAccountRequest("Third Account"), userId))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(com.finora.exception.ErrorCode.ACCOUNT_LIMIT_REACHED);
+        verify(accountRepository, never()).save(any());
+    }
+
+    @Test
+    void create_onFreePlan_succeedsForTheFirstTwoAccounts() {
+        when(accountRepository.countByUserId(userId)).thenReturn(1L);
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto result = accountService.create(userId, newAccountRequest("Second Account"), userId);
+
+        assertThat(result.name()).isEqualTo("Second Account");
+    }
+
+    @Test
+    void create_withUnlimitedAccountsEntitlement_isNeverBlockedRegardlessOfCount() {
+        when(accountRepository.countByUserId(userId)).thenReturn(5L);
+        when(entitlementService.hasEntitlement(userId, FeatureEntitlement.UNLIMITED_ACCOUNTS)).thenReturn(true);
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto result = accountService.create(userId, newAccountRequest("Sixth Account"), userId);
+
+        assertThat(result.name()).isEqualTo("Sixth Account");
+    }
+
+    // The support-agent carve-out: an admin fixing/adding an account on a Free user's behalf must
+    // never be blocked by that user's own plan limit.
+    @Test
+    void create_byAnAdminOnAUsersBehalf_isNeverBlockedByThatUsersFreeLimit() {
+        when(accountRepository.countByUserId(userId)).thenReturn(5L);
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto result = accountService.create(userId, newAccountRequest("Admin-added Account"), actingAdminId);
+
+        assertThat(result.name()).isEqualTo("Admin-added Account");
     }
 }

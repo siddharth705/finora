@@ -49,3 +49,11 @@ export const IMPORT_SESSION_ALREADY_CONFIRMED = 'IMPORT_012';
 // unreachable. This module exists specifically so a value like this has exactly one place to be
 // wrong in.
 export const AUTH_ACCOUNT_DEACTIVATED = 'AUTH_007';
+
+// plans.ts's "Unlimited accounts" / "Extended financial history" Plus/Premium promises,
+// enforced -- see AccountService.create and ImportController.requireStatementPeriodWithinFreeLimit
+// (backend). Import.tsx branches on these to show an upgrade prompt with tailored copy rather than
+// the generic "Could not complete the import" every other confirm failure gets -- same "the
+// frontend has to TELL THEM APART" reasoning ErrorCode.ACCOUNT_LIMIT_REACHED's own comment gives.
+export const ACCOUNT_LIMIT_REACHED = 'ENTITLEMENT_002';
+export const STATEMENT_PERIOD_TOO_LONG = 'ENTITLEMENT_003';

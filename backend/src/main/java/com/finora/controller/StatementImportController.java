@@ -79,6 +79,11 @@ public class StatementImportController {
 
     // Plain JSON, unlike /import/csv/confirm — the file is already stored server-side from the
     // original import, so there's nothing to re-upload here.
+    //
+    // Deliberately NOT gated by ImportController's Free-tier statement-period cap: `id` names a
+    // StatementImport that was already imported once (it always must be, to reimport it), so this
+    // reprocesses existing data rather than admitting a new multi-month statement -- exactly the
+    // "grandfather existing data, only block new imports" policy that cap is meant to follow.
     @PostMapping("/{id}/reimport/confirm")
     public ApiResponse<ConfirmResponse> confirmReimport(@PathVariable UUID id, @Valid @RequestBody ConfirmRequest request) throws java.io.IOException {
         return ApiResponse.ok(statementImportService.confirmReimport(currentUser.id(), id, request), "Import complete");
