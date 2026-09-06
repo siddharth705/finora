@@ -113,6 +113,42 @@ updates:
   # its own is something to close rather than something to merge as a set. The fix for mobile is an
   # SDK upgrade, which moves react along with everything else it pins. Grouping would only make an
   # unmergeable PR tidier.
+  #
+  # react-native is ignored past 0.86.x for the same reason, learned the hard way: PR #202 grouped
+  # a 0.86.2 -> 0.87.0 bump into npm-minor-and-patch (a "minor" bump by Dependabot's own rules) and
+  # broke all 37 mobile test suites -- `@react-native/assets-registry/registry` was renamed/split in
+  # 0.87.0 and jest-expo ~57.0.4 (the version paired with Expo SDK 57) still imports the old path.
+  # Expo SDK 57 only supports react-native@0.86.x, so a bump past it is never mergeable, grouped or
+  # not. `ignore` is used here rather than the group's `exclude-patterns`: exclude-patterns only
+  # keeps a dependency out of the group, it would still let Dependabot open a standalone PR
+  # proposing the same incompatible version -- smaller blast radius, same broken PR. `ignore` stops
+  # the version from being proposed at all. Patch releases within 0.86.x are still allowed. Revisit
+  # when Expo ships SDK 58 with react-native@0.87.x support, at which point expo, jest-expo and
+  # react-native should all be bumped together (see #242).
+  #
+  # react-native-reanimated and react-native-worklets are ignored past 4.5.1/0.10.1 for a peer-
+  # dependency conflict, not a react-native-shaped module-path break: PR #1055 grouped
+  # reanimated 4.5.1 -> 4.6.0 and worklets 0.10.1 -> 0.12.1 with an expo 57.0.18 -> 57.0.19 bump
+  # and broke all 84 mobile test suites the same "Cannot find module 'expo-modules-core'" way.
+  # Root cause, isolated by bisection (each alone reproduces it, independent of the other):
+  # reanimated 4.6.0's own peerDependencies HARD-requires react-native-worklets "0.12.x", while
+  # expo-modules-core@57.0.15 (pulled in by expo 57.0.19) has an OPTIONAL peer capping worklets at
+  # "^0.7.4 || ^0.8.0 || ^0.9.0 || ^0.10.0" -- no single top-level worklets version can satisfy
+  # both, so npm de-hoists expo-modules-core into a nested copy to resolve the conflict, and
+  # jest-expo's setup.js (a plain top-level `require('expo-modules-core')`) can no longer find it.
+  # This is an upstream timing gap, not a config error here: Expo has not yet published an
+  # expo-modules-core whose peer range accepts worklets 0.12.x, even though Reanimated has already
+  # shipped that pairing. Revisit once Expo does -- at which point expo, reanimated and worklets
+  # should all be bumped together, the same reasoning as the react-native/expo pairing above.
+  #
+  # @testing-library/react-native's major versions are ignored outright, not just past a specific
+  # version: 14.0.0 (PR #1063) made render()/renderHook()/fireEvent() return Promises by default --
+  # every call site across the mobile test suite (~30+ files) would need an `await` added, for two
+  # narrow bug fixes (14.0.1's waitFor timer cleanup, a TextInput selection detail) that don't
+  # affect anything this codebase has hit. Standalone major bumps aren't part of the
+  # npm-minor-and-patch group above, so without this they would otherwise reopen weekly. Revisit
+  # when there's an actual reason to move (a real bug, or v13 losing compatibility with something
+  # else here) -- not proactively for its own sake.
   - package-ecosystem: npm
     directory: /mobile
     schedule:
@@ -122,6 +158,15 @@ updates:
     groups:
       npm-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      - dependency-name: "react-native"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "react-native-reanimated"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "react-native-worklets"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "@testing-library/react-native"
+        update-types: ["version-update:semver-major"]
     commit-message:
       prefix: "chore(deps)"
 

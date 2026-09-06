@@ -174,7 +174,20 @@ export default function Billing() {
         void queryClient.invalidateQueries({ queryKey: ['my-subscription'] });
       }
     } catch (e: any) {
-      setError(e.response?.data?.message ?? 'Could not change your plan. Try again.');
+      if (e.response?.status === 409) {
+        // BillingCheckoutService.resumableOrderOrGuard's own message ("Cancel it (POST
+        // /api/v1/billing/pending-order/cancel)...") is written for an API caller, not this
+        // screen -- shown verbatim (the fallback below) it's a raw API instruction with no
+        // obvious way for a person to act on it. The pendingOrder card above this form already
+        // is that action (Resume/Cancel buttons), so replace the message with plain copy and
+        // refetch my-subscription rather than trusting whatever loaded when the page first
+        // mounted -- a stale/failed initial fetch is exactly what would leave that card missing
+        // while this 409 still fires.
+        setError('You already have a checkout in progress for a different plan. Use Cancel below to start a new one.');
+        void queryClient.invalidateQueries({ queryKey: ['my-subscription'] });
+      } else {
+        setError(e.response?.data?.message ?? 'Could not change your plan. Try again.');
+      }
     } finally {
       setIsSubmitting(false);
     }
