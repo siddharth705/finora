@@ -103,7 +103,10 @@ describe('ProtectedRoute', () => {
 
     renderProtected();
 
-    expect(screen.getByTestId('onboarding-flow')).toBeInTheDocument();
+    // OnboardingFlow renders the real Welcome screen for 'welcome' (Task 9) -- asserting on its
+    // actual content rather than a placeholder testid is what proves ProtectedRoute is really
+    // rendering OnboardingFlow, not just something with a matching test id.
+    expect(screen.getByText('Welcome to Fynora 👋')).toBeInTheDocument();
     expect(screen.queryByText('Protected content')).not.toBeInTheDocument();
   });
 
