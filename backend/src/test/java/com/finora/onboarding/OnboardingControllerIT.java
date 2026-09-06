@@ -98,4 +98,17 @@ class OnboardingControllerIT extends AbstractIntegrationTest {
                 "/api/v1/onboarding/status", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
         assertThat(mapper.readTree(afterReset.getBody()).get("data").get("onboardingCompleted").asBoolean()).isFalse();
     }
+
+    @Test
+    void checklistStartsAtZeroOfSixForAFreshUser() throws Exception {
+        User user = createUser();
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/onboarding/checklist", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        JsonNode data = mapper.readTree(response.getBody()).get("data");
+        assertThat(data.get("completedCount").asInt()).isZero();
+        assertThat(data.get("totalCount").asInt()).isEqualTo(6);
+        assertThat(data.get("items")).hasSize(6);
+    }
 }

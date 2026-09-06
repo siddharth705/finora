@@ -2,25 +2,44 @@ package com.finora.onboarding;
 
 import com.finora.entity.User;
 import com.finora.exception.ApiException;
+import com.finora.goals.GoalRepository;
+import com.finora.repository.BudgetRepository;
+import com.finora.repository.ImportJobRepository;
 import com.finora.repository.UserRepository;
 import com.finora.util.EnumParsing;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class OnboardingService {
 
     private final UserRepository userRepository;
     private final UserFinancialFocusRepository focusRepository;
+    private final UserChecklistEventRepository checklistEventRepository;
+    private final ImportJobRepository importJobRepository;
+    private final BudgetRepository budgetRepository;
+    private final GoalRepository goalRepository;
 
-    public OnboardingService(UserRepository userRepository, UserFinancialFocusRepository focusRepository) {
+    public OnboardingService(UserRepository userRepository, UserFinancialFocusRepository focusRepository,
+                              UserChecklistEventRepository checklistEventRepository,
+                              ImportJobRepository importJobRepository, BudgetRepository budgetRepository,
+                              GoalRepository goalRepository) {
         this.userRepository = userRepository;
         this.focusRepository = focusRepository;
+        this.checklistEventRepository = checklistEventRepository;
+        this.importJobRepository = importJobRepository;
+        this.budgetRepository = budgetRepository;
+        this.goalRepository = goalRepository;
     }
 
     private User requireUser(UUID userId) {
@@ -61,5 +80,35 @@ public class OnboardingService {
     public void reset(UUID userId) {
         User user = requireUser(userId);
         user.setOnboardingCompletedAt(null);
+    }
+
+    @Transactional(readOnly = true)
+    public OnboardingDto.ChecklistResponse getChecklist(UUID userId) {
+        User user = requireUser(userId);
+        Set<String> explicitDone = checklistEventRepository.findByUserId(userId).stream()
+                .map(UserChecklistEvent::getItemKey).collect(Collectors.toSet());
+
+        boolean profileComplete = user.getFullName() != null && !user.getFullName().isBlank()
+                && user.isEmailVerified()
+                && (user.getPhoneNumber() == null || user.isPhoneVerified());
+        boolean importedStatement = !importJobRepository
+                .findByUserIdOrderByCreatedAtDesc(userId, PageRequest.of(0, 1)).isEmpty();
+        boolean createdBudget = !budgetRepository.findByUserId(userId).isEmpty();
+        boolean createdGoal = !goalRepository.findByUserId(userId).isEmpty();
+
+        Map<ChecklistItemKey, Boolean> completedByKey = new EnumMap<>(ChecklistItemKey.class);
+        completedByKey.put(ChecklistItemKey.COMPLETE_PROFILE, profileComplete);
+        completedByKey.put(ChecklistItemKey.IMPORT_STATEMENT, importedStatement);
+        completedByKey.put(ChecklistItemKey.REVIEW_TRANSACTIONS, explicitDone.contains("REVIEW_TRANSACTIONS"));
+        completedByKey.put(ChecklistItemKey.CREATE_BUDGET, createdBudget);
+        completedByKey.put(ChecklistItemKey.CREATE_GOAL, createdGoal);
+        completedByKey.put(ChecklistItemKey.VIEW_INSIGHTS, explicitDone.contains("VIEW_INSIGHTS"));
+
+        List<OnboardingDto.ChecklistItemDto> items = completedByKey.entrySet().stream()
+                .map(e -> new OnboardingDto.ChecklistItemDto(e.getKey().name(), e.getValue()))
+                .toList();
+        int completedCount = (int) items.stream().filter(OnboardingDto.ChecklistItemDto::completed).count();
+
+        return new OnboardingDto.ChecklistResponse(items, completedCount, items.size());
     }
 }

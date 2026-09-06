@@ -39,4 +39,9 @@ public class OnboardingController {
         onboardingService.reset(currentUser.id());
         return ApiResponse.ok(null, "Onboarding reset");
     }
+
+    @GetMapping("/checklist")
+    public ApiResponse<OnboardingDto.ChecklistResponse> checklist() {
+        return ApiResponse.ok(onboardingService.getChecklist(currentUser.id()));
+    }
 }
