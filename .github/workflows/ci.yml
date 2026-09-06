@@ -483,11 +483,23 @@ jobs:
       - name: Reconciliation benchmark gate (self-test)
         run: python3 scripts/check-reconciliation-benchmark.py --self-test
 
-      # -DtestFailureIgnore=true is load-bearing, not a mistake: this step's job is to PRODUCE the
-      # surefire XML the gate step reads next, regardless of how many of the 9 known-failing
-      # scenarios fail -- the gate script, not Maven's own exit code, is what decides whether this
-      # job is red. -DfailIfNoTests=true guards the other direction: these six classes are
-      # deliberately excluded from backend/pom.xml's surefire <includes> (see
+      # -Dmaven.test.failure.ignore=true is load-bearing, not a mistake: this step's job is to
+      # PRODUCE the surefire XML the gate step reads next, regardless of how many of the 9
+      # known-failing scenarios fail -- the gate script, not Maven's own exit code, is what
+      # decides whether this job is red.
+      #
+      # The property name matters and was wrong here once already: surefire's testFailureIgnore
+      # parameter reads from ${maven.test.failure.ignore}, not from a property literally named
+      # testFailureIgnore -- passing -DtestFailureIgnore=true (this step's first version) silently
+      # sets an unused property and changes nothing, so Maven still exits non-zero on the 9 known
+      # failures and this step itself fails before the gate script ever runs. Caught by the first
+      # real CI run of this job (PR #1092) rather than by local testing, because a local `mvn ...
+      # | tail -N; echo $?` checks tail's exit code, not Maven's -- exactly the kind of
+      # pipe-swallows-the-real-status mistake worth naming so it isn't repeated in the next script
+      # that shells out to Maven.
+      #
+      # -DfailIfNoTests=true guards the other direction: these six classes are deliberately
+      # excluded from backend/pom.xml's surefire <includes> (see
       # docs/proposals/reconciliation-benchmark/README.md), so a typo in this -Dtest list would
       # otherwise run zero tests and exit 0, the exact "smaller number nobody was looking at" shape
       # scripts/summarize-surefire.py's own docstring warns about.
@@ -496,7 +508,7 @@ jobs:
         run: |
           ./mvnw -B --no-transfer-progress test \
             -Dtest="DuplicateDetectionBenchmark,TransferBenchmark,InvestmentTransferBenchmark,RefundReversalBenchmark,GmailMatchingBenchmark,CreditCardPaymentBenchmark" \
-            -DfailIfNoTests=true -DtestFailureIgnore=true
+            -DfailIfNoTests=true -Dmaven.test.failure.ignore=true
 
       - name: Check for a regression
         run: python3 scripts/check-reconciliation-benchmark.py
