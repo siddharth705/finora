@@ -693,7 +693,17 @@ export default function Dashboard() {
                 <Doughnut
                   data={{
                     labels: categoryEntries.map(([k]) => k),
-                    datasets: [{ data: categoryEntries.map(([, v]) => v), backgroundColor: categoryEntries.map((_, i) => donutColors[i % donutColors.length]), borderWidth: 0 }],
+                    datasets: [{
+                      data: categoryEntries.map(([, v]) => v),
+                      backgroundColor: categoryEntries.map((_, i) => donutColors[i % donutColors.length]),
+                      borderWidth: 0,
+                      // The hovered slice pushes outward -- Chart.js's own built-in affordance for
+                      // "this wedge is interactive", not a plugin. No hoverBorderColor: a canvas
+                      // fillStyle/strokeStyle needs a resolved color, not a live `var(--color-card)`
+                      // reference (canvas isn't part of the CSS cascade), and hardcoding one shade
+                      // would be wrong in the other theme.
+                      hoverOffset: 10,
+                    }],
                   }}
                   options={{
                     cutout: '72%',
@@ -1142,8 +1152,17 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
       data={{
         labels,
         datasets: [
-          { label: 'Income', data: series.map((s) => s.income), borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)', fill: true, tension: 0.3 },
-          { label: 'Expenses', data: series.map((s) => s.expense), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3 },
+          {
+            label: 'Income', data: series.map((s) => s.income), borderColor: '#16a34a', backgroundColor: 'rgba(22,163,74,0.08)', fill: true, tension: 0.3,
+            // Points stay invisible at rest (radius 0, matching how this chart already looked) and
+            // only appear on hover -- pointHoverRadius is what actually reads as "hovering did
+            // something", not just the tooltip box appearing off to the side.
+            pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: '#16a34a', pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2,
+          },
+          {
+            label: 'Expenses', data: series.map((s) => s.expense), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3,
+            pointRadius: 0, pointHoverRadius: 5, pointHoverBackgroundColor: '#ef4444', pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2,
+          },
         ],
       }}
       options={{
@@ -1154,6 +1173,11 @@ function CashFlowChart({ series }: { series: { month: string; income: number; ex
         // for a net series -- which is exactly how the same bug got everywhere else it was fixed.
         scales: { y: { ticks: { callback: (v) => fmt(Number(v)) } } },
         animation: { duration: 900, easing: 'easeOutQuart' },
+        // mode: 'index' + intersect: false -- hovering anywhere along a month's x-position shows
+        // both Income and Expenses together, not just whichever line's pixel the cursor happens to
+        // sit exactly on (Chart.js's default `intersect: true` misses if the cursor is a pixel off
+        // a thin line, which is most of the chart's area on a click-and-drag trackpad).
+        interaction: { mode: 'index' as const, intersect: false },
       }}
     />
   );
