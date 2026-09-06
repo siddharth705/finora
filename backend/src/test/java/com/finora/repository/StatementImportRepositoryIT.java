@@ -145,6 +145,61 @@ class StatementImportRepositoryIT extends AbstractIntegrationTest {
         assertThat(statementImportRepository.findCapabilityDataByUserId(otherUserId)).hasSize(1);
     }
 
+    // --- findMetadataByUserId*: storedSize is written (ImportService.persistSection) whenever a
+    // storage provider is configured, but was never read by anything before StatementImportDto
+    // .Summary started exposing it -- a mock-based test proves the DTO mapping, not that this
+    // AS-aliased JPQL projection actually round-trips the column against real Postgres. This is
+    // that proof. ---
+
+    @Test
+    @Transactional
+    void findMetadataByUserIdOrderByImportedAtDesc_projectsStoredSize() {
+        StatementImport withSize = saveStatement(null, null);
+        withSize.setStoredSize(123_456L);
+        statementImportRepository.save(withSize);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<StatementImportRepository.StatementMetadata> rows =
+                statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId);
+
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).getStoredSize()).isEqualTo(123_456L);
+    }
+
+    @Test
+    @Transactional
+    void findMetadataByUserIdOrderByImportedAtDesc_storedSizeNull_forALegacyOrNoProviderRow() {
+        // saveStatement() never calls setStoredSize -- exactly the shape of a row confirmed with
+        // no storage provider configured (see StatementImport.storedSize's own doc comment).
+        saveStatement(null, null);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<StatementImportRepository.StatementMetadata> rows =
+                statementImportRepository.findMetadataByUserIdOrderByImportedAtDesc(userId);
+
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).getStoredSize()).isNull();
+    }
+
+    @Test
+    @Transactional
+    void findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc_projectsStoredSize() {
+        StatementImport withSize = saveStatement(null, null);
+        withSize.setStoredSize(654_321L);
+        statementImportRepository.save(withSize);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<StatementImportRepository.StatementMetadata> rows =
+                statementImportRepository.findMetadataByUserIdAndAccountIdInOrderByImportedAtDesc(
+                        userId, List.of(accountId));
+
+        assertThat(rows).hasSize(1);
+        assertThat(rows.get(0).getStoredSize()).isEqualTo(654_321L);
+    }
+
     // --- findByUserIdAndTotalAmountDueIsNotNull: ReconciliationService's CC_PAYMENT pass (roadmap
     // Phase 3, docs/proposals/reconciliation-evolution-roadmap-proposal.md Part 4) ---
 

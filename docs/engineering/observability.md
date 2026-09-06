@@ -657,3 +657,43 @@ identical.
   Closing it means a column on `statement_imports`, which the confirm path owns.
 - **No distributed tracing.** `tracesSampleRate` is deliberately `0` — spans are keyed by URL, which
   would reintroduce the identifiers §4 strips. Revisit only with a scrubbing strategy for span names.
+
+---
+
+## 11. Reconciliation metrics
+
+`ReconciliationMetrics` (`com.finora.observability`) — two counters, added once
+`docs/proposals/reconciliation-benchmark/` established a measured baseline for
+`ReconciliationService` and needed a way to answer, from production rather than a synthetic
+benchmark, the two questions that benchmark could never answer on its own: how often the engine's
+auto-decisions actually happen, and how often a user disagrees with one.
+
+**Deliberately not built on the worker contract in §7.** Reconciliation is not a queue-drained
+background job — it runs synchronously on the request thread after every transaction create/
+update/delete and import confirm — so there is no queue depth, no retry, and no dead-letter concept
+to report. Forcing it through `WorkerObservability`'s lifecycle would mean inventing meaning for
+several of that contract's required states that this pass genuinely does not have.
+
+| Metric | Type | Tag(s) | Meaning |
+|---|---|---|---|
+| `finora.reconciliation.transfers_matched` | counter | `relationshipMatch` (`true`/`false`) | A transfer pair the engine auto-matched between the user's own accounts. Incremented once per matched PAIR, matching `ReconciliationService`'s own `newTransfers++` counting convention. |
+| `finora.reconciliation.duplicate_overrides` | counter | `source` (`MANUAL`/`CSV_IMPORT`/`GMAIL_IMPORT`) | A user rejected an auto-flagged duplicate via `TransactionService.confirmNotDuplicate` — the one user-facing correction that exists today for a wrong reconciliation verdict. There is no equivalent "not a transfer" action yet (a real gap this project's own remaining-failures-classification.md names), so this counter has no transfer-side sibling. |
+
+**Tags follow §2's privacy principle exactly**, even though `/actuator/prometheus` is authenticated
+rather than sent to a third party: both tag values are bounded — a boolean and a 3-value enum — and
+neither can ever hold a narration, an amount, or any other field a bank statement could have
+produced. No description, no merchant, no account identifier is ever a candidate tag value here.
+
+**No alerting and no dashboard yet**, the same "Known gap" this document already records for the
+worker framework's own metrics above — these two counters answer a measurement question first
+(docs/proposals/reconciliation-benchmark/'s own stated next step: production-data-driven
+prioritization over continued synthetic-benchmark optimization), not an alerting one. A ratio worth
+watching once real traffic exists: `duplicate_overrides` against `finora_worker_*`-style expected
+volume would need its own denominator (how many duplicates were auto-flagged in the first place),
+which is not yet its own counter — proposed, not built, the same discipline this whole project
+holds every reconciliation change to.
+
+**Verified reaching the scrape**, not just registered: `ReconciliationMetricsExportIT` follows
+`WorkerMetricsExportIT`'s own pattern exactly — calls `ReconciliationMetrics` directly, scrapes
+`/actuator/prometheus` through a real authenticated request, and asserts both series and their tag
+values are present.
