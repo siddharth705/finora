@@ -26,6 +26,12 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [reactivationToken, setReactivationToken] = useState<string | null>(null);
+  // Seeded at 420 -- Google's own real rendered button width, measured live on production (see
+  // SocialSignInButtons.tsx) -- rather than the form's natural full width, so the form narrows to
+  // match Google/Apple from the first paint instead of flashing full-width and then snapping
+  // narrower once Google's script actually reports back. onWidthKnown corrects this if Google
+  // ever renders differently.
+  const [formWidth, setFormWidth] = useState(420);
   // Same one-shot-read-then-clear pattern as today's Login.tsx -- api/client.ts's forced-signout
   // stashes why the session ended because its window.location.href navigation unmounts React.
   const [sessionEndedReason] = useState<string | null>(() => {
@@ -97,7 +103,7 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
+    <form onSubmit={handleSubmit} noValidate style={{ maxWidth: formWidth, marginInline: 'auto' }}>
       <h2 className="font-display text-2xl font-bold text-ink mb-1">Sign in</h2>
       <p className="text-sm text-muted mb-6">Enter your details to access your account</p>
 
@@ -114,6 +120,7 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
         onGoogleCredential={handleGoogleCredential}
         onAppleCredential={handleAppleCredential}
         onError={setError}
+        onWidthKnown={setFormWidth}
       />
 
       <AuthDivider />
