@@ -49,6 +49,37 @@ frontend has nothing to open a checkout widget with."
 **Task 1 below fixes this first**, before anything else in this plan, because Task 5 (the Billing
 Portal's upgrade flow) cannot be written against a contract that doesn't exist yet.
 
+## §0.5. Second finding — an external review of this draft caught a live production bug
+
+A product review of this plan's first draft flagged (among other things) that an abandoned
+checkout has no recovery path. Checking that against the actual code turned up something more
+serious than the review itself realized: **combined with the duplicate-order guard added earlier
+in this same session (already merged to `main` in PR #1016), any user who abandons checkout today
+is permanently locked out of ever checking out again.**
+
+- `SubscriptionOrderRepository.existsByUserIdAndStatus` (added in PR #1016, this session) makes
+  `checkout()`/`changePlan()`'s upgrade path refuse to run at all once a `PENDING`
+  `subscription_orders` row exists for a user.
+- Nothing anywhere in the codebase ever transitions a `subscription_orders` row out of `PENDING`
+  except the activation webhook (→ `COMPLETED`). Confirmed by grepping every call site that sets a
+  `SubscriptionOrder`'s status: `STATUS_FAILED` and `STATUS_ABANDONED` are declared on the entity
+  and never written by anything.
+- So: user starts checkout, closes the tab before paying → their `subscription_orders` row stays
+  `PENDING` forever → the guard refuses every future checkout attempt forever → there is not even
+  an admin action to clear it.
+
+The review's own suggestions (resumable checkout + idempotent same-plan retry) are the fix, folded
+into Task 2 below rather than treated as separate nice-to-haves — this is now a correctness fix to
+already-merged code, not a new feature. Two of the review's other points (a consolidated billing
+status endpoint, and surfacing a pending downgrade in that same response) turned out to already be
+exactly what Task 2 builds; one point (distinguishing a retryable payment failure from a terminal
+one) was checked against `RazorpayWebhookDispatcher.handlePending`/`handleHalted` and found to
+already be correct — `subscription.pending` writes `Payment.STATUS_PENDING`, only
+`subscription.halted` ever writes `STATUS_FAILED`, for the reasons design spec §4.6 already gives.
+No change needed there. The review's admin "Subscription Health" dashboard suggestion is a good
+idea deferred to its own later plan (new aggregate-count queries and a new admin view — real scope,
+not a Plan 3 blocker, and more useful once real subscribers exist to measure).
+
 ## Global Constraints
 
 - No AI attribution in commit messages (repo-wide `CLAUDE.md` rule).
@@ -344,10 +375,11 @@ git commit -m "fix(backend): return checkout details from change-plan for an upg
 
 ---
 
-## Task 2: Self-service "my subscription" read endpoint + admin payment-provider field
+## Task 2: Self-service "my subscription" endpoint + resumable checkout + admin payment-provider field
 
 **Files:**
 - Modify: `backend/src/main/java/com/finora/dto/BillingDtos.java`
+- Modify: `backend/src/main/java/com/finora/repository/SubscriptionOrderRepository.java`
 - Modify: `backend/src/main/java/com/finora/service/BillingCheckoutService.java`
 - Modify: `backend/src/main/java/com/finora/service/SubscriptionService.java` (admin `listAll`)
 - Modify: `backend/src/main/java/com/finora/controller/BillingController.java`
@@ -358,9 +390,744 @@ git commit -m "fix(backend): return checkout details from change-plan for an upg
 **Interfaces:**
 - Consumes: `PlanChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc` (Plan 1, unchanged),
   `PlanChange.REASON_DOWNGRADE_SCHEDULED` (Plan 2, unchanged).
-- Produces: `GET /api/v1/billing/subscription` → `BillingDtos.MySubscriptionDto`. This is the one
-  new type this task adds — the frontend Billing Portal (Task 5) reads it for everything except
-  payment history.
+- Produces: `GET /api/v1/billing/subscription` → `BillingDtos.MySubscriptionDto` (now carrying a
+  `pendingOrder` field, not just plan/renewal/pendingChange — see §0.5); `BillingCheckoutService
+  .cancelPendingOrder(UUID) : void` and `POST /api/v1/billing/pending-order/cancel`; a changed
+  internal contract for `checkout()`/`changePlan()`'s upgrade path, which now RESUME a same-plan
+  pending order instead of refusing outright (§0.5's fix).
+
+- [ ] **Step 1: Write the failing unit tests for `mySubscription`**
+
+Add to `BillingCheckoutServiceTest.java`:
+
+```java
+    @Test
+    void mySubscriptionReturnsThePlanAndRenewalDateForAPaidSubscriber() {
+        UUID plusPlanId = planId; // reuse the PREMIUM-labelled fixture id from setUp() -- code doesn't matter here, only that findById resolves it
+        Plan plus = new Plan();
+        ReflectionTestUtils.setField(plus, "id", plusPlanId);
+        plus.setCode("PLUS");
+        plus.setName("Plus");
+        when(planRepository.findById(plusPlanId)).thenReturn(Optional.of(plus));
+
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
+        subscription.setPlanId(plusPlanId);
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setRazorpaySubscriptionId("sub_existing");
+        subscription.setAutoRenew(true);
+        subscription.setRenewalDate(LocalDate.of(2026, 10, 5));
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()))
+                .thenReturn(List.of());
+        // Mockito's default answer for an Optional-returning method is Optional.empty() -- no
+        // pending order in this scenario, so subscriptionOrderRepository needs no stub here.
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.planCode()).isEqualTo("PLUS");
+        assertThat(dto.planName()).isEqualTo("Plus");
+        assertThat(dto.billingCycle()).isEqualTo("MONTHLY");
+        assertThat(dto.status()).isEqualTo("ACTIVE");
+        assertThat(dto.renewalDate()).isEqualTo(LocalDate.of(2026, 10, 5));
+        assertThat(dto.autoRenew()).isTrue();
+        assertThat(dto.hasBillingSubscription()).isTrue();
+        assertThat(dto.pendingChange()).isNull();
+        assertThat(dto.pendingOrder()).isNull();
+    }
+
+    @Test
+    void mySubscriptionSurfacesAPendingScheduledDowngrade() {
+        UUID premiumPlanId = planId;
+        UUID plusPlanId = UUID.randomUUID();
+        Plan premium = planRepository.findByCode("PREMIUM").orElseThrow();
+        when(planRepository.findById(premiumPlanId)).thenReturn(Optional.of(premium));
+        Plan plus = new Plan();
+        ReflectionTestUtils.setField(plus, "id", plusPlanId);
+        plus.setCode("PLUS");
+        plus.setName("Plus");
+        when(planRepository.findById(plusPlanId)).thenReturn(Optional.of(plus));
+
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
+        subscription.setPlanId(premiumPlanId); // still Premium -- the downgrade hasn't applied yet
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setRazorpaySubscriptionId("sub_existing");
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
+
+        PlanChange scheduled = new PlanChange();
+        scheduled.setSubscriptionId(subscription.getId());
+        scheduled.setFromPlanId(premiumPlanId);
+        scheduled.setToPlanId(plusPlanId);
+        scheduled.setEffectiveAt(java.time.Instant.parse("2026-10-05T00:00:00Z"));
+        scheduled.setReason(PlanChange.REASON_DOWNGRADE_SCHEDULED);
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()))
+                .thenReturn(List.of(scheduled));
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.pendingChange()).isNotNull();
+        assertThat(dto.pendingChange().toPlanCode()).isEqualTo("PLUS");
+        assertThat(dto.pendingChange().toPlanName()).isEqualTo("Plus");
+        assertThat(dto.pendingChange().effectiveAt()).isEqualTo(java.time.Instant.parse("2026-10-05T00:00:00Z"));
+    }
+
+    @Test
+    void mySubscriptionOmitsAPendingChangeOnceItHasAlreadyApplied() {
+        UUID plusPlanId = planId;
+        Plan plus = new Plan();
+        ReflectionTestUtils.setField(plus, "id", plusPlanId);
+        plus.setCode("PLUS");
+        plus.setName("Plus");
+        when(planRepository.findById(plusPlanId)).thenReturn(Optional.of(plus));
+
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
+        subscription.setPlanId(plusPlanId); // already Plus -- the downgrade already reconciled
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setRazorpaySubscriptionId("sub_existing");
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
+
+        PlanChange applied = new PlanChange();
+        applied.setSubscriptionId(subscription.getId());
+        applied.setFromPlanId(UUID.randomUUID());
+        applied.setToPlanId(plusPlanId); // matches the subscription's CURRENT plan
+        applied.setEffectiveAt(java.time.Instant.now());
+        applied.setReason(PlanChange.REASON_DOWNGRADE_SCHEDULED);
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()))
+                .thenReturn(List.of(applied));
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.pendingChange()).isNull();
+    }
+
+    @Test
+    void mySubscriptionReflectsFreeWithNoBillingSubscription() {
+        Subscription free = new Subscription();
+        ReflectionTestUtils.setField(free, "id", UUID.randomUUID());
+        free.setPlanId(planId);
+        free.setStatus(Subscription.STATUS_ACTIVE);
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(free));
+        Plan freePlan = new Plan();
+        ReflectionTestUtils.setField(freePlan, "id", planId);
+        freePlan.setCode("FREE");
+        freePlan.setName("Free");
+        when(planRepository.findById(planId)).thenReturn(Optional.of(freePlan));
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(free.getId())).thenReturn(List.of());
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.planCode()).isEqualTo("FREE");
+        assertThat(dto.hasBillingSubscription()).isFalse();
+        assertThat(dto.billingCycle()).isNull();
+        assertThat(dto.renewalDate()).isNull();
+    }
+
+    @Test
+    void mySubscriptionSurfacesAPendingOrderTheUserCanResumeOrCancel() {
+        Subscription free = new Subscription();
+        ReflectionTestUtils.setField(free, "id", UUID.randomUUID());
+        free.setPlanId(planId);
+        free.setStatus(Subscription.STATUS_ACTIVE);
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(free));
+        Plan freePlan = new Plan();
+        ReflectionTestUtils.setField(freePlan, "id", planId);
+        freePlan.setCode("FREE");
+        freePlan.setName("Free");
+        when(planRepository.findById(planId)).thenReturn(Optional.of(freePlan));
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(free.getId())).thenReturn(List.of());
+
+        UUID premiumPlanId = UUID.randomUUID();
+        Plan premium = new Plan();
+        ReflectionTestUtils.setField(premium, "id", premiumPlanId);
+        premium.setCode("PREMIUM");
+        premium.setName("Premium");
+        when(planRepository.findById(premiumPlanId)).thenReturn(Optional.of(premium));
+
+        com.finora.entity.SubscriptionOrder order = new com.finora.entity.SubscriptionOrder();
+        order.setPlanId(premiumPlanId);
+        order.setBillingCycle("YEARLY");
+        order.setRazorpaySubscriptionId("sub_abandoned");
+        order.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(order));
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.pendingOrder()).isNotNull();
+        assertThat(dto.pendingOrder().planCode()).isEqualTo("PREMIUM");
+        assertThat(dto.pendingOrder().planName()).isEqualTo("Premium");
+        assertThat(dto.pendingOrder().billingCycle()).isEqualTo("YEARLY");
+        assertThat(dto.pendingOrder().razorpaySubscriptionId()).isEqualTo("sub_abandoned");
+        assertThat(dto.pendingOrder().keyId()).isEqualTo("rzp_test_123");
+    }
+```
+
+Add `import com.finora.entity.PlanChange;` and `import java.util.List;` to that test file's
+imports if not already present (`PlanChange` and `List` are both already imported by the existing
+downgrade test in this file, so this is likely a no-op check, not a real addition).
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```bash
+cd backend && ./mvnw test -Dtest=BillingCheckoutServiceTest
+```
+Expected: FAIL — `service.mySubscription` does not exist yet.
+
+- [ ] **Step 3: Add `MySubscriptionDto`/`PendingOrderDto` to `BillingDtos.java`**
+
+```java
+    /** GET /api/v1/billing/subscription -- what the web/mobile Billing Portal reads. Distinct from
+     *  {@link EntitlementsDto} (which only carries plan/features, for gating) and from
+     *  {@link SubscriptionSummaryDto} (the admin list row, keyed by userId/email for a table, not
+     *  by "the caller's own subscription"). */
+    public record MySubscriptionDto(
+            String planCode, String planName, String billingCycle, String status,
+            LocalDate renewalDate, boolean autoRenew, boolean hasBillingSubscription,
+            PendingPlanChangeDto pendingChange, PendingOrderDto pendingOrder
+    ) {}
+
+    /** Null on {@link MySubscriptionDto} unless a downgrade has been scheduled (design spec §6.4)
+     *  and not yet reconciled -- see {@code BillingCheckoutService.mySubscription}'s own doc
+     *  comment for how "not yet reconciled" is detected. */
+    public record PendingPlanChangeDto(String toPlanCode, String toPlanName, Instant effectiveAt) {}
+
+    /** Non-null on {@link MySubscriptionDto} exactly when a {@code subscription_orders} row is
+     *  still {@code PENDING} for this user -- an abandoned or in-flight checkout the Billing
+     *  Portal can offer to resume (the same {@code razorpaySubscriptionId}/{@code keyId} Checkout
+     *  needs, with no new Razorpay call) or cancel via
+     *  {@code POST /api/v1/billing/pending-order/cancel}. Added during Plan 3 review: before this,
+     *  nothing gave a user visibility into, or a way to clear, a stuck pending order -- see this
+     *  plan's §0.5 for the bug that made that a real dead end, not just a UX gap. */
+    public record PendingOrderDto(String planCode, String planName, String billingCycle,
+                                   String razorpaySubscriptionId, String keyId) {}
+```
+
+- [ ] **Step 4: Add the repository finder**
+
+In `SubscriptionOrderRepository.java`, replace `existsByUserIdAndStatus` (added in PR #1016,
+superseded by this task's resumable-checkout logic, which needs the actual order, not just its
+existence) with a finder that returns it:
+
+```java
+public interface SubscriptionOrderRepository extends JpaRepository<SubscriptionOrder, UUID> {
+    Optional<SubscriptionOrder> findByRazorpaySubscriptionId(String razorpaySubscriptionId);
+
+    /** Subscription billing V3 (design spec review, §0.5 of the V3 plan). What both
+     *  {@code mySubscription} (read) and {@code resumableOrderOrGuard} (checkout/upgrade) use to
+     *  find a user's still-in-flight checkout -- "first" only matters if more than one PENDING
+     *  order ever exists for one user, which itself would be its own bug; ordering by
+     *  createdAt desc is defensive, not load-bearing. */
+    Optional<SubscriptionOrder> findFirstByUserIdAndStatusOrderByCreatedAtDesc(UUID userId, String status);
+}
+```
+
+(This deletes the `existsByUserIdAndStatus` method entirely -- it has no remaining caller after
+this task's Step 6 rewrites the one method that used it.)
+
+- [ ] **Step 5: Add `mySubscription` and `cancelPendingOrder` to `BillingCheckoutService.java`**
+
+```java
+    @Transactional(readOnly = true)
+    public MySubscriptionDto mySubscription(UUID userId) {
+        Subscription subscription = subscriptionRepository.findActiveOrTrial(userId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No active subscription."));
+        Plan plan = planRepository.findById(subscription.getPlanId())
+                .orElseThrow(() -> new IllegalStateException("Subscription references a missing plan."));
+
+        // A scheduled downgrade (Plan 2, §6.4) writes a plan_changes row immediately, at request
+        // time -- long before it actually takes effect at the next subscription.charged webhook.
+        // The most recent row is "still pending" exactly when its target plan doesn't match what
+        // the subscription is on RIGHT NOW: once handleCharged reconciles plan_id to match, this
+        // same query naturally stops returning it as pending, with no separate "applied" flag to
+        // maintain.
+        PendingPlanChangeDto pendingChange = planChangeRepository
+                .findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()).stream()
+                .findFirst()
+                .filter(c -> PlanChange.REASON_DOWNGRADE_SCHEDULED.equals(c.getReason()))
+                .filter(c -> !c.getToPlanId().equals(subscription.getPlanId()))
+                .map(c -> {
+                    Plan toPlan = planRepository.findById(c.getToPlanId()).orElse(null);
+                    return new PendingPlanChangeDto(
+                            toPlan != null ? toPlan.getCode() : null,
+                            toPlan != null ? toPlan.getName() : null,
+                            c.getEffectiveAt());
+                })
+                .orElse(null);
+
+        PendingOrderDto pendingOrder = subscriptionOrderRepository
+                .findFirstByUserIdAndStatusOrderByCreatedAtDesc(userId, SubscriptionOrder.STATUS_PENDING)
+                .map(order -> {
+                    Plan orderPlan = planRepository.findById(order.getPlanId()).orElse(null);
+                    return new PendingOrderDto(
+                            orderPlan != null ? orderPlan.getCode() : null,
+                            orderPlan != null ? orderPlan.getName() : null,
+                            order.getBillingCycle(), order.getRazorpaySubscriptionId(), properties.getKeyId());
+                })
+                .orElse(null);
+
+        return new MySubscriptionDto(
+                plan.getCode(), plan.getName(), subscription.getBillingCycle(), subscription.getStatus(),
+                subscription.getRenewalDate(), subscription.isAutoRenew(),
+                subscription.getRazorpaySubscriptionId() != null, pendingChange, pendingOrder);
+    }
+
+    /** §0.5 of this plan. Gives {@code SubscriptionOrder.STATUS_ABANDONED} its first real writer
+     *  -- without this, a user who abandons checkout (or wants a DIFFERENT plan than the one
+     *  they have a stale pending order for) has no way to ever check out again, since
+     *  {@code resumableOrderOrGuard} below refuses every subsequent attempt for a different plan
+     *  forever otherwise. Deliberately does not call the Razorpay API: a "created" Razorpay
+     *  subscription that was never authorized never charges anything (Razorpay's own model), so
+     *  nothing on Razorpay's side needs stopping -- only Fynora's own "this user has a checkout
+     *  in flight" bookkeeping needs clearing. */
+    @Transactional
+    public void cancelPendingOrder(UUID userId) {
+        SubscriptionOrder order = subscriptionOrderRepository
+                .findFirstByUserIdAndStatusOrderByCreatedAtDesc(userId, SubscriptionOrder.STATUS_PENDING)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "No pending checkout to cancel."));
+        order.setStatus(SubscriptionOrder.STATUS_ABANDONED);
+        subscriptionOrderRepository.save(order);
+    }
+```
+
+Add these imports to `BillingCheckoutService.java`, alongside its existing
+`import com.finora.dto.BillingDtos.CheckoutResponseDto;`:
+
+```java
+import com.finora.dto.BillingDtos.MySubscriptionDto;
+import com.finora.dto.BillingDtos.PendingOrderDto;
+import com.finora.dto.BillingDtos.PendingPlanChangeDto;
+import com.finora.entity.PlanChange;
+```
+
+- [ ] **Step 6: Replace `ensureNoOrderInFlight` with a resumable version, and update its two callers**
+
+Replace the existing `ensureNoOrderInFlight` method (added in PR #1016) entirely:
+
+```java
+    /** Closes the double-submit window between "create the Razorpay subscription" and "the
+     *  activation webhook lands" -- WITHOUT creating a dead end for a user who simply abandoned
+     *  checkout (§0.5 of this plan): a double-tap, retry, or a genuinely abandoned first attempt
+     *  at the SAME plan+cycle resumes the existing pending order's already-created Razorpay
+     *  subscription instead of either creating a second one (the original PR #1016 bug this
+     *  guard fixed) or refusing forever (the bug THIS guard introduced). A pending order for a
+     *  DIFFERENT plan+cycle still blocks -- {@code cancelPendingOrder} above is how the caller
+     *  clears that to start over.
+     *
+     *  @return an existing, resumable {@link CheckoutResponseDto} if one applies, or {@code null}
+     *  if the caller should proceed to create a new Razorpay subscription. */
+    private CheckoutResponseDto resumableOrderOrGuard(UUID userId, UUID planId, String billingCycle) {
+        return subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(userId, SubscriptionOrder.STATUS_PENDING)
+                .map(order -> {
+                    if (order.getPlanId().equals(planId) && order.getBillingCycle().equals(billingCycle)) {
+                        return new CheckoutResponseDto(order.getRazorpaySubscriptionId(), properties.getKeyId());
+                    }
+                    throw new ApiException(HttpStatus.CONFLICT,
+                            "You have a checkout already in progress for a different plan. " +
+                            "Cancel it (POST /api/v1/billing/pending-order/cancel) before starting a new one.");
+                })
+                .orElse(null);
+    }
+```
+
+Update `checkout()` to call it AFTER resolving `plan`/`price` (it needs `plan.getId()`), not
+before -- this reorders the method's existing checks, it does not change what any of them do:
+
+```java
+    @Transactional
+    public CheckoutResponseDto checkout(UUID userId, String planCode, String billingCycle) {
+        if (!gateway.isConfigured()) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "Billing is not available yet.");
+        }
+
+        subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId).stream().findFirst()
+                .filter(s -> s.getRazorpaySubscriptionId() != null)
+                .ifPresent(s -> {
+                    throw new ApiException(HttpStatus.CONFLICT,
+                            "You already have a billing subscription. Cancel it before starting a new one.");
+                });
+
+        Plan plan = planRepository.findByCode(planCode)
+                .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST, "Unknown plan code: " + planCode));
+        BillingPrice price = billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(plan.getId(), billingCycle)
+                .orElseThrow(() -> new ApiException(HttpStatus.BAD_REQUEST,
+                        "No active price for " + planCode + "/" + billingCycle));
+        if (price.getRazorpayPlanId() == null) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "This plan is not yet set up for checkout (missing Razorpay plan id).");
+        }
+
+        CheckoutResponseDto resumable = resumableOrderOrGuard(userId, plan.getId(), billingCycle);
+        if (resumable != null) {
+            return resumable;
+        }
+
+        RazorpaySubscriptionDto razorpaySubscription = gateway.createSubscription(
+                price.getRazorpayPlanId(), billingCycle,
+                Map.of("fynoraUserId", userId.toString(), "planCode", planCode, "billingCycle", billingCycle));
+
+        SubscriptionOrder order = new SubscriptionOrder();
+        order.setUserId(userId);
+        order.setPlanId(plan.getId());
+        order.setBillingCycle(billingCycle);
+        order.setRazorpaySubscriptionId(razorpaySubscription.id());
+        order.setStatus(SubscriptionOrder.STATUS_PENDING);
+        order.setAmount(price.getPrice());
+        subscriptionOrderRepository.save(order);
+
+        return new CheckoutResponseDto(razorpaySubscription.id(), properties.getKeyId());
+    }
+```
+
+Update `upgradeToNewSubscription()` (as it stands after Task 1's fix) the same way:
+
+```java
+    private CheckoutResponseDto upgradeToNewSubscription(UUID userId, Plan newPlan, BillingPrice newPrice, String billingCycle) {
+        CheckoutResponseDto resumable = resumableOrderOrGuard(userId, newPlan.getId(), billingCycle);
+        if (resumable != null) {
+            return resumable;
+        }
+
+        RazorpaySubscriptionDto razorpaySubscription = gateway.createSubscription(
+                newPrice.getRazorpayPlanId(), billingCycle,
+                Map.of("fynoraUserId", userId.toString(), "planCode", newPlan.getCode(), "billingCycle", billingCycle));
+
+        SubscriptionOrder order = new SubscriptionOrder();
+        order.setUserId(userId);
+        order.setPlanId(newPlan.getId());
+        order.setBillingCycle(billingCycle);
+        order.setRazorpaySubscriptionId(razorpaySubscription.id());
+        order.setStatus(SubscriptionOrder.STATUS_PENDING);
+        order.setAmount(newPrice.getPrice());
+        subscriptionOrderRepository.save(order);
+
+        return new CheckoutResponseDto(razorpaySubscription.id(), properties.getKeyId());
+    }
+```
+
+- [ ] **Step 7: Update the two existing PR #1016 tests that stubbed the now-deleted `existsByUserIdAndStatus`**
+
+`BillingCheckoutServiceTest.java` has two tests from the original (buggy) guard that must change
+to match the new resumable behavior, not just keep compiling. Find
+`refusesCheckoutWhenAPendingOrderAlreadyExistsForThisUser`:
+
+```java
+    @Test
+    void refusesCheckoutWhenAPendingOrderAlreadyExistsForThisUser() {
+        when(subscriptionOrderRepository.existsByUserIdAndStatus(userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(true);
+
+        assertThatThrownBy(() -> service.checkout(userId, "PREMIUM", "MONTHLY"))
+                .isInstanceOf(ApiException.class);
+
+        verify(gateway, never()).createSubscription(any(), any(), anyMap());
+    }
+```
+
+Replace it with two tests covering both branches of the new behavior:
+
+```java
+    @Test
+    void checkoutResumesAnExistingPendingOrderForTheSamePlanAndCycle() {
+        BillingPrice price = new BillingPrice();
+        price.setPlanId(planId);
+        price.setBillingCycle("MONTHLY");
+        price.setPrice(new BigDecimal("799.00"));
+        price.setRazorpayPlanId("plan_razorpay_123");
+        when(billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(eq(planId), eq("MONTHLY")))
+                .thenReturn(Optional.of(price));
+
+        com.finora.entity.SubscriptionOrder existingOrder = new com.finora.entity.SubscriptionOrder();
+        existingOrder.setPlanId(planId);
+        existingOrder.setBillingCycle("MONTHLY");
+        existingOrder.setRazorpaySubscriptionId("sub_already_created");
+        existingOrder.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(existingOrder));
+
+        CheckoutResponseDto response = service.checkout(userId, "PREMIUM", "MONTHLY");
+
+        assertThat(response.razorpaySubscriptionId()).isEqualTo("sub_already_created");
+        verify(gateway, never()).createSubscription(any(), any(), anyMap());
+        verify(subscriptionOrderRepository, never()).save(any());
+    }
+
+    @Test
+    void checkoutRefusesADifferentPlanWhileAnotherIsPending() {
+        BillingPrice price = new BillingPrice();
+        price.setPlanId(planId);
+        price.setBillingCycle("MONTHLY");
+        price.setPrice(new BigDecimal("799.00"));
+        price.setRazorpayPlanId("plan_razorpay_123");
+        when(billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue(eq(planId), eq("MONTHLY")))
+                .thenReturn(Optional.of(price));
+
+        com.finora.entity.SubscriptionOrder existingOrder = new com.finora.entity.SubscriptionOrder();
+        existingOrder.setPlanId(UUID.randomUUID()); // a DIFFERENT plan than the one being requested
+        existingOrder.setBillingCycle("MONTHLY");
+        existingOrder.setRazorpaySubscriptionId("sub_other_plan");
+        existingOrder.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(existingOrder));
+
+        assertThatThrownBy(() -> service.checkout(userId, "PREMIUM", "MONTHLY"))
+                .isInstanceOf(ApiException.class);
+
+        verify(gateway, never()).createSubscription(any(), any(), anyMap());
+    }
+
+    @Test
+    void cancelPendingOrderMarksItAbandoned() {
+        com.finora.entity.SubscriptionOrder order = new com.finora.entity.SubscriptionOrder();
+        order.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(order));
+
+        service.cancelPendingOrder(userId);
+
+        assertThat(order.getStatus()).isEqualTo(com.finora.entity.SubscriptionOrder.STATUS_ABANDONED);
+        verify(subscriptionOrderRepository).save(order);
+        verify(gateway, never()).cancelSubscription(any(), anyBoolean());
+    }
+
+    @Test
+    void cancelPendingOrderThrowsWhenNoneExists() {
+        assertThatThrownBy(() -> service.cancelPendingOrder(userId))
+                .isInstanceOf(ApiException.class);
+    }
+```
+
+Also find `changePlanRefusesAnUpgradeWhenAPendingOrderAlreadyExistsForThisUser` (also from PR
+#1016, stubbing the same now-deleted method) and update its stub the same way -- replace:
+
+```java
+        when(subscriptionOrderRepository.existsByUserIdAndStatus(userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(true);
+```
+
+with:
+
+```java
+        com.finora.entity.SubscriptionOrder existingOrder = new com.finora.entity.SubscriptionOrder();
+        existingOrder.setPlanId(UUID.randomUUID()); // different plan than PREMIUM, still blocks
+        existingOrder.setBillingCycle("MONTHLY");
+        existingOrder.setStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING);
+        when(subscriptionOrderRepository.findFirstByUserIdAndStatusOrderByCreatedAtDesc(
+                userId, com.finora.entity.SubscriptionOrder.STATUS_PENDING))
+                .thenReturn(Optional.of(existingOrder));
+```
+
+(leaving the rest of that test -- its `assertThatThrownBy`/`verify` lines -- unchanged).
+
+- [ ] **Step 8: Run the unit tests to verify they pass**
+
+```bash
+cd backend && ./mvnw test -Dtest=BillingCheckoutServiceTest
+```
+Expected: PASS.
+
+- [ ] **Step 9: Add the endpoints to `BillingController.java`**
+
+```java
+    @GetMapping("/subscription")
+    public ApiResponse<MySubscriptionDto> mySubscription() {
+        return ApiResponse.ok(billingCheckoutService.mySubscription(currentUser.id()));
+    }
+
+    @PostMapping("/pending-order/cancel")
+    public ApiResponse<Void> cancelPendingOrder() {
+        billingCheckoutService.cancelPendingOrder(currentUser.id());
+        return ApiResponse.ok(null, "Pending checkout cancelled");
+    }
+```
+
+Add `import com.finora.dto.BillingDtos.MySubscriptionDto;` and
+`import org.springframework.web.bind.annotation.GetMapping;` to that file's imports.
+
+- [ ] **Step 10: Write the failing integration tests**
+
+Add to `BillingControllerIT.java`:
+
+```java
+    @Test
+    void mySubscriptionReportsThePlanAndRenewalDate() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        var subscription = subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow();
+        Plan plus = planRepository.findByCode("PLUS").orElseThrow();
+        subscription.setPlanId(plus.getId());
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setRazorpaySubscriptionId("sub_test_" + UUID.randomUUID());
+        subscription.setPaymentProvider("RAZORPAY");
+        subscription.setRenewalDate(java.time.LocalDate.of(2026, 11, 1));
+        subscriptionRepository.save(subscription);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/billing/subscription", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).contains("\"planCode\":\"PLUS\"").contains("2026-11-01").contains("\"hasBillingSubscription\":true");
+    }
+
+    @Test
+    void aSecondCheckoutForTheSamePlanResumesTheFirstInsteadOfCreatingAnother() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        when(gateway.createSubscription(any(), any(), anyMap()))
+                .thenReturn(new RazorpaySubscriptionDto("sub_first_attempt", "created"));
+
+        HttpEntity<String> request = new HttpEntity<>(
+                "{\"planCode\":\"PREMIUM\",\"billingCycle\":\"MONTHLY\"}", bearerFor(user));
+        ResponseEntity<String> first = restTemplate.postForEntity("/api/v1/billing/checkout", request, String.class);
+        assertThat(first.getBody()).contains("sub_first_attempt");
+
+        ResponseEntity<String> second = restTemplate.postForEntity("/api/v1/billing/checkout", request, String.class);
+
+        assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(second.getBody()).contains("sub_first_attempt");
+        verify(gateway, times(1)).createSubscription(any(), any(), anyMap());
+    }
+
+    @Test
+    void cancellingAPendingOrderAllowsCheckingOutADifferentPlanAfterwards() {
+        User user = createUser();
+        subscriptionService.provisionFreeSubscription(user.getId());
+        when(gateway.createSubscription(any(), any(), anyMap()))
+                .thenReturn(new RazorpaySubscriptionDto("sub_premium_attempt", "created"))
+                .thenReturn(new RazorpaySubscriptionDto("sub_plus_attempt", "created"));
+
+        restTemplate.postForEntity("/api/v1/billing/checkout",
+                new HttpEntity<>("{\"planCode\":\"PREMIUM\",\"billingCycle\":\"MONTHLY\"}", bearerFor(user)), String.class);
+
+        ResponseEntity<String> blocked = restTemplate.postForEntity("/api/v1/billing/checkout",
+                new HttpEntity<>("{\"planCode\":\"PLUS\",\"billingCycle\":\"MONTHLY\"}", bearerFor(user)), String.class);
+        assertThat(blocked.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+
+        ResponseEntity<String> cancel = restTemplate.postForEntity(
+                "/api/v1/billing/pending-order/cancel", new HttpEntity<>(bearerFor(user)), String.class);
+        assertThat(cancel.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+        ResponseEntity<String> retried = restTemplate.postForEntity("/api/v1/billing/checkout",
+                new HttpEntity<>("{\"planCode\":\"PLUS\",\"billingCycle\":\"MONTHLY\"}", bearerFor(user)), String.class);
+        assertThat(retried.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(retried.getBody()).contains("sub_plus_attempt");
+    }
+```
+
+Add `import static org.mockito.Mockito.times;` to that file's imports if not already present.
+
+- [ ] **Step 11: Run tests to verify they pass**
+
+```bash
+cd backend && ./mvnw test -Dtest=BillingControllerIT
+```
+Expected: PASS.
+
+- [ ] **Step 12: Add `paymentProvider` to the admin `SubscriptionSummaryDto`**
+
+In `BillingDtos.java`:
+
+```java
+    /** Admin Portal, Subscription Management -- one row per user's current subscription.
+     *  paymentProvider (Plan 3) is what the admin UI reads to know whether the plain FREE/PLUS/
+     *  PREMIUM dropdown is safe to fire directly, or whether it must go through the
+     *  cancel-paid-subscription confirm flow first (design spec §6.6) -- "RAZORPAY" means a live
+     *  Razorpay mandate exists, "ADMIN_GRANT" or null means it doesn't. */
+    public record SubscriptionSummaryDto(
+            UUID subscriptionId, UUID userId, String userEmail, String userFullName,
+            String planCode, String planName, String status, String paymentProvider,
+            LocalDate startDate, LocalDate endDate, LocalDate renewalDate
+    ) {}
+```
+
+- [ ] **Step 13: Write the failing unit test for the admin list**
+
+Add to `SubscriptionServiceTest.java` (find the existing `listAll` test and add this alongside
+it):
+
+```java
+    @Test
+    void listAllIncludesThePaymentProviderForEachRow() {
+        Subscription sub = new Subscription();
+        ReflectionTestUtils.setField(sub, "id", UUID.randomUUID());
+        sub.setUserId(UUID.randomUUID());
+        sub.setPlanId(UUID.randomUUID());
+        sub.setStatus(Subscription.STATUS_ACTIVE);
+        sub.setStartDate(LocalDate.now());
+        sub.setPaymentProvider("RAZORPAY");
+        Page<Subscription> page = new PageImpl<>(List.of(sub));
+        when(subscriptionRepository.findAllByOrderByCreatedAtDesc(any())).thenReturn(page);
+        when(planRepository.findAll()).thenReturn(List.of());
+        when(userRepository.findAllById(any())).thenReturn(List.of());
+
+        var result = service.listAll(0, 20);
+
+        assertThat(result.content()).hasSize(1);
+        assertThat(result.content().get(0).paymentProvider()).isEqualTo("RAZORPAY");
+    }
+```
+
+Add `import org.springframework.data.domain.PageImpl;` to that test file's imports if not already
+present.
+
+- [ ] **Step 14: Run test to verify it fails**
+
+```bash
+cd backend && ./mvnw test -Dtest=SubscriptionServiceTest
+```
+Expected: FAIL — `SubscriptionSummaryDto` doesn't have a `paymentProvider()` accessor's worth of
+data being passed in `listAll`'s mapping yet (compiles once Step 12 lands, but the field will be
+`null` until Step 15).
+
+- [ ] **Step 15: Populate the field in `SubscriptionService.listAll`**
+
+```java
+        return PagedResponse.of(subscriptions.map(s -> {
+            Plan plan = plansById.get(s.getPlanId());
+            User user = usersById.get(s.getUserId());
+            return new SubscriptionSummaryDto(
+                    s.getId(), s.getUserId(),
+                    user != null ? user.getEmail() : null, user != null ? user.getFullName() : null,
+                    plan != null ? plan.getCode() : null, plan != null ? plan.getName() : null,
+                    s.getStatus(), s.getPaymentProvider(), s.getStartDate(), s.getEndDate(), s.getRenewalDate());
+        }));
+```
+
+(This replaces the existing `return PagedResponse.of(...)` block in `listAll` — same structure,
+one more constructor argument.)
+
+- [ ] **Step 16: Run the full backend suite**
+
+```bash
+cd backend && ./mvnw test
+```
+Expected: PASS, no regressions (in particular, `AdminSubscriptionControllerIT`'s existing
+assertions on `SubscriptionSummaryDto`'s JSON shape should still pass since this only adds a
+field).
+
+- [ ] **Step 17: Commit**
+
+```bash
+git add backend/src/main/java/com/finora/dto/BillingDtos.java \
+        backend/src/main/java/com/finora/repository/SubscriptionOrderRepository.java \
+        backend/src/main/java/com/finora/service/BillingCheckoutService.java \
+        backend/src/main/java/com/finora/service/SubscriptionService.java \
+        backend/src/main/java/com/finora/controller/BillingController.java \
+        backend/src/test/java/com/finora/service/BillingCheckoutServiceTest.java \
+        backend/src/test/java/com/finora/controller/BillingControllerIT.java \
+        backend/src/test/java/com/finora/service/SubscriptionServiceTest.java
+git commit -m "fix(backend): make abandoned checkouts recoverable instead of a permanent lockout"
+```
+
+---
 
 - [ ] **Step 1: Write the failing unit tests**
 
@@ -727,10 +1494,11 @@ git commit -m "feat(backend): add self-service subscription read endpoint, admin
 
 **Interfaces:**
 - Consumes: `GET /api/v1/billing/subscription`, `POST /api/v1/billing/checkout`,
-  `POST /api/v1/billing/cancel`, `POST /api/v1/billing/change-plan` (Tasks 1-2),
+  `POST /api/v1/billing/cancel`, `POST /api/v1/billing/change-plan`,
+  `POST /api/v1/billing/pending-order/cancel` (Tasks 1-2),
   `POST /api/v1/admin/subscriptions/{userId}/cancel-paid-subscription` (Plan 2, already exists on
   the backend, never called from any admin-portal client until now).
-- Produces: `billingApi.mySubscription()/.checkout()/.cancel()/.changePlan()`,
+- Produces: `billingApi.mySubscription()/.checkout()/.cancel()/.changePlan()/.cancelPendingOrder()`,
   `loadRazorpayCheckout(): Promise<RazorpayConstructor>`,
   `openRazorpayCheckout(options): Promise<{ paymentId: string } | null>` (frontend);
   `adminSubscriptionsApi.cancelPaidSubscription(userId)` (admin-portal).
@@ -926,6 +1694,16 @@ export interface PendingPlanChange {
   toPlanName: string;
   effectiveAt: string;
 }
+// A stuck or in-flight checkout the Billing Portal can offer to resume or cancel (Plan 3 review,
+// §0.5 of the plan) -- razorpaySubscriptionId/keyId are the SAME values a fresh checkout() call
+// would return, safe to hand straight to openRazorpayCheckout with no other change.
+export interface PendingOrder {
+  planCode: string;
+  planName: string;
+  billingCycle: string;
+  razorpaySubscriptionId: string;
+  keyId: string;
+}
 export interface MySubscription {
   planCode: string;
   planName: string;
@@ -935,6 +1713,7 @@ export interface MySubscription {
   autoRenew: boolean;
   hasBillingSubscription: boolean;
   pendingChange: PendingPlanChange | null;
+  pendingOrder: PendingOrder | null;
 }
 
 // Mirrors backend BillingDtos.CheckoutResponseDto exactly. `null` from changePlan() means the
@@ -953,6 +1732,9 @@ export const billingApi = {
   cancel: () => api.post<{ message: string }>('/billing/cancel').then((r) => r.data),
   changePlan: (planCode: string, billingCycle: string) =>
     api.post<CheckoutResponse | null>('/billing/change-plan', { planCode, billingCycle }).then((r) => r.data),
+  // Plan 3 review, §0.5 -- clears a stuck PENDING order so a different plan/cycle can be checked
+  // out. Never calls Razorpay itself; see the backend's cancelPendingOrder for why that's correct.
+  cancelPendingOrder: () => api.post<{ message: string }>('/billing/pending-order/cancel').then((r) => r.data),
 };
 ```
 
@@ -1254,9 +2036,9 @@ git commit -m "feat(frontend): make Plus and Premium live, purchasable plans on 
 - Modify: `frontend/src/components/Sidebar.tsx`
 
 **Interfaces:**
-- Consumes: `billingApi.mySubscription()/.history()/.checkout()/.cancel()/.changePlan()` (Task 3),
-  `openRazorpayCheckout` (Task 3), `entitlementsApi.mine()` (Plan 1, unchanged — used only to
-  invalidate/refetch after a checkout completes, not read directly by this page).
+- Consumes: `billingApi.mySubscription()/.history()/.checkout()/.cancel()/.changePlan()/.cancelPendingOrder()`
+  (Task 3), `openRazorpayCheckout` (Task 3), `entitlementsApi.mine()` (Plan 1, unchanged — used only
+  to invalidate/refetch after a checkout completes, not read directly by this page).
 - Produces: the `/app/billing` route's page component. Nothing else in the app imports from this
   file today (confirmed: `BillingHistory` is only ever referenced from `App.tsx`'s own lazy import),
   so renaming it has exactly one other call site to update (`App.tsx`, this task's own Step 6).
@@ -1277,6 +2059,11 @@ git commit -m "feat(frontend): make Plus and Premium live, purchasable plans on 
   the moment the returned `planCode` matches what was just purchased. This is the one place this
   page polls; every other action (cancel, schedule a downgrade) takes effect in the SAME response
   the backend already returns, so a plain `invalidateQueries` is enough there.
+- **A pending-order banner (Plan 3 review, §0.5 of this plan)** shown above the current-plan card
+  whenever `mySubscription().pendingOrder` is non-null: "You started upgrading to X but didn't
+  finish payment," with **Resume checkout** (opens Razorpay directly with the pending order's
+  already-issued `razorpaySubscriptionId`/`keyId` — no new `billingApi.checkout()` call, that's the
+  entire point of resuming) and **Cancel** (confirm dialog → `billingApi.cancelPendingOrder()`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1294,7 +2081,10 @@ import { openRazorpayCheckout } from '../lib/razorpayCheckout';
 import type { BillingHistoryEntry, MySubscription } from '../api/endpoints';
 
 vi.mock('../api/endpoints', () => ({
-  billingApi: { history: vi.fn(), mySubscription: vi.fn(), checkout: vi.fn(), cancel: vi.fn(), changePlan: vi.fn() },
+  billingApi: {
+    history: vi.fn(), mySubscription: vi.fn(), checkout: vi.fn(), cancel: vi.fn(),
+    changePlan: vi.fn(), cancelPendingOrder: vi.fn(),
+  },
 }));
 vi.mock('../lib/razorpayCheckout', () => ({
   openRazorpayCheckout: vi.fn(),
@@ -1315,6 +2105,7 @@ function subscription(overrides: Partial<MySubscription> = {}): MySubscription {
   return {
     planCode: 'FREE', planName: 'Free', billingCycle: null, status: 'ACTIVE',
     renewalDate: null, autoRenew: true, hasBillingSubscription: false, pendingChange: null,
+    pendingOrder: null,
     ...overrides,
   };
 }
@@ -1333,6 +2124,7 @@ describe('Billing', () => {
     vi.mocked(billingApi.checkout).mockReset();
     vi.mocked(billingApi.cancel).mockReset();
     vi.mocked(billingApi.changePlan).mockReset();
+    vi.mocked(billingApi.cancelPendingOrder).mockReset();
     vi.mocked(openRazorpayCheckout).mockReset();
   });
 
@@ -1368,6 +2160,48 @@ describe('Billing', () => {
     renderPage();
 
     expect(await screen.findByText(/downgrading to plus/i)).toBeInTheDocument();
+  });
+
+  it('shows a resume/cancel banner for an abandoned checkout', async () => {
+    vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription({
+      pendingOrder: { planCode: 'PREMIUM', planName: 'Premium', billingCycle: 'YEARLY', razorpaySubscriptionId: 'sub_stuck', keyId: 'rzp_test' },
+    }));
+    renderPage();
+
+    expect(await screen.findByText(/premium/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /resume checkout/i })).toBeInTheDocument();
+  });
+
+  it('resuming a pending order opens Razorpay directly without calling checkout again', async () => {
+    vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription({
+      pendingOrder: { planCode: 'PREMIUM', planName: 'Premium', billingCycle: 'YEARLY', razorpaySubscriptionId: 'sub_stuck', keyId: 'rzp_test' },
+    }));
+    vi.mocked(openRazorpayCheckout).mockResolvedValue({ paymentId: 'pay_1' });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: /resume checkout/i });
+
+    await user.click(screen.getByRole('button', { name: /resume checkout/i }));
+
+    await waitFor(() => expect(openRazorpayCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'rzp_test', subscription_id: 'sub_stuck' })
+    ));
+    expect(billingApi.checkout).not.toHaveBeenCalled();
+  });
+
+  it('cancelling a pending order calls cancelPendingOrder after confirmation', async () => {
+    vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription({
+      pendingOrder: { planCode: 'PREMIUM', planName: 'Premium', billingCycle: 'YEARLY', razorpaySubscriptionId: 'sub_stuck', keyId: 'rzp_test' },
+    }));
+    vi.mocked(billingApi.cancelPendingOrder).mockResolvedValue({ message: 'Cancelled' });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole('button', { name: /resume checkout/i });
+
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+    await user.click(screen.getByRole('button', { name: /confirm/i }));
+
+    await waitFor(() => expect(billingApi.cancelPendingOrder).toHaveBeenCalled());
   });
 
   it('checking out a paid plan from Free opens the Razorpay widget', async () => {
@@ -1485,6 +2319,7 @@ export default function Billing() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [confirmingCancelPendingOrder, setConfirmingCancelPendingOrder] = useState(false);
   const [targetPlan, setTargetPlan] = useState('PLUS');
   const [targetCycle, setTargetCycle] = useState('MONTHLY');
   const [activatingPlanCode, setActivatingPlanCode] = useState<string | null>(null);
@@ -1515,6 +2350,33 @@ export default function Billing() {
       setError(e.response?.data?.message ?? 'Could not cancel this subscription. Try again.');
     },
   });
+
+  const cancelPendingOrderMutation = useMutation({
+    mutationFn: () => billingApi.cancelPendingOrder(),
+    onSuccess: () => {
+      setConfirmingCancelPendingOrder(false);
+      void queryClient.invalidateQueries({ queryKey: ['my-subscription'] });
+    },
+    onError: (e: any) => {
+      setConfirmingCancelPendingOrder(false);
+      setError(e.response?.data?.message ?? 'Could not cancel this pending checkout. Try again.');
+    },
+  });
+
+  // Plan 3 review, §0.5. Deliberately does NOT call billingApi.checkout() again -- the whole
+  // point of resuming is reusing the SAME Razorpay subscription the abandoned attempt already
+  // created, not creating a second one.
+  async function resumePendingOrder() {
+    if (!subscription?.pendingOrder) return;
+    setError(null);
+    const result = await openRazorpayCheckout({
+      key: subscription.pendingOrder.keyId,
+      subscription_id: subscription.pendingOrder.razorpaySubscriptionId,
+      name: 'Fynora',
+      description: `${subscription.pendingOrder.planCode} — ${subscription.pendingOrder.billingCycle}`,
+    });
+    if (result) setActivatingPlanCode(subscription.pendingOrder.planCode);
+  }
 
   async function subscribeToPlan() {
     setError(null);
@@ -1567,6 +2429,25 @@ export default function Billing() {
         <div className="text-sm text-ink bg-bg border border-border rounded-lg px-4 py-2.5">
           Activating your {activatingPlanCode} plan… this can take a few seconds.
         </div>
+      )}
+
+      {subscription?.pendingOrder && (
+        <FinoraCard padding="lg">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-sm font-semibold text-ink">
+                You started upgrading to {subscription.pendingOrder.planName} but didn't finish payment.
+              </p>
+              <p className="text-xs text-muted mt-0.5">{subscription.pendingOrder.billingCycle} billing</p>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={resumePendingOrder}>Resume checkout</Button>
+              <Button variant="secondary" size="sm" onClick={() => setConfirmingCancelPendingOrder(true)}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </FinoraCard>
       )}
 
       {subscription && (
@@ -1636,6 +2517,18 @@ export default function Billing() {
           busy={cancelMutation.isPending}
           onConfirm={() => cancelMutation.mutate()}
           onCancel={() => setConfirmingCancel(false)}
+        />
+      )}
+
+      {confirmingCancelPendingOrder && (
+        <ConfirmDialog
+          title="Cancel this pending checkout?"
+          message="You'll be able to start a fresh checkout for any plan afterward."
+          confirmLabel="Confirm"
+          danger
+          busy={cancelPendingOrderMutation.isPending}
+          onConfirm={() => cancelPendingOrderMutation.mutate()}
+          onCancel={() => setConfirmingCancelPendingOrder(false)}
         />
       )}
 
@@ -2084,14 +2977,31 @@ cd ../admin-portal && npx vitest run && npx tsc --noEmit
 
 - **Task 1 exists because of a real, evidence-grounded finding**, not a hypothetical: read
   directly from the merged `BillingCheckoutService.java`/`BillingController.java`, not inferred.
+- **Task 2's pending-order recovery also exists because of a real, evidence-grounded finding**
+  (§0.5): an external review of this plan's first draft raised abandoned-checkout recovery as a UX
+  nice-to-have; checking it against the actual code turned up that it's a correctness fix to
+  already-merged Plan 2 code, not new scope — the duplicate-order guard added earlier this session
+  (PR #1016) has no way to ever release a stale `PENDING` order, so it silently became a permanent
+  lockout the moment it merged. Confirmed by grepping every writer of `SubscriptionOrder.status` in
+  the codebase, not assumed.
 - **No new backend domain concepts.** Tasks 1-2 extend existing DTOs/services; no new entity, no
-  new table, no new Flyway migration.
+  new table, no new Flyway migration. `PendingOrderDto` and `cancelPendingOrder` reuse the
+  `subscription_orders` table's existing `STATUS_ABANDONED` constant, which existed but had never
+  been written by anything until now.
 - **Mobile is explicitly out of scope for this plan** (design spec §8's "Mobile" bullet is a
   separate future plan, matching the established one-plan-per-platform-slice pattern from Plans
   1-2's own "Web"/backend split).
 - **Coupons/proration/refunds/free trial** remain out of scope, unchanged from the design spec's
   own §9 — this plan adds no UI surface for any of them.
+- **A consolidated "admin Subscription Health" view was considered and deliberately deferred**
+  (also raised by the same external review) — real new scope (aggregate-count queries, a new admin
+  page) that's more useful as its own plan once real subscribers exist to measure, not a Plan 3
+  blocker.
+- **One reviewed claim was checked and found already correct, not fixed**: the review suggested
+  distinguishing a retryable payment failure from a terminal one. `RazorpayWebhookDispatcher`
+  already does exactly this — `handlePending` writes `Payment.STATUS_PENDING`, only `handleHalted`
+  (retries exhausted) ever writes `STATUS_FAILED`. No change made.
 - **The "activating…" poll (Task 5) is the only new client-side polling in this plan** — every
-  other mutation (cancel, schedule-a-downgrade, admin cancel-paid-subscription) takes effect
-  synchronously in the same HTTP response, so a plain query invalidation is enough there; adding
-  a poll to those too would be unearned complexity.
+  other mutation (cancel, schedule-a-downgrade, admin cancel-paid-subscription, cancel-a-pending-
+  order) takes effect synchronously in the same HTTP response, so a plain query invalidation is
+  enough there; adding a poll to those too would be unearned complexity.
