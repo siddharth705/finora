@@ -199,6 +199,35 @@ describe('Billing', () => {
     );
   });
 
+  it('shows plain user-facing copy, not the raw API instruction, when checkout hits an in-progress-order 409', async () => {
+    // BillingCheckoutService.resumableOrderOrGuard's own message is written for an API caller
+    // ("Cancel it (POST /api/v1/billing/pending-order/cancel)...") -- shown verbatim to a real
+    // user with no working pendingOrder card on screen (e.g. a stale/failed initial
+    // mySubscription fetch), it read as an unactionable raw API error. This must never render as-is.
+    vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription());
+    vi.mocked(billingApi.checkout).mockRejectedValue({
+      response: {
+        status: 409,
+        data: {
+          message: 'You have a checkout already in progress for a different plan. ' +
+            'Cancel it (POST /api/v1/billing/pending-order/cancel) before starting a new one.',
+        },
+      },
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Free');
+    await user.selectOptions(screen.getByLabelText(/choose a plan/i), 'PLUS');
+
+    await user.click(screen.getByRole('button', { name: /subscribe/i }));
+
+    expect(await screen.findByText(/already have a checkout in progress/i)).toBeInTheDocument();
+    expect(screen.queryByText(/POST \/api\/v1\/billing\/pending-order\/cancel/i)).not.toBeInTheDocument();
+    // Refetches my-subscription so the actionable Resume/Cancel card gets a fresh chance to
+    // render, in case the first load was the one that missed it.
+    await waitFor(() => expect(billingApi.mySubscription).toHaveBeenCalledTimes(2));
+  });
+
   it('double-clicking Subscribe only checks out once', async () => {
     vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription());
     let resolveCheckout: (v: { razorpaySubscriptionId: string; keyId: string }) => void;
