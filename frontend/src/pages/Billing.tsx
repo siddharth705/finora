@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Receipt, CreditCard } from 'lucide-react';
-import { billingApi } from '../api/endpoints';
+import { billingApi, userApi } from '../api/endpoints';
 import { openRazorpayCheckout } from '../lib/razorpayCheckout';
 import { formatDate } from '../utils/date';
 import { FinoraCard, EmptyState, Button, ConfirmDialog } from '../design-system';
@@ -88,6 +88,23 @@ export default function Billing() {
     queryKey: ['billing-history'],
     queryFn: () => billingApi.history(),
   });
+  // Bug found in review: openRazorpayCheckout was never given a `prefill`, so Razorpay's widget
+  // always asked for contact details fresh even though Fynora already has the user's verified
+  // email and phone. `user-settings` matches the queryKey Dashboard.tsx already uses for the same
+  // GET /users/me call, so a visit to either page warms react-query's cache for the other.
+  const { data: userSettings } = useQuery({
+    queryKey: ['user-settings'],
+    queryFn: () => userApi.get(),
+  });
+  const checkoutPrefill = userSettings
+    ? {
+        email: userSettings.email,
+        name: userSettings.fullName,
+        // Google sign-in accounts can have no phone number at all (AuthService.
+        // createGoogleUserRecord leaves it null by design) -- omit rather than send "null".
+        ...(userSettings.phoneNumber ? { contact: userSettings.phoneNumber } : {}),
+      }
+    : undefined;
 
   useActivationPoll(activatingPlanCode, () => {
     setActivatingPlanCode(null);
@@ -135,6 +152,7 @@ export default function Billing() {
         subscription_id: subscription.pendingOrder.razorpaySubscriptionId,
         name: 'Fynora',
         description: `${subscription.pendingOrder.planCode} — ${subscription.pendingOrder.billingCycle}`,
+        prefill: checkoutPrefill,
       });
       if (result) setActivatingPlanCode(subscription.pendingOrder.planCode);
     } catch (e: any) {
@@ -156,6 +174,7 @@ export default function Billing() {
           subscription_id: checkout.razorpaySubscriptionId,
           name: 'Fynora',
           description: `${targetPlan} — ${targetCycle}`,
+          prefill: checkoutPrefill,
         });
         if (result) setActivatingPlanCode(targetPlan);
         return;
@@ -168,6 +187,7 @@ export default function Billing() {
           subscription_id: checkout.razorpaySubscriptionId,
           name: 'Fynora',
           description: `${targetPlan} — ${targetCycle}`,
+          prefill: checkoutPrefill,
         });
         if (result) setActivatingPlanCode(targetPlan);
       } else {
