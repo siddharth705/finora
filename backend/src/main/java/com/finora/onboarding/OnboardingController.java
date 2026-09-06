@@ -27,4 +27,16 @@ public class OnboardingController {
         return ApiResponse.ok(onboardingService.setFinancialFocus(currentUser.id(), request.focusKeys()),
                 "Financial focus saved");
     }
+
+    @PostMapping("/complete")
+    public ApiResponse<Void> complete() {
+        onboardingService.complete(currentUser.id());
+        return ApiResponse.ok(null, "Onboarding complete");
+    }
+
+    @PostMapping("/reset")
+    public ApiResponse<Void> reset() {
+        onboardingService.reset(currentUser.id());
+        return ApiResponse.ok(null, "Onboarding reset");
+    }
 }

@@ -75,4 +75,27 @@ class OnboardingServiceTest {
 
         assertThat(service.getStatus(userId).onboardingCompleted()).isTrue();
     }
+
+    @Test
+    void completeSetsOnboardingCompletedAtOnlyOnce() {
+        User user = new User();
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        service.complete(userId);
+        var firstCompletedAt = user.getOnboardingCompletedAt();
+        service.complete(userId);
+
+        assertThat(user.getOnboardingCompletedAt()).isEqualTo(firstCompletedAt);
+    }
+
+    @Test
+    void resetClearsOnboardingCompletedAt() {
+        User user = new User();
+        user.setOnboardingCompletedAt(java.time.Instant.now());
+        when(userRepository.findById(userId)).thenReturn(Optional.of(user));
+
+        service.reset(userId);
+
+        assertThat(user.getOnboardingCompletedAt()).isNull();
+    }
 }

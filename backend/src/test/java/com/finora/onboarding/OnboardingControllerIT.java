@@ -81,4 +81,21 @@ class OnboardingControllerIT extends AbstractIntegrationTest {
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
     }
+
+    @Test
+    void completeThenResetRoundTrips() throws Exception {
+        User user = createUser();
+
+        restTemplate.exchange("/api/v1/onboarding/complete", HttpMethod.POST,
+                new HttpEntity<>(Map.of(), bearerFor(user)), String.class);
+        ResponseEntity<String> afterComplete = restTemplate.exchange(
+                "/api/v1/onboarding/status", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+        assertThat(mapper.readTree(afterComplete.getBody()).get("data").get("onboardingCompleted").asBoolean()).isTrue();
+
+        restTemplate.exchange("/api/v1/onboarding/reset", HttpMethod.POST,
+                new HttpEntity<>(Map.of(), bearerFor(user)), String.class);
+        ResponseEntity<String> afterReset = restTemplate.exchange(
+                "/api/v1/onboarding/status", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+        assertThat(mapper.readTree(afterReset.getBody()).get("data").get("onboardingCompleted").asBoolean()).isFalse();
+    }
 }

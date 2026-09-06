@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -46,5 +47,19 @@ public class OnboardingService {
             focusRepository.save(new UserFinancialFocus(userId, key));
         }
         return getStatus(userId);
+    }
+
+    @Transactional
+    public void complete(UUID userId) {
+        User user = requireUser(userId);
+        if (user.getOnboardingCompletedAt() == null) {
+            user.setOnboardingCompletedAt(Instant.now());
+        }
+    }
+
+    @Transactional
+    public void reset(UUID userId) {
+        User user = requireUser(userId);
+        user.setOnboardingCompletedAt(null);
     }
 }
