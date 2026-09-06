@@ -250,12 +250,24 @@ export default function Billing() {
                 </p>
               )}
             </div>
-            {subscription.hasBillingSubscription && subscription.autoRenew && (
+            {subscription.hasBillingSubscription && subscription.autoRenew && subscription.paymentProvider !== 'REVENUECAT' && (
               <Button variant="danger" size="sm" onClick={() => setConfirmingCancel(true)}>
                 Cancel subscription
               </Button>
             )}
           </div>
+
+          {/* Design spec §2's "Option 2" (disabled controls, not hidden) -- a user who knows
+              they're paying should always see what they're paying for, even when they can't
+              change it here. Neither store allows an app-side cancel button for an IAP
+              subscription; the mobile My Subscription screen deep-links to the OS's own
+              subscription management instead. */}
+          {subscription.hasBillingSubscription && subscription.paymentProvider === 'REVENUECAT' && (
+            <div className="text-sm text-ink bg-bg border border-border rounded-lg px-4 py-2.5 mt-4">
+              This subscription is managed through the App Store/Play Store — changes and
+              cancellation happen there, not here.
+            </div>
+          )}
 
           <div className="mt-5 pt-5 border-t border-border flex items-end gap-3 flex-wrap">
             <label className="flex flex-col gap-1 text-xs text-muted">
@@ -284,7 +296,7 @@ export default function Billing() {
             </label>
             <Button
               onClick={subscribeToPlan}
-              disabled={isSubmitting || !!activatingPlanCode ||
+              disabled={isSubmitting || !!activatingPlanCode || subscription.paymentProvider === 'REVENUECAT' ||
                 (targetPlan === subscription.planCode && targetCycle === subscription.billingCycle)}
             >
               <CreditCard size={14} /> Subscribe
