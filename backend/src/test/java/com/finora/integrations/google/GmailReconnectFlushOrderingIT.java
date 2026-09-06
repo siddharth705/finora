@@ -6,6 +6,7 @@ import com.finora.entity.User;
 import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.UserRepository;
 import com.finora.security.JwtService;
+import com.finora.service.SubscriptionService;
 import com.finora.testsupport.TestSessions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,7 @@ class GmailReconnectFlushOrderingIT extends AbstractIntegrationTest {
     @Autowired private JwtService jwtService;
     @Autowired private RefreshTokenRepository refreshTokens;
     @Autowired private GmailConnectionRepository connections;
+    @Autowired private SubscriptionService subscriptionService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     // The real client would call Google over the network; this test only needs the DB half of the
@@ -70,6 +72,9 @@ class GmailReconnectFlushOrderingIT extends AbstractIntegrationTest {
 
     @LocalServerPort private int port;
 
+    /** Premium, not just any subscription -- GMAIL_SYNC (V161) is the flush-ordering bug's
+     *  precondition (a live connect flow), and this test predates and is unrelated to that gate;
+     *  it needs a user who can actually reach beginConnect, not a Free/Plus one refused at 403. */
     private User createUser() {
         User user = new User();
         user.setEmail("gmail-flush-it-" + UUID.randomUUID() + "@example.com");
@@ -78,7 +83,10 @@ class GmailReconnectFlushOrderingIT extends AbstractIntegrationTest {
         user.setRole("USER");
         user.setAccountScope(User.SCOPE_USER);
         user.setPhoneVerified(true);
-        return userRepository.save(user);
+        user = userRepository.save(user);
+        subscriptionService.provisionFreeSubscription(user.getId());
+        subscriptionService.changePlan(user.getId(), "PREMIUM", "test-fixture", user.getId());
+        return user;
     }
 
     private HttpHeaders bearerFor(User user) {

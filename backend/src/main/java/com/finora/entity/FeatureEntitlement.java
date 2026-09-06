@@ -23,6 +23,11 @@ public class FeatureEntitlement {
     public static final String INVESTMENT_INSIGHTS = "INVESTMENT_INSIGHTS";
     public static final String FINO_AI = "FINO_AI";
     public static final String PRIORITY_SUPPORT = "PRIORITY_SUPPORT";
+    // V161. Gmail sync is the one integration with real ongoing per-user cost (a scheduled worker
+    // polling the Gmail API for as long as the connection stays live), unlike the mostly-free-CRUD
+    // rest of the app -- see GmailConnectionService.beginConnect/GmailManualSyncService.syncNow/
+    // GmailDiscoveryWorker.runOnce, the three places this key is actually checked.
+    public static final String GMAIL_SYNC = "GMAIL_SYNC";
 
     @Id
     @GeneratedValue
