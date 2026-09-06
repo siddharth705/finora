@@ -61,4 +61,24 @@ describe('MySubscriptionScreen', () => {
 
     await waitFor(() => expect(mockedRestorePurchases).toHaveBeenCalled());
   });
+
+  it('shows the renewal date for an auto-renewing subscription', async () => {
+    mockedBillingApi.mySubscription.mockResolvedValue({
+      planCode: 'PREMIUM', planName: 'Premium', hasBillingSubscription: true, paymentProvider: 'REVENUECAT',
+      renewalDate: '2026-11-01', autoRenew: true,
+    } as any);
+    renderScreen();
+
+    expect(await screen.findByText('Renews 1 Nov 2026')).toBeTruthy();
+  });
+
+  it("shows the subscription is ending, not renewing, once autoRenew is off", async () => {
+    mockedBillingApi.mySubscription.mockResolvedValue({
+      planCode: 'PREMIUM', planName: 'Premium', hasBillingSubscription: true, paymentProvider: 'REVENUECAT',
+      renewalDate: '2026-11-01', autoRenew: false,
+    } as any);
+    renderScreen();
+
+    expect(await screen.findByText("Ends 1 Nov 2026 — won't renew")).toBeTruthy();
+  });
 });
