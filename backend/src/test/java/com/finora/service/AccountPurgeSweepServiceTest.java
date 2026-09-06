@@ -34,6 +34,7 @@ import com.finora.repository.RefreshTokenRepository;
 import com.finora.repository.RelationshipIdentifierRepository;
 import com.finora.repository.RelationshipRepository;
 import com.finora.repository.StatementImportRepository;
+import com.finora.repository.SubscriptionOrderRepository;
 import com.finora.repository.SubscriptionRepository;
 import com.finora.repository.SupportTicketRepository;
 import com.finora.repository.TransactionRepository;
@@ -76,6 +77,7 @@ class AccountPurgeSweepServiceTest {
     private GmailConnectionRepository gmailConnectionRepository;
     private TransactionRepository transactionRepository;
     private PaymentRepository paymentRepository;
+    private SubscriptionOrderRepository subscriptionOrderRepository;
     private ReferralCodeRepository referralCodeRepository;
     private ReferralRepository referralRepository;
     private WalletLedgerRepository walletLedgerRepository;
@@ -99,6 +101,7 @@ class AccountPurgeSweepServiceTest {
         gmailConnectionRepository = mock(GmailConnectionRepository.class);
         transactionRepository = mock(TransactionRepository.class);
         paymentRepository = mock(PaymentRepository.class);
+        subscriptionOrderRepository = mock(SubscriptionOrderRepository.class);
         referralCodeRepository = mock(ReferralCodeRepository.class);
         referralRepository = mock(ReferralRepository.class);
         walletLedgerRepository = mock(WalletLedgerRepository.class);
@@ -135,7 +138,8 @@ class AccountPurgeSweepServiceTest {
                 mock(MerchantCategoryLearningRepository.class), mock(MerchantAliasRepository.class),
                 mock(MerchantCategoryMapRepository.class), mock(MerchantRepository.class),
                 mock(BudgetRepository.class), mock(GoalRepository.class), mock(SubscriptionRepository.class),
-                paymentRepository, referralCodeRepository, referralRepository, walletLedgerRepository,
+                paymentRepository, subscriptionOrderRepository,
+                referralCodeRepository, referralRepository, walletLedgerRepository,
                 mock(CategoryRuleRepository.class), mock(CategoryRepository.class),
                 relationshipRepository, mock(RelationshipIdentifierRepository.class),
                 mock(NetWorthSnapshotRepository.class), mock(ImportJobRepository.class),
@@ -208,6 +212,11 @@ class AccountPurgeSweepServiceTest {
         inOrder.verify(paymentRepository).hardDeleteByUserId(userId);
         inOrder.verify(statementImportService).delete(userId, statementId);
         inOrder.verify(userRepository).save(argThat(u -> User.STATUS_DELETED.equals(u.getStatus())));
+        // Follow-up to PR #1039's V157 cascade: subscription_orders needs the same explicit call
+        // as payments, since that cascade alone never fires here (see this call site's own comment
+        // in AccountPurgeSweepService) -- regression evidence the call actually exists, same reason
+        // as the supportTicketRepository/feedbackEntryRepository verifications below.
+        verify(subscriptionOrderRepository).hardDeleteByUserId(userId);
         // D-28 PR4-C: every referral-program table gets a call, both directions for referrals
         // (the purged user could be either party).
         verify(referralCodeRepository).deleteByUserId(userId);
