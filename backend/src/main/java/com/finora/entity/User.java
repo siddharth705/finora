@@ -247,6 +247,13 @@ public class User {
     @Column(name = "password_changed_at")
     private Instant passwordChangedAt;
 
+    // Null until the user has completed or skipped the first-login onboarding flow (Welcome ->
+    // Financial Focus -> Tour) -- see V162's migration comment and docs/superpowers/specs/
+    // 2026-09-06-first-login-onboarding-tour-design.md §5. Set by OnboardingService.complete(),
+    // cleared back to null only by OnboardingService.reset() ("Retake Product Tour").
+    @Column(name = "onboarding_completed_at")
+    private Instant onboardingCompletedAt;
+
     // --- getters / setters ---
     public UUID getId() { return id; }
     public String getEmail() { return email; }
@@ -302,4 +309,6 @@ public class User {
     public void setTimezone(String timezone) { this.timezone = timezone; }
     public Instant getPasswordChangedAt() { return passwordChangedAt; }
     public void setPasswordChangedAt(Instant passwordChangedAt) { this.passwordChangedAt = passwordChangedAt; }
+    public Instant getOnboardingCompletedAt() { return onboardingCompletedAt; }
+    public void setOnboardingCompletedAt(Instant onboardingCompletedAt) { this.onboardingCompletedAt = onboardingCompletedAt; }
 }

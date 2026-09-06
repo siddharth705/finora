@@ -1,13 +1,14 @@
+import { useEffect } from 'react';
 import {
   Pressable, RefreshControl, ScrollView, StyleSheet, Text, View,
 } from 'react-native';
-import { useQueries, useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { usePreventScreenCapture } from 'expo-screen-capture';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { SkeletonCard } from '../components/skeletons/Skeletons';
-import { insightsApi, recurringApi } from '../api/endpoints';
+import { insightsApi, onboardingApi, recurringApi } from '../api/endpoints';
 import { fmtCurrency, fmtDate } from '../lib/format';
 import { deriveRefreshing } from '../lib/refreshingIndicator';
 import { radius, spacing, useTheme } from '../theme';
@@ -34,6 +35,24 @@ export function InsightsScreen() {
       { queryKey: ['recurring'], queryFn: () => recurringApi.list() },
     ],
   });
+
+  // Getting-started checklist: "View insights" fires once, on a 1.5s dwell rather than on mount
+  // itself, so a user who opens this tab and immediately switches away doesn't get credited for a
+  // screen they never actually looked at.
+  const checklistQuery = useQuery({ queryKey: ['onboarding', 'checklist'], queryFn: onboardingApi.getChecklist });
+  useEffect(() => {
+    const item = checklistQuery.data?.items.find((i) => i.key === 'VIEW_INSIGHTS');
+    if (!item || item.completed) return;
+    const timer = setTimeout(() => {
+      // Bug fix: same gap and same fix as LedgerScreen.tsx's REVIEW_TRANSACTIONS dwell timer --
+      // without invalidating ['onboarding'], DashboardScreen's ChecklistWidget could keep showing
+      // "View insights" as unchecked after it was actually completed here.
+      onboardingApi.completeChecklistItem('VIEW_INSIGHTS')
+        .then(() => queryClient.invalidateQueries({ queryKey: ['onboarding'] }))
+        .catch(() => {});
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [checklistQuery.data, queryClient]);
 
   const refreshing = deriveRefreshing([insightsQ, recurringQ], insightsQ.isLoading || recurringQ.isLoading);
   const sentences = insightsQ.data?.sentences ?? [];

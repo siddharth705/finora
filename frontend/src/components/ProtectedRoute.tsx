@@ -1,5 +1,9 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { useOnboardingUI } from '../onboarding/OnboardingUIContext';
+import { OnboardingFlow } from '../onboarding/OnboardingFlow';
+import { TourOverlay } from '../onboarding/TourOverlay';
+import { TOUR_STEPS } from '../onboarding/tourSteps';
 import type { ReactNode } from 'react';
 
 interface ProtectedRouteProps {
@@ -12,7 +16,8 @@ interface ProtectedRouteProps {
 }
 
 export function ProtectedRoute({ children, allowUnverified = false }: ProtectedRouteProps) {
-  const { token, bootstrapping, phoneVerified } = useAuth();
+  const { token, bootstrapping, phoneVerified, onboardingCompleted } = useAuth();
+  const { step, setStep } = useOnboardingUI();
   // SEC-01: the access token is in-memory only now (AuthContext's own comment on its bootstrap
   // effect), so on a fresh page load `token` is briefly null even for an already-logged-in user --
   // it takes one round trip (a silent /auth/refresh against the HttpOnly refresh cookie) to know
@@ -23,5 +28,27 @@ export function ProtectedRoute({ children, allowUnverified = false }: ProtectedR
   if (bootstrapping) return null;
   if (!token) return <Navigate to="/auth" replace />;
   if (!allowUnverified && !phoneVerified) return <Navigate to="/verify-phone" replace />;
+  // Onboarding only ever applies to a verified session -- allowUnverified routes (VerifyPhone
+  // itself) must never be blocked behind it, same reasoning as the phoneVerified check above.
+  //
+  // The 'tour' step is deliberately NOT an OnboardingFlow takeover: the spec calls for the tour
+  // to spotlight the REAL app (the live Sidebar), not a copy of it rendered by OnboardingFlow --
+  // see docs/superpowers/specs/2026-09-06-first-login-onboarding-tour-design.md §7. So for that
+  // one step, this renders the real children plus TourOverlay on top; every other incomplete step
+  // (Welcome/FinancialFocus/TourIntro/Success) takes over the whole screen via OnboardingFlow.
+  if (!allowUnverified && !onboardingCompleted) {
+    if (step === 'tour') {
+      // onFinish/onSkip both just advance to 'success': neither the tour finishing nor being
+      // skipped completes onboarding by itself -- only SuccessScreen's own buttons do that.
+      const goToSuccess = () => setStep('success');
+      return (
+        <>
+          {children}
+          <TourOverlay steps={TOUR_STEPS} onFinish={goToSuccess} onSkip={goToSuccess} />
+        </>
+      );
+    }
+    return <OnboardingFlow />;
+  }
   return <>{children}</>;
 }

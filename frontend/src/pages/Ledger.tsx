@@ -7,7 +7,7 @@ import {
   Wallet, Receipt, Tag, PiggyBank, FilterX, type LucideIcon,
 } from 'lucide-react';
 import {
-  transactionsApi, categoriesApi, accountsApi, budgetsApi,
+  transactionsApi, categoriesApi, accountsApi, budgetsApi, onboardingApi,
   type TransactionFilters, type UpdateTransactionPayload, type TransactionExplanation,
 } from '../api/endpoints';
 import { AskOnceCard } from '../components/AskOnceCard';
@@ -187,6 +187,26 @@ export default function Ledger() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Transaction | null>(null);
+
+  // Getting-started checklist: "Review transactions" fires once, on a 1.5s dwell rather than on
+  // mount itself, so a user who opens this page and immediately navigates away doesn't get
+  // credited for a screen they never actually looked at.
+  const checklistQ = useQuery({ queryKey: ['onboarding', 'checklist'], queryFn: onboardingApi.getChecklist });
+  useEffect(() => {
+    const item = checklistQ.data?.items.find((i) => i.key === 'REVIEW_TRANSACTIONS');
+    if (!item || item.completed) return;
+    const timer = setTimeout(() => {
+      // Bug fix: this used to leave the ['onboarding'] cache untouched after a successful
+      // completion, unlike every other checklist-affecting write (Import/Budgets/Goals) which
+      // invalidates it. Dashboard's ChecklistWidget holds its own `useQuery` on the same key with
+      // the default 30s staleTime, so without this it could keep showing "Review transactions" as
+      // unchecked for up to 30s after it was actually completed here.
+      onboardingApi.completeChecklistItem('REVIEW_TRANSACTIONS')
+        .then(() => queryClient.invalidateQueries({ queryKey: ['onboarding'] }))
+        .catch(() => {});
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [checklistQ.data, queryClient]);
 
   // Ledger doesn't unmount between two TopBar searches fired while already on this page (same
   // route, just a new ?q=), so the useState initializer above only covers the first visit —

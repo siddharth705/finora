@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator, Alert, FlatList, Pressable, ScrollView, StyleSheet, Text, TextInput, View,
 } from 'react-native';
@@ -7,7 +7,7 @@ import { useRoute, type RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePreventScreenCapture } from 'expo-screen-capture';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { categoriesApi, transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
+import { categoriesApi, onboardingApi, transactionsApi, type PagedResponse, type TransactionFilters } from '../api/endpoints';
 import { OptionPickerModal } from '../components/OptionPickerModal';
 import { TransactionSourceModal } from '../components/TransactionSourceModal';
 import { SkeletonTransactionRow } from '../components/skeletons/Skeletons';
@@ -65,6 +65,26 @@ export function LedgerScreen() {
   // null when closed. A plain id rather than the whole Transaction: the panel fetches its own
   // data keyed by id, same lazy pattern as StatementHistoryScreen's StatementDetailModal.
   const [viewingSourceId, setViewingSourceId] = useState<string | null>(null);
+
+  // Getting-started checklist: "Review transactions" fires once, on a 1.5s dwell rather than on
+  // mount itself, so a user who opens this tab and immediately switches away doesn't get credited
+  // for a screen they never actually looked at.
+  const checklistQuery = useQuery({ queryKey: ['onboarding', 'checklist'], queryFn: onboardingApi.getChecklist });
+  useEffect(() => {
+    const item = checklistQuery.data?.items.find((i) => i.key === 'REVIEW_TRANSACTIONS');
+    if (!item || item.completed) return;
+    const timer = setTimeout(() => {
+      // Bug fix: this used to leave the ['onboarding'] cache untouched after a successful
+      // completion, unlike every other checklist-affecting write (Import/Budgets/Goals via
+      // invalidateFinancialData) which invalidates it. DashboardScreen's ChecklistWidget holds its
+      // own `useQuery` on the same key with the default staleTime, so without this it could keep
+      // showing "Review transactions" as unchecked well after it was actually completed here.
+      onboardingApi.completeChecklistItem('REVIEW_TRANSACTIONS')
+        .then(() => queryClient.invalidateQueries({ queryKey: ['onboarding'] }))
+        .catch(() => {});
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [checklistQuery.data, queryClient]);
 
   // Track C/C4. The active drill-through, if any -- a donut legend row, a budget card, an
   // insight/mover row, or a report's category breakdown. Local state, not read from route.params

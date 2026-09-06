@@ -265,7 +265,8 @@ public class AuthService {
                 user.getAccountScope());
         String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(),
-                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()), user.getId());
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()), user.getId(),
+                user.getOnboardingCompletedAt() != null);
     }
 
     /**
@@ -676,7 +677,7 @@ public class AuthService {
                 user.getAccountScope());
         String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(), user.isPhoneVerified(),
-                PhoneMasking.mask(user.getPhoneNumber()), user.getId());
+                PhoneMasking.mask(user.getPhoneNumber()), user.getId(), user.getOnboardingCompletedAt() != null);
     }
 
     /**
@@ -872,7 +873,8 @@ public class AuthService {
                 user.getAccountScope());
         String refreshToken = issued.rawToken();
         return new AuthResponse(accessToken, refreshToken, user.getEmail(), user.getFullName(),
-                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()), user.getId());
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()), user.getId(),
+                user.getOnboardingCompletedAt() != null);
     }
 
     /** Provider-specific labels/audit-action names/signInMethod {@link #loginWithOAuthIdentity}
@@ -1127,7 +1129,8 @@ public class AuthService {
         String accessToken = jwtService.generateToken(user.getId(), user.getEmail(), issued.sessionId(),
                 user.getAccountScope());
         return new AuthResponse(accessToken, issued.rawToken(), user.getEmail(), user.getFullName(),
-                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()), user.getId());
+                user.isPhoneVerified(), PhoneMasking.mask(user.getPhoneNumber()), user.getId(),
+                user.getOnboardingCompletedAt() != null);
     }
 
     /**

@@ -42,6 +42,12 @@ export const FINANCIAL_QUERY_KEYS = [
   // is on a DIFFERENT step than the confirm that empties it, which is exactly the case this
   // module's comment warns about.
   'import-sessions',
+  // Getting-started checklist (D-onboarding). 3 of its 6 items are derived directly from
+  // ImportJob/Budget/Goal existence on the backend -- importing a first statement, creating a
+  // budget, or creating a goal each flips one of them from incomplete to complete. Without this,
+  // ChecklistWidget on the Dashboard would keep showing pre-write state until its cache happened
+  // to age out on its own, exactly the bug class this module's comment warns about.
+  'onboarding',
 ] as const;
 
 export function invalidateFinancialData(queryClient: QueryClient) {

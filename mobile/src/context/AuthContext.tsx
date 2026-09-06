@@ -26,6 +26,10 @@ interface AuthState {
   email: string | null;
   fullName: string | null;
   phoneVerified: boolean;
+  // Unlike phoneVerified, a missing/absent value here defaults to FALSE -- see this file's own
+  // useState initializer for why the two flags deliberately default in opposite directions
+  // (mirrors frontend/src/context/AuthContext.tsx's own onboardingCompleted comment).
+  onboardingCompleted: boolean;
   // Accepts either an email address or a registered mobile number -- see LoginScreen.
   login: (identifier: string, password: string) => Promise<boolean>;
   // Completes the "Welcome back — reactivate your account?" prompt LoginScreen shows after a
@@ -47,6 +51,7 @@ interface AuthState {
   // AppleSignInButton for where it's actually captured.
   loginWithApple: (idToken: string, fullName?: string) => Promise<boolean>;
   setPhoneVerified: (verified: boolean) => void;
+  setOnboardingCompleted: (completed: boolean) => void;
   logout: () => void;
 }
 
@@ -56,6 +61,7 @@ const EMAIL_KEY = 'finora_email';
 const NAME_KEY = 'finora_name';
 const PHONE_VERIFIED_KEY = 'finora_phone_verified';
 const USER_ID_KEY = 'finora_user_id';
+const ONBOARDING_COMPLETED_KEY = 'finora_onboarding_completed';
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -67,6 +73,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState<string | null>(null);
   const [fullName, setFullName] = useState<string | null>(null);
   const [phoneVerified, setPhoneVerifiedState] = useState(false);
+  // Deliberately defaults to false, opposite of phoneVerified above -- a missing value here almost
+  // always means a genuinely new user who has never onboarded, and there is no backend-enforced
+  // fallback gate (the way PhoneVerificationFilter is for phone verification) to self-heal a wrong
+  // "true" guess. See frontend/src/context/AuthContext.tsx's own onboardingCompleted comment.
+  const [onboardingCompleted, setOnboardingCompletedState] = useState(false);
 
   // Restore a persisted session on cold start. Reads run in parallel -- they're independent keys,
   // and on Android each SecureStore read is a separate bridge round-trip.
@@ -85,18 +96,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [storedToken, storedEmail, storedName, storedVerified, storedUserId] = await Promise.all([
+      const [storedToken, storedEmail, storedName, storedVerified, storedUserId, storedOnboarded] = await Promise.all([
         safeStorage.getItem(TOKEN_KEY),
         safeStorage.getItem(EMAIL_KEY),
         safeStorage.getItem(NAME_KEY),
         safeStorage.getItem(PHONE_VERIFIED_KEY),
         safeStorage.getItem(USER_ID_KEY),
+        safeStorage.getItem(ONBOARDING_COMPLETED_KEY),
       ]);
       if (cancelled) return;
       setToken(storedToken);
       setEmail(storedEmail);
       setFullName(storedName);
       setPhoneVerifiedState(storedVerified === 'true');
+      setOnboardingCompletedState(storedOnboarded === 'true');
       setBootstrapping(false);
       // Subscription billing V4 (design spec §2/§6.1 step 1): RevenueCat must be configured with
       // the real, authenticated user id before the Paywall/My Subscription screens can be reached
@@ -145,6 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setEmail(null);
     setFullName(null);
     setPhoneVerifiedState(false);
+    setOnboardingCompletedState(false);
     // Must run BEFORE queryClient.clear() below -- see pauseQueryPersistence's own comment. It
     // stops the persister reacting to clear()'s own cache-removal events, which would otherwise
     // race clearPersistedQueryCache's disk delete and could resurrect the departing session's data.
@@ -230,6 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fullName: string;
     phoneVerified: boolean;
     id: string;
+    onboardingCompleted: boolean;
   }) {
     await Promise.all([
       safeStorage.setItem(TOKEN_KEY, data.token),
@@ -238,11 +253,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       safeStorage.setItem(NAME_KEY, data.fullName),
       safeStorage.setItem(PHONE_VERIFIED_KEY, String(data.phoneVerified)),
       safeStorage.setItem(USER_ID_KEY, data.id),
+      safeStorage.setItem(ONBOARDING_COMPLETED_KEY, String(data.onboardingCompleted)),
     ]);
     setToken(data.token);
     setEmail(data.email);
     setFullName(data.fullName);
     setPhoneVerifiedState(data.phoneVerified);
+    setOnboardingCompletedState(data.onboardingCompleted);
     // Subscription billing V4 (design spec §2/§6.1 step 1) -- see the bootstrap effect's own
     // comment above for why this same call also has to happen there, not only here.
     configureRevenueCat(data.id);
@@ -321,6 +338,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  function setOnboardingCompleted(completed: boolean) {
+    void safeStorage.setItem(ONBOARDING_COMPLETED_KEY, String(completed));
+    setOnboardingCompletedState(completed);
+  }
+
   function logout() {
     // Clear local state first so the UI responds immediately -- the user expects to be signed out
     // whether or not the network call lands.
@@ -350,6 +372,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         safeStorage.removeItem(NAME_KEY),
         safeStorage.removeItem(PHONE_VERIFIED_KEY),
         safeStorage.removeItem(USER_ID_KEY),
+        safeStorage.removeItem(ONBOARDING_COMPLETED_KEY),
       ]);
     })();
   }
@@ -357,8 +380,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider
       value={{
-        bootstrapping, token, email, fullName, phoneVerified,
-        login, reactivate, register, loginWithGoogle, loginWithApple, setPhoneVerified, logout,
+        bootstrapping, token, email, fullName, phoneVerified, onboardingCompleted,
+        login, reactivate, register, loginWithGoogle, loginWithApple, setPhoneVerified, setOnboardingCompleted, logout,
       }}
     >
       {children}

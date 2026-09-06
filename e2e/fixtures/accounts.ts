@@ -15,7 +15,10 @@ import { API_BASE } from './config';
  *     in the same transaction that promotes the new one — so there is no sequence of API calls that
  *     leaves a usable admin behind. See E2E_TEST_REPORT.md Issue 01.
  *
- * Everything a test is actually about is then done through the product.
+ * Everything a test is actually about is then done through the product -- including marking a new
+ * `createUser()` account's first-login onboarding complete (see that function's own comment):
+ * that one goes through the real `POST /onboarding/complete`, not SQL, since it needs nothing
+ * this fixture doesn't already have.
  *
  * **A user per test, not a shared fixture.** Tests run in parallel and this milestone's state is
  * per-user by design (merchants, learning, duplicates all scope to a user). Sharing one account
@@ -117,7 +120,20 @@ export async function createUser(prefix = 'user'): Promise<TestUser> {
   );
   if (!row) throw new Error(`Seeded user ${email} was not found after registration`);
 
-  return { id: row.id, email, password: PASSWORD, fullName, phone, token: await login(email) };
+  const token = await login(email);
+
+  // A freshly registered account now starts onboardingCompletedAt = null by design -- the
+  // first-login onboarding tour (V162) -- so ProtectedRoute would otherwise intercept every
+  // page this suite navigates to and show Welcome instead of it, unrelated to whatever that
+  // test is actually about. Unlike phone_verified above, this doesn't need a SQL stand-in: the
+  // real endpoint needs only the bearer token this fixture already has, so it goes through the
+  // product like everything else here.
+  const completeOnboarding = await post('/onboarding/complete', {}, token);
+  if (!completeOnboarding.payload?.success) {
+    throw new Error(`Seed onboarding-complete failed for ${email}: ${completeOnboarding.payload?.errorCode} ${completeOnboarding.payload?.message}`);
+  }
+
+  return { id: row.id, email, password: PASSWORD, fullName, phone, token };
 }
 
 /**

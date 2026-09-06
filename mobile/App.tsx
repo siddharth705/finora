@@ -8,6 +8,7 @@ import { AppLockGate } from './src/components/AppLockGate';
 import { OfflineBoundary } from './src/components/OfflineBanner';
 import { RootWarningBoundary } from './src/components/RootWarningBanner';
 import { AuthProvider } from './src/context/AuthContext';
+import { OnboardingStepProvider } from './src/onboarding/OnboardingStepContext';
 import { sweepFileCache } from './src/lib/fileCacheSweep';
 import { initMonitoring, withMonitoring } from './src/lib/monitoring';
 import { RootNavigator } from './src/navigation/RootNavigator';
@@ -88,10 +89,14 @@ function App() {
             <AuthProvider>
               {/* SEC-09: inside AuthProvider (needs useAuth()'s token/logout), outside/around
                   RootNavigator so a locked session replaces the entire app UI, not just one screen
-                  inside it -- see AppLockGate's own doc comment for when it actually engages. */}
+                  inside it -- see AppLockGate's own doc comment for when it actually engages.
+                  OnboardingStepProvider sits inside AppLockGate/OfflineBoundary too -- RootNavigator
+                  is the only consumer, alongside OnboardingNavigator/TourOverlay it renders. */}
               <AppLockGate>
                 <OfflineBoundary>
-                  <RootNavigator />
+                  <OnboardingStepProvider>
+                    <RootNavigator />
+                  </OnboardingStepProvider>
                 </OfflineBoundary>
               </AppLockGate>
               <StatusBar style="auto" />

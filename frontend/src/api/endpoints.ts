@@ -49,6 +49,7 @@ export interface AuthResponseDto {
   fullName: string;
   phoneVerified: boolean;
   maskedPhone: string | null;
+  onboardingCompleted: boolean;
 }
 
 export const authApi = {
@@ -664,6 +665,33 @@ export const goalsApi = {
   remove: (id: string) => api.delete(`/goals/${id}`),
 };
 
+export interface OnboardingStatus {
+  onboardingCompleted: boolean;
+  financialFocus: string[];
+}
+
+export interface ChecklistItem {
+  key: string;
+  completed: boolean;
+}
+
+export interface ChecklistStatus {
+  items: ChecklistItem[];
+  completedCount: number;
+  totalCount: number;
+}
+
+export const onboardingApi = {
+  status: () => api.get<OnboardingStatus>('/onboarding/status').then((r) => r.data),
+  setFinancialFocus: (focusKeys: string[]) =>
+    api.post<OnboardingStatus>('/onboarding/financial-focus', { focusKeys }).then((r) => r.data),
+  complete: () => api.post<void>('/onboarding/complete', {}),
+  reset: () => api.post<void>('/onboarding/reset', {}),
+  getChecklist: () => api.get<ChecklistStatus>('/onboarding/checklist').then((r) => r.data),
+  completeChecklistItem: (itemKey: string) =>
+    api.post<void>(`/onboarding/checklist/${itemKey}/complete`, {}),
+};
+
 export interface CategoryOption {
   id: string;
   name: string;
@@ -779,6 +807,10 @@ export interface UserSettings {
   // DeactivateAccountModal, ExportDataModal) reads this to decide whether to render a password
   // field or a GoogleSignInButton instead.
   signInMethod: 'PASSWORD' | 'GOOGLE';
+  // Same channel phoneVerified already rides -- see docs/superpowers/specs/
+  // 2026-09-06-first-login-onboarding-tour-design.md §7. AuthContext's silent-refresh bootstrap
+  // reads onboarding state from here, since /auth/refresh itself returns no profile fields.
+  onboardingCompleted: boolean;
 }
 export const userApi = {
   get: () => api.get<UserSettings>('/users/me').then((r) => r.data),

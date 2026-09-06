@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import Settings from './Settings';
 import { ThemeProvider } from '../context/ThemeContext';
 import { AuthProvider } from '../context/AuthContext';
-import { userApi, workspaceApi, analyticsApi, deviceApi, accountLifecycleApi, authApi, gmailApi } from '../api/endpoints';
+import { userApi, workspaceApi, analyticsApi, deviceApi, accountLifecycleApi, authApi, gmailApi, onboardingApi } from '../api/endpoints';
 import type { UserSettings } from '../api/endpoints';
 import { getAccessToken, setAccessToken } from '../api/client';
 
@@ -31,6 +31,7 @@ vi.mock('../api/endpoints', () => ({
     status: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), syncNow: vi.fn(),
     reviewQueue: vi.fn(), approve: vi.fn(), reject: vi.fn(),
   },
+  onboardingApi: { reset: vi.fn().mockResolvedValue(undefined) },
 }));
 
 function gmailStatus(overrides: Partial<Record<string, unknown>> = {}) {
@@ -54,6 +55,7 @@ function userSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     createdAt: '2026-05-01T00:00:00Z',
     passwordChangedAt: null,
     signInMethod: 'PASSWORD',
+    onboardingCompleted: true,
     ...overrides,
   };
 }
@@ -120,6 +122,16 @@ describe('Settings', () => {
     expect(await screen.findByText('3')).toBeInTheDocument(); // statements imported
     expect(screen.getByText('128')).toBeInTheDocument(); // transactions imported
     expect(screen.getByText('2')).toBeInTheDocument(); // rows skipped
+  });
+
+  it('Retake Tour calls onboardingApi.reset()', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+
+    const retakeButton = await screen.findByRole('button', { name: 'Retake Tour' });
+    await user.click(retakeButton);
+
+    await waitFor(() => expect(onboardingApi.reset).toHaveBeenCalled());
   });
 
   it('masks the phone number in the Security section, unlike Profile which shows it in full', async () => {

@@ -33,7 +33,8 @@ const FAKE_CONFIRMATION = { confirm: vi.fn() } as any;
 function renderVerifyPhone(routerState?: { fromLogin?: boolean }) {
   vi.mocked(useAuth).mockReturnValue({
     token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
-    login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified: vi.fn(), logout: vi.fn(),
+    onboardingCompleted: true,
+    login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified: vi.fn(), setOnboardingCompleted: vi.fn(), logout: vi.fn(),
   });
   return render(
     <MemoryRouter initialEntries={[{ pathname: '/verify-phone', state: routerState }]}>
@@ -50,6 +51,7 @@ describe('VerifyPhone', () => {
       email: 'jane@example.com', fullName: 'Jane', lowBalanceThreshold: 2000, theme: 'system',
       timezone: 'Asia/Kolkata', phoneNumber: '+919876543705', phoneVerified: false,
       createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'PASSWORD',
+      onboardingCompleted: true,
     });
     vi.mocked(sendPhoneVerificationCode).mockReset().mockResolvedValue(FAKE_CONFIRMATION);
     vi.mocked(confirmPhoneVerificationCode).mockReset().mockResolvedValue('fake-firebase-id-token');
@@ -88,7 +90,8 @@ describe('VerifyPhone', () => {
     const setPhoneVerified = vi.fn();
     vi.mocked(useAuth).mockReturnValue({
       token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
-      login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified, logout: vi.fn(),
+      onboardingCompleted: true,
+      login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified, setOnboardingCompleted: vi.fn(), logout: vi.fn(),
     });
     render(
       <MemoryRouter initialEntries={['/verify-phone']}>
@@ -152,7 +155,8 @@ describe('VerifyPhone', () => {
     const logout = vi.fn();
     vi.mocked(useAuth).mockReturnValue({
       token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
-      login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified: vi.fn(), logout,
+      onboardingCompleted: true,
+      login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified: vi.fn(), setOnboardingCompleted: vi.fn(), logout,
     });
     const user = userEvent.setup();
     render(
@@ -203,6 +207,7 @@ describe('VerifyPhone', () => {
         email: 'jane@example.com', fullName: 'Jane', lowBalanceThreshold: 2000, theme: 'system',
         timezone: 'Asia/Kolkata', phoneNumber: null, phoneVerified: false,
         createdAt: '2026-01-01T00:00:00Z', passwordChangedAt: null, signInMethod: 'GOOGLE',
+        onboardingCompleted: true,
       });
     });
 
@@ -225,7 +230,8 @@ describe('VerifyPhone', () => {
       const logout = vi.fn();
       vi.mocked(useAuth).mockReturnValue({
         token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
-        login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified: vi.fn(), logout,
+        onboardingCompleted: true,
+        login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified: vi.fn(), setOnboardingCompleted: vi.fn(), logout,
       });
       const user = userEvent.setup();
       render(
@@ -369,7 +375,8 @@ describe('VerifyPhone', () => {
       const setPhoneVerified = vi.fn();
       vi.mocked(useAuth).mockReturnValue({
         token: 'tok', bootstrapping: false, email: 'jane@example.com', fullName: 'Jane', phoneVerified: false,
-        login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified, logout: vi.fn(),
+        onboardingCompleted: true,
+        login: vi.fn(), reactivate: vi.fn(), register: vi.fn(), loginWithGoogle: vi.fn(), loginWithApple: vi.fn(), setPhoneVerified, setOnboardingCompleted: vi.fn(), logout: vi.fn(),
       });
       render(
         <MemoryRouter initialEntries={['/verify-phone']}>

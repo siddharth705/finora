@@ -5,6 +5,7 @@ import { Card } from '../components/Card';
 import { useAuth } from '../context/AuthContext';
 import { initials } from '../lib/format';
 import { spacing, useTheme } from '../theme';
+import { useRegisterTourTarget } from '../onboarding/TourTargetRegistry';
 import type { MoreStackParamList } from '../navigation/types';
 
 type Props = NativeStackScreenProps<MoreStackParamList, 'MoreHome'>;
@@ -36,6 +37,19 @@ export function MoreScreen({ navigation }: Props) {
   const c = useTheme();
   const insets = useSafeAreaInsets();
   const { email, fullName, logout } = useAuth();
+  // Tour target refs (tourSteps.ts) for the 4 rows the mobile tour spotlights on this screen --
+  // hooks can't be called inside the MENU_ITEMS.map() below, so these are registered once here
+  // and looked up per row by route name.
+  const registerAccounts = useRegisterTourTarget('accounts');
+  const registerBudgets = useRegisterTourTarget('budgets');
+  const registerGoals = useRegisterTourTarget('goals');
+  const registerInsights = useRegisterTourTarget('insights');
+  const registerByRoute: Partial<Record<string, (node: View | null) => void>> = {
+    Accounts: registerAccounts,
+    Budgets: registerBudgets,
+    Goals: registerGoals,
+    Insights: registerInsights,
+  };
 
   function confirmSignOut() {
     Alert.alert('Sign out?', 'You’ll need to sign in again to access your account.', [
@@ -85,6 +99,7 @@ export function MoreScreen({ navigation }: Props) {
         {MENU_ITEMS.map(({ label, route }) => (
           <Pressable
             key={route}
+            ref={registerByRoute[route]}
             onPress={() => navigation.navigate(route)}
             style={[styles.menuRow, { borderBottomColor: c.border }]}
             android_ripple={{ color: c.border }}

@@ -149,7 +149,11 @@ public class AuthDtos {
             String fullName,
             boolean phoneVerified,
             String maskedPhone,
-            UUID id
+            UUID id,
+            // Rides the same channel phoneVerified already does -- see docs/superpowers/specs/
+            // 2026-09-06-first-login-onboarding-tour-design.md §7. Appended last so every existing
+            // positional constructor call needs exactly one new trailing argument.
+            boolean onboardingCompleted
     ) {}
 
     /** @param scope see {@link LoginRequest#scope()} -- a reset link must be issued for the

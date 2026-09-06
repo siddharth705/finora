@@ -14,7 +14,8 @@ import { ChangeEmailSheet } from './settings/ChangeEmailSheet';
 import { ChangePasswordSheet } from './settings/ChangePasswordSheet';
 import { DeviceSessionsSection } from './settings/DeviceSessionsSection';
 import { FeedbackSheet } from './support/FeedbackSheet';
-import { analyticsApi, userApi, workspaceApi } from '../api/endpoints';
+import { analyticsApi, onboardingApi, userApi, workspaceApi } from '../api/endpoints';
+import { useAuth } from '../context/AuthContext';
 import { toUserMessage } from '../lib/apiError';
 import { fmtDate, fmtRelativeTime } from '../lib/format';
 import { maskPhone } from '../lib/maskPhone';
@@ -69,8 +70,20 @@ export function SettingsScreen() {
   // getParent() hop needed, unlike the cross-tab jumps StatementHistoryScreen makes.
   const navigation = useNavigation<NativeStackNavigationProp<MoreStackParamList>>();
   const { setting: themeSetting, setSetting: setThemeSetting } = useThemeSetting();
+  const { setOnboardingCompleted } = useAuth();
   const queryClient = useQueryClient();
   const singleFlight = useSingleFlight();
+  const [retakingTour, setRetakingTour] = useState(false);
+
+  async function retakeTour() {
+    setRetakingTour(true);
+    try {
+      await onboardingApi.reset();
+      setOnboardingCompleted(false);
+    } finally {
+      setRetakingTour(false);
+    }
+  }
 
   // Each editable field is a DRAFT overlaying the server's value: null means "nothing typed yet,
   // follow the account", anything else is the user's edit. Seeding real state from the server in
@@ -250,6 +263,14 @@ export function SettingsScreen() {
           loading={prefsSaving}
           disabled={!prefsDirty}
         />
+
+        <View style={[styles.retakeTourRow, { borderTopColor: c.border }]}>
+          <View style={styles.retakeTourText}>
+            <Text style={[styles.fieldLabel, { color: c.ink, marginTop: 0 }]}>Retake Product Tour</Text>
+            <Text style={[styles.hint, { color: c.mutedInk }]}>Replay the onboarding experience anytime.</Text>
+          </View>
+          <Button label="Retake Tour" onPress={() => void retakeTour()} loading={retakingTour} variant="link" />
+        </View>
       </SectionCard>
 
       <SectionCard title="Security" subtitle="Your password, verification and active sessions">
@@ -457,6 +478,11 @@ const styles = StyleSheet.create({
   message: { fontSize: 14, textAlign: 'center' },
   content: { padding: spacing.md, paddingBottom: spacing.xl },
   fieldLabel: { fontSize: 12, fontWeight: '500', marginBottom: 6 },
+  retakeTourRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    marginTop: spacing.md, paddingTop: spacing.md, borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  retakeTourText: { flex: 1, marginRight: spacing.sm },
   picker: {
     flexDirection: 'row',
     alignItems: 'center',

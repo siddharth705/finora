@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Ledger from './Ledger';
-import { transactionsApi, categoriesApi, accountsApi, budgetsApi } from '../api/endpoints';
+import { transactionsApi, categoriesApi, accountsApi, budgetsApi, onboardingApi } from '../api/endpoints';
 import type { Transaction } from '../types';
 
 // Ledger has no prior test file -- this covers only what this change adds (the "Why this
@@ -22,6 +22,13 @@ vi.mock('../api/endpoints', () => ({
   // through these two, on top of the transactions/categories calls this file already mocked.
   accountsApi: { list: vi.fn() },
   budgetsApi: { list: vi.fn() },
+  // Getting-started checklist dwell timer (D-onboarding) -- default to "no REVIEW_TRANSACTIONS
+  // item in the response" so it never fires in tests that don't care about it; the dwell-timer's
+  // own test overrides this.
+  onboardingApi: {
+    getChecklist: vi.fn().mockResolvedValue({ items: [], completedCount: 0, totalCount: 6 }),
+    completeChecklistItem: vi.fn().mockResolvedValue(undefined),
+  },
 }));
 
 // Safe defaults for every test in this file -- most tests care about transactions/categories
@@ -567,6 +574,50 @@ describe('Ledger — Phase 2 table skeleton and IconButton migration', () => {
 
     expect(await screen.findByRole('button', { name: 'Previous page' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next page' })).toBeInTheDocument();
+  });
+});
+
+describe('Ledger — getting-started checklist dwell timer', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn()], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(onboardingApi.getChecklist).mockReset();
+    vi.mocked(onboardingApi.completeChecklistItem).mockReset();
+  });
+
+  it('marks REVIEW_TRANSACTIONS complete after a 1.5s dwell', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(onboardingApi.getChecklist).mockResolvedValue({
+      items: [{ key: 'REVIEW_TRANSACTIONS', completed: false }], completedCount: 0, totalCount: 6,
+    });
+    const completeSpy = vi.mocked(onboardingApi.completeChecklistItem).mockResolvedValue(undefined as any);
+
+    renderLedger();
+
+    await vi.waitFor(() => expect(onboardingApi.getChecklist).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(completeSpy).toHaveBeenCalledWith('REVIEW_TRANSACTIONS');
+    vi.useRealTimers();
+  });
+
+  it('does not fire if the item is already complete', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.mocked(onboardingApi.getChecklist).mockResolvedValue({
+      items: [{ key: 'REVIEW_TRANSACTIONS', completed: true }], completedCount: 1, totalCount: 6,
+    });
+    const completeSpy = vi.mocked(onboardingApi.completeChecklistItem).mockResolvedValue(undefined as any);
+
+    renderLedger();
+
+    await vi.waitFor(() => expect(onboardingApi.getChecklist).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(completeSpy).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 });
 

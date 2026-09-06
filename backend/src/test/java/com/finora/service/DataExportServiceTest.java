@@ -179,7 +179,7 @@ class DataExportServiceTest {
         when(gmailConnectionRepository.findByUserIdOrderByCreatedAtDesc(any())).thenReturn(List.of());
         when(userSettingsService.get(any()))
                 .thenReturn(new UserSettingsDto("jane@example.com", "Jane Doe", null, "light", "Asia/Kolkata",
-                        null, false, Instant.now(), null, User.SIGN_IN_METHOD_PASSWORD));
+                        null, false, Instant.now(), null, User.SIGN_IN_METHOD_PASSWORD, true));
         when(workspaceSettingsService.get(any())).thenReturn(new WorkspaceSettingsDto(90, Instant.now()));
         when(subscriptionRepository.findByUserIdIncludingDeletedOrderByCreatedAtDesc(any())).thenReturn(List.of());
         when(planRepository.findAllById(any())).thenReturn(List.of());

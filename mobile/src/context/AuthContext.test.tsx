@@ -51,17 +51,19 @@ const SESSION = {
   fullName: 'Some One',
   phoneVerified: true,
   maskedPhone: '+•••••••••210',
+  onboardingCompleted: true,
 };
 
 /** Renders context state so assertions read against what a screen would actually see. */
 function Probe() {
-  const { bootstrapping, token, email, phoneVerified } = useAuth();
+  const { bootstrapping, token, email, phoneVerified, onboardingCompleted } = useAuth();
   return (
     <>
       <Text testID="bootstrapping">{String(bootstrapping)}</Text>
       <Text testID="token">{token ?? 'none'}</Text>
       <Text testID="email">{email ?? 'none'}</Text>
       <Text testID="phoneVerified">{String(phoneVerified)}</Text>
+      <Text testID="onboardingCompleted">{String(onboardingCompleted)}</Text>
     </>
   );
 }
@@ -122,6 +124,18 @@ describe('AuthContext bootstrap', () => {
     const view = renderAuth();
     await settle(view);
     expect(view.getByTestId('token')).toHaveTextContent('none');
+    // Opposite default from phoneVerified: a missing value means "not onboarded", not "onboarded".
+    expect(view.getByTestId('onboardingCompleted')).toHaveTextContent('false');
+  });
+
+  it('restores a persisted onboardingCompleted=true', async () => {
+    await SecureStore.setItemAsync('finora_token', 'stored-token');
+    await SecureStore.setItemAsync('finora_onboarding_completed', 'true');
+
+    const view = renderAuth();
+    await settle(view);
+
+    expect(view.getByTestId('onboardingCompleted')).toHaveTextContent('true');
   });
 
   it('configures RevenueCat with the restored user id -- a cold start on an already-signed-in device', async () => {
@@ -168,6 +182,8 @@ describe('AuthContext login', () => {
     expect(await SecureStore.getItemAsync('finora_token')).toBe('access-token');
     expect(await SecureStore.getItemAsync('finora_refresh_token')).toBe('refresh-token');
     expect(await SecureStore.getItemAsync('finora_phone_verified')).toBe('true');
+    expect(view.getByTestId('onboardingCompleted')).toHaveTextContent('true');
+    expect(await SecureStore.getItemAsync('finora_onboarding_completed')).toBe('true');
   });
 
   it('reports an unverified account so the navigator can route to verification', async () => {
@@ -315,9 +331,11 @@ describe('AuthContext logout', () => {
 
     expect(view.getByTestId('token')).toHaveTextContent('none');
     expect(view.getByTestId('phoneVerified')).toHaveTextContent('false');
+    expect(view.getByTestId('onboardingCompleted')).toHaveTextContent('false');
     await waitFor(async () => {
       expect(await SecureStore.getItemAsync('finora_token')).toBeNull();
       expect(await SecureStore.getItemAsync('finora_refresh_token')).toBeNull();
+      expect(await SecureStore.getItemAsync('finora_onboarding_completed')).toBeNull();
     });
     // Best-effort revoke -- and it must read the refresh token before deletion races it.
     expect(mockedAuthApi.logout).toHaveBeenCalledWith('refresh-token');
@@ -359,6 +377,23 @@ describe('AuthContext setPhoneVerified', () => {
     expect(view.getByTestId('phoneVerified')).toHaveTextContent('true');
     await waitFor(async () => {
       expect(await SecureStore.getItemAsync('finora_phone_verified')).toBe('true');
+    });
+  });
+});
+
+describe('AuthContext setOnboardingCompleted', () => {
+  it('flips the flag and persists it', async () => {
+    const view = renderAuth();
+    await settle(view);
+    expect(view.getByTestId('onboardingCompleted')).toHaveTextContent('false');
+
+    await act(async () => {
+      auth.setOnboardingCompleted(true);
+    });
+
+    expect(view.getByTestId('onboardingCompleted')).toHaveTextContent('true');
+    await waitFor(async () => {
+      expect(await SecureStore.getItemAsync('finora_onboarding_completed')).toBe('true');
     });
   });
 });

@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { SlidersHorizontal, Sparkles, ShieldCheck, Info, Smartphone, UserX, X, Mail, RefreshCw } from 'lucide-react';
 import {
-  authApi, userApi, workspaceApi, analyticsApi, deviceApi, gmailApi,
+  authApi, userApi, workspaceApi, analyticsApi, deviceApi, gmailApi, onboardingApi,
   type ImportStatistics, type DeviceSession, type GmailConnectionStatus,
 } from '../api/endpoints';
 import { useTheme } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 import { ChangePasswordModal } from '../components/ChangePasswordModal';
 import { DeactivateAccountModal } from '../components/DeactivateAccountModal';
 import { DeleteAccountModal } from '../components/DeleteAccountModal';
@@ -124,6 +125,18 @@ function gmailPermissionLabels(scopes: string[]): string[] {
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
+  const { setOnboardingCompleted } = useAuth();
+  const [retakingTour, setRetakingTour] = useState(false);
+
+  async function retakeTour() {
+    setRetakingTour(true);
+    try {
+      await onboardingApi.reset();
+      setOnboardingCompleted(false);
+    } finally {
+      setRetakingTour(false);
+    }
+  }
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -489,6 +502,15 @@ export default function Settings() {
                   Save preferences
                 </Button>
               </div>
+            </div>
+            <div className="flex items-center justify-between mt-4 pt-4 border-t border-border">
+              <div>
+                <p className="text-sm font-medium text-ink">Retake Product Tour</p>
+                <p className="text-xs text-muted">Replay the onboarding experience anytime.</p>
+              </div>
+              <Button variant="secondary" className="uppercase" onClick={retakeTour} loading={retakingTour}>
+                Retake Tour
+              </Button>
             </div>
           </>
         )}

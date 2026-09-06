@@ -21,7 +21,12 @@ public record UserSettingsDto(
         // Export Data should ask for a current password or offer a fresh Sign in with Google
         // button instead -- see GoogleReauthVerifier, which is what the backend actually checks
         // against regardless of what this field says.
-        String signInMethod
+        String signInMethod,
+        // Same channel phoneVerified already rides -- see docs/superpowers/specs/
+        // 2026-09-06-first-login-onboarding-tour-design.md §7. This is what a returning user's
+        // silent-refresh bootstrap (AuthContext, web and mobile) reads onboarding state from,
+        // since /auth/refresh itself returns no profile fields.
+        boolean onboardingCompleted
 ) {
     /**
      * <p>Bug fix: this record declared NO constraints at all, and UserController.update() applied

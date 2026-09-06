@@ -10,6 +10,7 @@ import { usePreventScreenCapture } from 'expo-screen-capture';
 import { AnimatedNumber } from '../components/AnimatedNumber';
 import { Card, EmptyState, SectionHeading } from '../components/Card';
 import { SkeletonCard, SkeletonChart, SkeletonTransactionRow } from '../components/skeletons/Skeletons';
+import { ChecklistWidget } from '../onboarding/ChecklistWidget';
 import { DonutChart, type Slice } from '../components/charts/DonutChart';
 import { CashFlowChart } from '../components/charts/CashFlowChart';
 import {
@@ -345,6 +346,8 @@ export function DashboardScreen() {
         Here's what's happening with your finances.
         {!periodIsCurrent && ` Your latest figures are from ${periodLabel}.`}
       </Text>
+
+      <ChecklistWidget />
 
       {/* Track C/C2. InsightsService has always computed this (aggregated across every live
           account, so it needs no per-account plumbing) and said so as one bullet buried in the

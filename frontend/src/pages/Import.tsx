@@ -126,6 +126,10 @@ function invalidateImportRelatedQueries(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: ['budgets'] });
   void queryClient.invalidateQueries({ queryKey: ['report-months'] });
   void queryClient.invalidateQueries({ queryKey: ['report'] });
+  // Getting-started checklist's "Import first statement" item is derived directly from
+  // ImportJob existence -- without this, ChecklistWidget would keep showing it incomplete until
+  // its own cache happened to age out on its own.
+  void queryClient.invalidateQueries({ queryKey: ['onboarding'] });
 }
 
 export default function Import() {
