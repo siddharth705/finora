@@ -28,15 +28,76 @@ import { FinoraCard } from './FinoraCard';
  */
 export function MetricCard({
   label, value, icon: Icon, iconBg, iconColor, valueColor,
-  delta, deltaLabel, invertDelta, gateReasonText, moverLines,
+  delta, deltaLabel, invertDelta, gateReasonText, moverLines, variant = 'default',
 }: {
   label: string; value: string; icon: LucideIcon; iconBg: string; iconColor: string; valueColor?: string;
   delta?: number | null; deltaLabel?: string; invertDelta?: boolean; gateReasonText?: string | null;
-  moverLines?: string[];
+  moverLines?: string[]; variant?: 'default' | 'elevated';
 }) {
   const [showReason, setShowReason] = useState(false);
   const hasDelta = delta !== null && delta !== undefined;
   const hasMovers = !!moverLines && moverLines.length > 0;
+  const positive = hasDelta && (invertDelta ? delta! < 0 : delta! >= 0);
+
+  // Dashboard's KPI row only, per the reviewed redesign: a uniform graphite/cream icon medallion
+  // and a pill-shaped delta instead of per-metric bright icon colors and plain colored text.
+  // Reports/Investments/Budgets never pass this, so their MetricCard calls (the `return` below
+  // this block) are unchanged.
+  if (variant === 'elevated') {
+    return (
+      <FinoraCard className="transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-soft">
+        <div className="flex items-start justify-between mb-4">
+          <p className="text-sm font-semibold text-muted">{label}</p>
+          <div className="w-10 h-10 rounded-xl bg-primary-light flex items-center justify-center flex-shrink-0">
+            <Icon size={18} className="text-primary" />
+          </div>
+        </div>
+        <p className={`font-display text-[26px] font-extrabold mb-1.5 tracking-tight ${valueColor ?? 'text-ink'}`}>{value}</p>
+        {deltaLabel && (
+          hasDelta ? (
+            <div>
+              <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold ${positive ? 'bg-success-bg text-success' : 'bg-danger-bg text-danger'}`}>
+                {delta! >= 0 ? '▲' : '▼'} {Math.abs(delta!).toFixed(1)}%
+              </span>
+              <span className="ml-1.5 text-xs text-muted">{deltaLabel}</span>
+              {hasMovers && (
+                <button
+                  type="button"
+                  onClick={() => setShowReason((v) => !v)}
+                  aria-expanded={showReason}
+                  className="ml-1.5 text-xs font-normal text-primary underline underline-offset-2"
+                >
+                  {showReason ? 'Hide' : 'Why?'}
+                </button>
+              )}
+              {hasMovers && showReason && (
+                <ul className="mt-1.5 space-y-0.5 text-[11px] text-muted list-disc list-inside">
+                  {moverLines!.map((line, i) => <li key={i}>{line}</li>)}
+                </ul>
+              )}
+            </div>
+          ) : (
+            <div>
+              <span className="text-xs text-muted">— {deltaLabel}</span>
+              {gateReasonText && (
+                <button
+                  type="button"
+                  onClick={() => setShowReason((v) => !v)}
+                  aria-expanded={showReason}
+                  className="ml-1.5 text-xs text-primary underline underline-offset-2"
+                >
+                  {showReason ? 'Hide' : 'Why?'}
+                </button>
+              )}
+              {gateReasonText && showReason && (
+                <p className="text-[11px] text-muted mt-1">{gateReasonText}</p>
+              )}
+            </div>
+          )
+        )}
+      </FinoraCard>
+    );
+  }
 
   return (
     <FinoraCard>
