@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, Pressable, Platform, Linking } from 'react-nati
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { billingApi } from '../api/endpoints';
 import { restorePurchases } from '../lib/revenueCat';
+import { fmtDate } from '../lib/format';
 import { useTheme } from '../theme';
 
 const IOS_MANAGE_SUBSCRIPTIONS_URL = 'itms-apps://apps.apple.com/account/subscriptions';
@@ -36,6 +37,14 @@ export function MySubscriptionScreen() {
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
       <Text style={[styles.planName, { color: c.ink }]}>{subscription.planName ?? subscription.planCode}</Text>
+
+      {subscription.renewalDate && (
+        <Text style={[styles.note, { color: c.muted }]}>
+          {subscription.hasBillingSubscription && !subscription.autoRenew
+            ? `Ends ${fmtDate(subscription.renewalDate)} — won't renew`
+            : `Renews ${fmtDate(subscription.renewalDate)}`}
+        </Text>
+      )}
 
       {subscription.hasBillingSubscription && subscription.paymentProvider === 'RAZORPAY' && (
         <Text style={[styles.note, { color: c.muted }]}>
