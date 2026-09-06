@@ -930,10 +930,11 @@ export const deviceApi = {
 
 // --- Import statistics ---
 //
-// The only analytics view still exposed to end users -- merchant/rule/relationship/learning
-// management and the rest of the analytics views are admin-only now (see the admin portal's
-// UserDetail page and the backend's AdminUser*Controller family). This one stays because
-// Settings.tsx's Account section shows the signed-in user their own import totals.
+// importStatistics stays open to every plan -- Settings.tsx's Account section shows the
+// signed-in user their own import totals regardless of entitlement. The five views below it
+// (topMerchants/trend/categoryConfidence/topCategories/learningGrowth) are the ones that were
+// admin-only until AnalyticsController restored them as the first real ADVANCED_REPORTS gate --
+// see AdvancedReports.tsx, the customer-facing page built around them.
 
 export interface ImportStatistics {
   totalStatements: number;
@@ -941,9 +942,28 @@ export interface ImportStatistics {
   totalTransactionsSkipped: number;
   lastImportedAt: string | null;
 }
+
+// Mirrors backend AnalyticsDto exactly.
+export interface TopMerchant { merchantId: string; merchantName: string; totalSpend: number; transactionCount: number; }
+export interface TrendPoint { month: string; totalSpend: number; }
+export interface CategoryConfidencePoint { category: string; avgConfidence: number; merchantCount: number; }
+export interface TopCategory { categoryId: string; categoryName: string; totalSpend: number; transactionCount: number; }
+export interface LearningGrowthPoint { month: string; learnedCount: number; correctedCount: number; }
+
 export const analyticsApi = {
   importStatistics: () =>
     api.get<ImportStatistics>('/analytics/merchants', { params: { view: 'importStatistics' } }).then((r) => r.data),
+  // month is "YYYY-MM"; omitted means all-time for topMerchants/topCategories, and the trailing
+  // 6-month window ending this month for trend -- see AnalyticsService's own doc comments.
+  topMerchants: (month?: string) =>
+    api.get<TopMerchant[]>('/analytics/top-merchants', { params: month ? { month } : {} }).then((r) => r.data),
+  trend: () => api.get<TrendPoint[]>('/analytics/trend').then((r) => r.data),
+  categoryConfidence: () =>
+    api.get<CategoryConfidencePoint[]>('/analytics/category-confidence').then((r) => r.data),
+  topCategories: (month?: string) =>
+    api.get<TopCategory[]>('/analytics/top-categories', { params: month ? { month } : {} }).then((r) => r.data),
+  learningGrowth: () =>
+    api.get<LearningGrowthPoint[]>('/analytics/learning-growth').then((r) => r.data),
 };
 
 // --- Financial Intelligence Workspace: Dashboard ---
