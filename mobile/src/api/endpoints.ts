@@ -53,6 +53,9 @@ export interface AuthResponseDto {
   /** The real Fynora user id -- subscription billing V4 needs it to call RevenueCat's
    *  Purchases.configure({ appUserID }) with the real, authenticated id at sign-in. */
   id: string;
+  // Same channel phoneVerified already rides -- see docs/superpowers/specs/
+  // 2026-09-06-first-login-onboarding-tour-design.md §7.
+  onboardingCompleted: boolean;
 }
 
 export const authApi = {
@@ -482,6 +485,33 @@ export const goalsApi = {
   addContribution: (id: string, amount: number) =>
     api.post<Goal>(`/goals/${id}/contributions`, { amount }).then((r) => r.data),
   remove: (id: string) => api.delete(`/goals/${id}`),
+};
+
+export interface OnboardingStatus {
+  onboardingCompleted: boolean;
+  financialFocus: string[];
+}
+
+export interface ChecklistItem {
+  key: string;
+  completed: boolean;
+}
+
+export interface ChecklistStatus {
+  items: ChecklistItem[];
+  completedCount: number;
+  totalCount: number;
+}
+
+export const onboardingApi = {
+  status: () => api.get<OnboardingStatus>('/onboarding/status').then((r) => r.data),
+  setFinancialFocus: (focusKeys: string[]) =>
+    api.post<OnboardingStatus>('/onboarding/financial-focus', { focusKeys }).then((r) => r.data),
+  complete: () => api.post<void>('/onboarding/complete', {}),
+  reset: () => api.post<void>('/onboarding/reset', {}),
+  getChecklist: () => api.get<ChecklistStatus>('/onboarding/checklist').then((r) => r.data),
+  completeChecklistItem: (itemKey: string) =>
+    api.post<void>(`/onboarding/checklist/${itemKey}/complete`, {}),
 };
 
 export interface CategoryOption {
