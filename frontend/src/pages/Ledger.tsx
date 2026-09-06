@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { motion, useReducedMotion } from 'framer-motion';
 import {
   Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle, Loader2,
   Wallet, Receipt, Tag, PiggyBank, FilterX, type LucideIcon,
@@ -16,7 +17,6 @@ import { MerchantGroupReviewCard } from '../components/MerchantGroupReviewCard';
 import { CounterpartyGroupReviewCard } from '../components/CounterpartyGroupReviewCard';
 import { MerchantLogo } from '../components/MerchantLogo';
 import { BankLogo } from '../components/BankLogo';
-import { MaskedAccountNumber } from '../components/MaskedAccountNumber';
 import type { Transaction } from '../types';
 import { counterpartyLabel } from '../lib/counterpartyLabel';
 import { ConfirmDialog, Button, IconButton, Skeleton, FinoraCard, MetricCard, Badge } from '../design-system';
@@ -41,14 +41,39 @@ function fmt(n: number) {
 // The label+icon-badge header row `MetricCard` renders internally -- factored out here rather
 // than hand-rolled twice, since Top Category/This Month need a custom body `MetricCard` itself
 // doesn't support (a "spend (pct%)" line, a progress bar) but still want the identical header.
+// Matches MetricCard's own `variant="elevated"` header exactly (rounded-xl icon badge, semibold
+// label) -- Total Spent/Transactions use that variant directly; Top Category/This Month need a
+// custom body (a "spend (pct%)" line, a progress bar) `MetricCard` doesn't support in either
+// variant, but must still look like the same card family, not a visually different one sitting
+// next to it in the same row.
 function KpiCardHeader({ label, icon: Icon, iconBg, iconColor }: { label: string; icon: LucideIcon; iconBg: string; iconColor: string }) {
   return (
-    <div className="flex items-start justify-between mb-3">
-      <p className="text-sm text-muted">{label}</p>
-      <div className={`w-9 h-9 rounded-full ${iconBg} flex items-center justify-center flex-shrink-0`}>
-        <Icon size={17} className={iconColor} />
+    <div className="flex items-start justify-between mb-4">
+      <p className="text-sm font-semibold text-muted">{label}</p>
+      <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center flex-shrink-0`}>
+        <Icon size={18} className={iconColor} />
       </div>
     </div>
+  );
+}
+
+// Mount-fire fade/rise, staggered by index -- same convention Dashboard's own
+// `.journey-reveal-item`/AuthEntry's `.auth-reveal` already use (see index.css), just expressed
+// via framer-motion instead of a CSS keyframe class since this file already imports framer-motion
+// for the button tap feedback below, and mixing both animation systems on one page for two
+// halves of the same "polish this page" request isn't worth the inconsistency. Fires once on
+// mount, not on scroll -- the KPI row sits above the fold, same reasoning journeyReveal/authReveal
+// already documented for their own always-visible-on-load content.
+function KpiEntrance({ index, reduceMotion, children }: { index: number; reduceMotion: boolean | null; children: ReactNode }) {
+  if (reduceMotion) return <>{children}</>;
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: index * 0.06, ease: [0.16, 1, 0.3, 1] }}
+    >
+      {children}
+    </motion.div>
   );
 }
 
@@ -143,6 +168,11 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 export default function Ledger() {
+  // Shared across every motion.button/motion.div this page adds -- the same convention
+  // Button/IconButton already follow (see their own doc comments): tap feedback everywhere,
+  // gated off entirely rather than shrunk when the user has asked for reduced motion.
+  const prefersReducedMotion = useReducedMotion();
+
   // Seeds the search box from the TopBar's global search ("/app/transactions?q=..."), so
   // pressing Enter up there actually lands here with the term already applied rather than
   // just navigating to an empty ledger.
@@ -323,37 +353,47 @@ export default function Ledger() {
         </Skeleton.Region>
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <MetricCard
-            label={hasStatsFilters ? 'Total Spent (filtered)' : 'Total Spent'}
-            value={fmt(totalSpend)}
-            icon={Wallet}
-            iconBg="bg-primary-light"
-            iconColor="text-primary"
-          />
-          <MetricCard
-            label="Transactions"
-            value={transactionCount.toLocaleString('en-IN')}
-            icon={Receipt}
-            iconBg="bg-primary-light"
-            iconColor="text-primary"
-          />
-          <FinoraCard>
-            <KpiCardHeader label="Top Category" icon={Tag} iconBg="bg-success-bg" iconColor="text-success" />
-            <p className="text-2xl font-bold mb-1 text-ink truncate">{topCategory ? topCategory.name : '—'}</p>
-            {topCategory && (
-              <p className="text-xs text-muted">
-                {fmt(topCategory.spend)} ({totalSpend > 0 ? Math.round((topCategory.spend / totalSpend) * 100) : 0}%)
-              </p>
-            )}
-          </FinoraCard>
-          <FinoraCard>
-            <KpiCardHeader label="This Month" icon={PiggyBank} iconBg="bg-warning-bg" iconColor="text-warning" />
-            <p className="text-2xl font-bold mb-2 text-ink">{fmt(budgetSpend)}</p>
-            <div className="h-1.5 bg-black/10 rounded-full overflow-hidden mb-1">
-              <div className="h-full bg-primary" style={{ width: `${budgetPct}%` }} />
-            </div>
-            <p className="text-xs text-muted">{budgetPct}% of budget</p>
-          </FinoraCard>
+          <KpiEntrance index={0} reduceMotion={prefersReducedMotion}>
+            <MetricCard
+              label={hasStatsFilters ? 'Total Spent (filtered)' : 'Total Spent'}
+              value={fmt(totalSpend)}
+              icon={Wallet}
+              iconBg="bg-green-100"
+              iconColor="text-green-600"
+              variant="elevated"
+            />
+          </KpiEntrance>
+          <KpiEntrance index={1} reduceMotion={prefersReducedMotion}>
+            <MetricCard
+              label="Transactions"
+              value={transactionCount.toLocaleString('en-IN')}
+              icon={Receipt}
+              iconBg="bg-orange-100"
+              iconColor="text-orange-600"
+              variant="elevated"
+            />
+          </KpiEntrance>
+          <KpiEntrance index={2} reduceMotion={prefersReducedMotion}>
+            <FinoraCard className="transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-soft">
+              <KpiCardHeader label="Top Category" icon={Tag} iconBg="bg-purple-100" iconColor="text-purple-600" />
+              <p className="font-display text-[26px] font-extrabold mb-1.5 tracking-tight text-ink truncate">{topCategory ? topCategory.name : '—'}</p>
+              {topCategory && (
+                <p className="text-xs text-muted">
+                  {fmt(topCategory.spend)} ({totalSpend > 0 ? Math.round((topCategory.spend / totalSpend) * 100) : 0}%)
+                </p>
+              )}
+            </FinoraCard>
+          </KpiEntrance>
+          <KpiEntrance index={3} reduceMotion={prefersReducedMotion}>
+            <FinoraCard className="transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-soft">
+              <KpiCardHeader label="This Month" icon={PiggyBank} iconBg="bg-blue-100" iconColor="text-blue-600" />
+              <p className="font-display text-[26px] font-extrabold mb-2 tracking-tight text-ink">{fmt(budgetSpend)}</p>
+              <div className="h-1.5 bg-black/10 rounded-full overflow-hidden mb-1">
+                <div className="h-full bg-primary" style={{ width: `${budgetPct}%` }} />
+              </div>
+              <p className="text-xs text-muted">{budgetPct}% of budget</p>
+            </FinoraCard>
+          </KpiEntrance>
         </div>
       )}
 
@@ -414,15 +454,16 @@ export default function Ledger() {
               className="flex-1 min-w-0 bg-card text-ink border border-border rounded-lg px-3 py-2 text-sm"
               onChange={(e) => setFilters((f) => ({ ...f, dateTo: e.target.value || undefined, page: 0 }))}
             />
-            <button
+            <motion.button
               type="button"
+              whileTap={prefersReducedMotion ? undefined : { scale: 0.92 }}
               onClick={clearFilters}
               disabled={!hasActiveFilters}
               title="Clear all filters"
               className="flex-shrink-0 flex items-center gap-1.5 border border-border rounded-lg px-3 py-2 text-sm text-muted hover:text-ink hover:bg-bg disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <FilterX size={14} /> Clear
-            </button>
+            </motion.button>
           </div>
         </div>
 
@@ -431,23 +472,25 @@ export default function Ledger() {
             rendered once there's something to show; an all-empty ledger has nothing to chip. */}
         {categoryChips.length > 0 && (
           <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-1 px-1">
-            <button
+            <motion.button
               type="button"
+              whileTap={prefersReducedMotion ? undefined : { scale: 0.94 }}
               onClick={() => setFilters((f) => ({ ...f, categoryId: undefined, page: 0 }))}
               className={`flex-shrink-0 flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors ${
                 !filters.categoryId ? 'bg-primary text-on-primary border-primary' : 'bg-card text-ink border-border hover:bg-bg'
               }`}
             >
               All <span className="opacity-70">{transactionCount}</span>
-            </button>
+            </motion.button>
             {categoryChips.map((c) => {
               const cat = categoriesById.get(c.id);
               const Icon = ICON_COMPONENTS[cat?.icon ?? 'tag'] ?? Tag;
               const active = filters.categoryId === c.id;
               return (
-                <button
+                <motion.button
                   key={c.id}
                   type="button"
+                  whileTap={prefersReducedMotion ? undefined : { scale: 0.94 }}
                   onClick={() => setFilters((f) => ({ ...f, categoryId: active ? undefined : c.id, page: 0 }))}
                   className={`flex-shrink-0 flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium border transition-colors ${
                     active ? 'bg-primary text-on-primary border-primary' : 'bg-card text-ink border-border hover:bg-bg'
@@ -455,7 +498,7 @@ export default function Ledger() {
                 >
                   <Icon size={13} style={!active ? { color: COLOR_HEX[cat?.color ?? 'gray'] } : undefined} />
                   {c.name} <span className="opacity-70">{c.count}</span>
-                </button>
+                </motion.button>
               );
             })}
           </div>
@@ -559,14 +602,15 @@ export default function Ledger() {
                       >
                         {t.categoryManuallySet ? 'Manual' : 'Auto'}
                       </span>
-                      <button
+                      <motion.button
                         type="button"
+                        whileTap={prefersReducedMotion ? undefined : { scale: 0.85 }}
                         title="Why this category?"
                         onClick={() => setExplaining(t)}
                         className="inline-flex items-center justify-center w-4 h-4 ml-1 text-muted hover:text-ink align-middle"
                       >
                         <HelpCircle size={12} />
-                      </button>
+                      </motion.button>
                     </td>
                     <td className="p-3">
                       {account ? (
@@ -574,8 +618,14 @@ export default function Ledger() {
                           <BankLogo bank={account.bank} size={20} />
                           <div className="min-w-0">
                             <p className="text-ink text-xs font-medium truncate">{account.bank.shortName}</p>
+                            {/* accountNumberMasked is already the safe form to show outright --
+                                CsvParser.maskAccountNumber produces "••••" + only the last 4 real
+                                digits (fewer if the source number itself was shorter); there's no
+                                further-unmasked value a reveal toggle would ever uncover here, so
+                                hiding it behind one more click (MaskedAccountNumber's generic
+                                "•••• ••••" placeholder) added a step without adding any privacy. */}
                             {account.accountNumberMasked && (
-                              <MaskedAccountNumber value={account.accountNumberMasked} className="text-muted text-[11px]" />
+                              <p className="text-muted text-[11px] truncate">{account.accountNumberMasked}</p>
                             )}
                           </div>
                         </div>
@@ -590,14 +640,15 @@ export default function Ledger() {
                       <div className="flex flex-col items-start gap-1">
                         {badges.map((b) => <Badge key={b.label} tone={b.tone} label={b.label} />)}
                         {badge && (
-                          <button
+                          <motion.button
                             type="button"
+                            whileTap={prefersReducedMotion ? undefined : { scale: 0.9 }}
                             title={badge.hint}
                             onClick={() => setExplaining(t)}
                             className={`text-[10px] uppercase px-1.5 py-0.5 rounded hover:opacity-80 ${badge.className}`}
                           >
                             {badge.label}
-                          </button>
+                          </motion.button>
                         )}
                       </div>
                     </td>
@@ -651,9 +702,10 @@ export default function Ledger() {
               p === '…' ? (
                 <span key={`ellipsis-${i}`} className="text-muted px-1">…</span>
               ) : (
-                <button
+                <motion.button
                   key={p}
                   type="button"
+                  whileTap={prefersReducedMotion ? undefined : { scale: 0.9 }}
                   aria-label={`Page ${p + 1}`}
                   aria-current={p === page.page ? 'page' : undefined}
                   onClick={() => setFilters((f) => ({ ...f, page: p }))}
@@ -663,7 +715,7 @@ export default function Ledger() {
                   }`}
                 >
                   {p + 1}
-                </button>
+                </motion.button>
               )
             )}
             <IconButton
