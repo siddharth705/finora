@@ -38,7 +38,7 @@ technical model needed to support it.
 - This codebase's established convention for "did a one-time thing happen, and when" is a
   nullable `TIMESTAMPTZ` column that's set once and never cleared in normal operation —
   `goals.completed_at` (V94), `users.deactivated_at` (V88), `users.password_changed_at` (V40).
-  `users.tour_completed_at` follows the same pattern (reset is the one exception, needed for
+  `users.onboarding_completed_at` follows the same pattern (reset is the one exception, needed for
   "Retake Product Tour").
 - This codebase's established convention for "a small set of tagged values per user" is a child
   table shaped like `feature_entitlements` (V99) — not `@ElementCollection` (no entity in
@@ -73,15 +73,15 @@ technical model needed to support it.
 
 ### Flow control (skip semantics)
 - Welcome's **Skip for Now** exits the entire flow immediately (no Financial Focus, no tour) —
-  calls `tour-complete` only, straight to dashboard. `financialFocus` stays empty, same as if the
+  calls `onboarding-complete` only, straight to dashboard. `financialFocus` stays empty, same as if the
   question had been asked and left blank.
 - Financial Focus's **Continue** always advances regardless of selection count (0 selected is a
   valid answer, equivalent to skipping this screen alone) — calls `financial-focus` with whatever
   is selected (possibly `[]`), then proceeds to the Tour Intro screen.
 - Tour Intro's **Skip** and the tour's own **Skip** (available on every step) both end the same
-  way: call `tour-complete`, go straight to the Success screen — a partially-seen tour still
+  way: call `onboarding-complete`, go straight to the Success screen — a partially-seen tour still
   counts as seen, same as a fully-completed one, so the user is never re-prompted.
-- Completing the final tour step calls `tour-complete` and shows the Success screen.
+- Completing the final tour step calls `onboarding-complete` and shows the Success screen.
 
 ### Interactive tour — 7 steps, in this order
 1. **Dashboard** — "Your Financial Command Center" / "This dashboard gives you a complete view
@@ -106,6 +106,10 @@ from Import to Transactions.
 - Title: "You're Ready to Go 🚀"
 - Content: "Start by importing your first bank statement or connecting an account. The more data
   you add, the smarter Fynora becomes."
+- Next steps preview (the same 6 checklist items shown unchecked, so the user knows what's ahead
+  before they ever see the dashboard widget): Complete profile · Import first statement · Review
+  transactions · Create a budget · Create a goal · View insights. Read-only here — no backend
+  call from this screen; the real checklist state is fetched once the user reaches the dashboard.
 - Buttons, in priority order: **Import Statement** (primary, routes to the existing
   `/app/import`) · Connect Account (secondary, routes to the existing manual-entry
   `/app/accounts` — Fynora has no OAuth bank linking today (§2), so this button adds an account
@@ -148,8 +152,8 @@ New entry, both platforms: **Retake Product Tour** — "Replay the onboarding ex
 
 ### `users` — one new column
 ```sql
-ALTER TABLE users ADD COLUMN tour_completed_at TIMESTAMPTZ;
-UPDATE users SET tour_completed_at = now() WHERE tour_completed_at IS NULL;
+ALTER TABLE users ADD COLUMN onboarding_completed_at TIMESTAMPTZ;
+UPDATE users SET onboarding_completed_at = now() WHERE onboarding_completed_at IS NULL;
 ```
 Null = tour not yet seen (new users only, since the same migration backfills everyone existing).
 Set once by completing or skipping the tour; cleared back to `NULL` only by "Retake Product Tour."
@@ -169,7 +173,9 @@ CREATE INDEX idx_user_financial_focus_user_id ON user_financial_focus(user_id);
 `MANAGE_BUDGETS`, `SAVE_FOR_GOAL`, `SEE_ALL_ACCOUNTS`, `IMPROVE_HABITS`, `REDUCE_DEBT`,
 `EXPLORING`) — not free text. Submitting a new set replaces the old one (delete + insert), so the
 question can be answered exactly once but the row set always reflects the latest answer if the
-endpoint is ever called again (e.g. a retry).
+endpoint is ever called again (e.g. a retry). `focus_key` is a stable backend identifier only —
+the chip labels in §3 (e.g. "Track my spending") are frontend copy attached to each key at render
+time, never persisted. Wording can change freely without a migration or a data backfill.
 
 ### `user_checklist_events` — new table, closed enum
 ```sql
@@ -191,11 +197,11 @@ Ledger or Insights screen mounts for a user who hasn't completed that item yet.
 New `OnboardingController` at `/api/onboarding/*` (mirrors how this codebase already separates
 `AdminUserController` from `UserController` for a distinct concern):
 
-- `GET /api/onboarding/status` → `{ tourCompleted: boolean, financialFocus: string[] }`
+- `GET /api/onboarding/status` → `{ onboardingCompleted: boolean, financialFocus: string[] }`
 - `POST /api/onboarding/financial-focus` → body `{ focusKeys: string[] }` (empty array allowed —
   "Skip for Now" / no chips selected); replaces the user's focus set.
-- `POST /api/onboarding/tour-complete` → sets `tour_completed_at = now()` if null; idempotent.
-- `POST /api/onboarding/tour-reset` → sets `tour_completed_at = NULL`; backs "Retake Product
+- `POST /api/onboarding/onboarding-complete` → sets `onboarding_completed_at = now()` if null; idempotent.
+- `POST /api/onboarding/onboarding-reset` → sets `onboarding_completed_at = NULL`; backs "Retake Product
   Tour."
 - `GET /api/onboarding/checklist` → `{ items: [{ key, completed }], completedCount, totalCount:
   6 }`. Computes `COMPLETE_PROFILE`/`IMPORT_STATEMENT`/`CREATE_BUDGET`/`CREATE_GOAL` live from
@@ -212,7 +218,7 @@ New `OnboardingController` at `/api/onboarding/*` (mirrors how this codebase alr
 ## 7. Frontend / mobile architecture
 
 **Interception point.** On successful auth, both platforms fetch `/api/onboarding/status` once.
-If `tourCompleted` is false, the onboarding flow renders instead of the requested route (web: a
+If `onboardingCompleted` is false, the onboarding flow renders instead of the requested route (web: a
 check inside `Protected` in `App.tsx`; mobile: the equivalent check in `RootNavigator.tsx`) —
 same gate that already exists for "unverified" states, extended with one more condition.
 
@@ -227,8 +233,10 @@ Next/Back/Skip:
 
 **Getting-started checklist widget.** A dashboard card, both platforms, fetching
 `GET /api/onboarding/checklist`; hidden once `completedCount === totalCount`. The Ledger and
-Insights screens each fire `POST /api/onboarding/checklist/{key}/complete` once on first mount if
-that item isn't already complete (checked against the same fetched status, no extra round trip
+Insights screens each fire `POST /api/onboarding/checklist/{key}/complete` on a **1.5s dwell
+timer** started on mount (not on mount itself), cleared on unmount — so a screen opened and
+immediately left doesn't get credited — if that item isn't already complete (checked against the
+same fetched status, no extra round trip
 needed to decide whether to fire).
 
 ## 8. Testing
@@ -236,7 +244,7 @@ needed to decide whether to fire).
 - Backend: `OnboardingService` unit tests — backfill idempotency, focus-set replace semantics,
   checklist-item idempotent insert, the four derived items computed correctly from
   `ImportJob`/`Budget`/`Goal`/`User` fixtures. A migration IT confirming existing users backfill
-  `tour_completed_at` and none are left `NULL`.
+  `onboarding_completed_at` and none are left `NULL`.
 - Frontend/mobile: component tests for `TourOverlay` step advancement (Next/Back/Skip, spotlight
   target changes per step) and the Financial Focus multi-select (including the "Just exploring"
   exclusivity rule). An integration test confirming a fresh user is routed into onboarding and a
