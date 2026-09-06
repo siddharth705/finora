@@ -13,6 +13,9 @@ interface AuthState {
   email: string | null;
   fullName: string | null;
   phoneVerified: boolean;
+  // Unlike phoneVerified, a missing/absent value here defaults to FALSE -- see this file's own
+  // useState initializer below for why the two flags deliberately default in opposite directions.
+  onboardingCompleted: boolean;
   // Accepts either an email address or a registered mobile number -- see Login.tsx.
   login: (identifier: string, password: string) => Promise<boolean>;
   // Completes the "Welcome back — reactivate your account?" prompt Login.tsx shows after a
@@ -35,6 +38,7 @@ interface AuthState {
   // a given account/client id pair, so callers pass whatever the popup handed back (often null).
   loginWithApple: (idToken: string, fullName: string | null) => Promise<boolean>;
   setPhoneVerified: (verified: boolean) => void;
+  setOnboardingCompleted: (completed: boolean) => void;
   logout: () => void;
 }
 
@@ -71,8 +75,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [phoneVerified, setPhoneVerifiedState] = useState<boolean>(
     safeStorage.getItem('finora_phone_verified') !== 'false'
   );
+  // Deliberately the OPPOSITE default direction from phoneVerified above: a missing value here
+  // means "we don't know, and this is very likely a brand-new user who has never onboarded" --
+  // defaulting true would skip a genuine first-time user's tour on the strength of an absent key,
+  // where phoneVerified's risk runs the other way (an already-verified user wrongly bounced to
+  // /verify-phone). Onboarding has no equivalent backend-enforced fallback gate the way
+  // PhoneVerificationFilter is for phone verification, so guessing wrong here isn't self-healing
+  // the way a rejected request is -- false is the safe default in both directions this flag can
+  // be wrong.
+  const [onboardingCompleted, setOnboardingCompletedState] = useState<boolean>(
+    safeStorage.getItem('finora_onboarding_completed') === 'true'
+  );
 
-  function persist(data: { token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean }) {
+  function persist(data: { token: string; refreshToken: string; email: string; fullName: string; phoneVerified: boolean; onboardingCompleted: boolean }) {
     // SEC-01: in-memory only now -- see client.ts's accessToken variable and this file's own
     // bootstrap effect for the other half (recovering it after a reload).
     setAccessToken(data.token);
@@ -83,10 +98,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     safeStorage.setItem('finora_email', data.email);
     safeStorage.setItem('finora_name', data.fullName);
     safeStorage.setItem('finora_phone_verified', String(data.phoneVerified));
+    safeStorage.setItem('finora_onboarding_completed', String(data.onboardingCompleted));
     setToken(data.token);
     setEmail(data.email);
     setFullName(data.fullName);
     setPhoneVerifiedState(data.phoneVerified);
+    setOnboardingCompletedState(data.onboardingCompleted);
     // Lets ThemeProvider (mounted above AuthProvider, so it can't consume this state directly)
     // re-pull the account's saved theme now that a token exists, instead of only ever checking
     // for one once on its own initial mount.
@@ -144,6 +161,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPhoneVerifiedState(verified);
   }
 
+  function setOnboardingCompleted(completed: boolean) {
+    safeStorage.setItem('finora_onboarding_completed', String(completed));
+    setOnboardingCompletedState(completed);
+  }
+
   function logout() {
     // Best-effort: revoke the refresh token server-side so it can't be used again even if
     // someone captured it. Don't block clearing local state on this succeeding — if the
@@ -160,10 +182,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     safeStorage.removeItem('finora_email');
     safeStorage.removeItem('finora_name');
     safeStorage.removeItem('finora_phone_verified');
+    safeStorage.removeItem('finora_onboarding_completed');
     setToken(null);
     setEmail(null);
     setFullName(null);
     setPhoneVerifiedState(false);
+    setOnboardingCompletedState(false);
     // Bug 43. persist() (below) dispatches this after login/register so ThemeProvider -- which
     // wraps AuthProvider and so can't consume useAuth() directly -- can react to a NEW session.
     // logout() never dispatched the same event, so ThemeProvider had no way to know a session had
@@ -202,9 +226,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setEmail(profile.email);
         setFullName(profile.fullName);
         setPhoneVerifiedState(profile.phoneVerified);
+        setOnboardingCompletedState(profile.onboardingCompleted);
         safeStorage.setItem('finora_email', profile.email);
         safeStorage.setItem('finora_name', profile.fullName);
         safeStorage.setItem('finora_phone_verified', String(profile.phoneVerified));
+        safeStorage.setItem('finora_onboarding_completed', String(profile.onboardingCompleted));
         window.dispatchEvent(new Event(AUTH_CHANGED_EVENT));
       } catch {
         // No valid session to recover -- leave every field at its logged-out default.
@@ -218,7 +244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ token, bootstrapping, email, fullName, phoneVerified, login, reactivate, register, loginWithGoogle, loginWithApple, setPhoneVerified, logout }}>
+    <AuthContext.Provider value={{ token, bootstrapping, email, fullName, phoneVerified, onboardingCompleted, login, reactivate, register, loginWithGoogle, loginWithApple, setPhoneVerified, setOnboardingCompleted, logout }}>
       {children}
     </AuthContext.Provider>
   );

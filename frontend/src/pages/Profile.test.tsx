@@ -25,6 +25,7 @@ function userSettings(overrides: Partial<UserSettings> = {}): UserSettings {
     createdAt: '2026-05-01T00:00:00Z',
     passwordChangedAt: null,
     signInMethod: 'PASSWORD',
+    onboardingCompleted: true,
     ...overrides,
   };
 }

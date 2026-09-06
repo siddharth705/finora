@@ -27,18 +27,23 @@ const AUTH_RESPONSE = {
   fullName: 'Jane Doe',
   phoneVerified: true,
   maskedPhone: null,
+  onboardingCompleted: true,
 };
 
 /** Exercises the real hook through a small harness, same pattern other hook-focused tests in
  *  this codebase use when there's no dedicated page already wired up to the flow being tested. */
 function Harness() {
-  const { token, email, fullName, phoneVerified, login, register, loginWithGoogle, logout } = useAuth();
+  const {
+    token, email, fullName, phoneVerified, onboardingCompleted,
+    login, register, loginWithGoogle, logout, setOnboardingCompleted,
+  } = useAuth();
   return (
     <div>
       <p data-testid="token">{token ?? 'none'}</p>
       <p data-testid="email">{email ?? 'none'}</p>
       <p data-testid="fullName">{fullName ?? 'none'}</p>
       <p data-testid="phoneVerified">{String(phoneVerified)}</p>
+      <p data-testid="onboardingCompleted">{String(onboardingCompleted)}</p>
       <button onClick={() => void login('jane@example.com', 'password123')}>Log in</button>
       {/* Phone number matches the synthetic placeholder already used by
           VerifyPhone.test.tsx/ChangePasswordModal.test.tsx elsewhere in this codebase. */}
@@ -47,6 +52,7 @@ function Harness() {
       </button>
       <button onClick={() => void loginWithGoogle('fake-google-id-token')}>Sign in with Google</button>
       <button onClick={logout}>Log out</button>
+      <button onClick={() => setOnboardingCompleted(true)}>Complete onboarding</button>
     </div>
   );
 }
@@ -92,12 +98,16 @@ describe('AuthContext', () => {
     // out of this sequence) in order, so a quota failure partway can leave some written and
     // finora_phone_verified absent. PhoneVerificationFilter remains the real gate either way.
     expect(screen.getByTestId('phoneVerified')).toHaveTextContent('true');
+    // Unlike phoneVerified, a missing key here must default to FALSE, not true: the whole point
+    // of onboarding is that a genuinely new user (nothing ever stored) sees it. Defaulting true
+    // would skip a real first-time user straight past the tour.
+    expect(screen.getByTestId('onboardingCompleted')).toHaveTextContent('false');
   });
 
   it('recovers an existing session on mount via a silent refresh against the HttpOnly cookie', async () => {
     vi.mocked(authApi.refresh).mockReset().mockResolvedValue({ token: 'access-token-1', refreshToken: 'refresh-token-1' });
     vi.mocked(userApi.get).mockResolvedValue({
-      email: 'jane@example.com', fullName: 'Jane Doe', phoneVerified: true,
+      email: 'jane@example.com', fullName: 'Jane Doe', phoneVerified: true, onboardingCompleted: true,
     } as any);
 
     renderHarness();
@@ -105,6 +115,7 @@ describe('AuthContext', () => {
     await waitFor(() => expect(screen.getByTestId('token')).toHaveTextContent('access-token-1'));
     expect(screen.getByTestId('email')).toHaveTextContent('jane@example.com');
     expect(screen.getByTestId('fullName')).toHaveTextContent('Jane Doe');
+    expect(screen.getByTestId('onboardingCompleted')).toHaveTextContent('true');
     expect(getAccessToken()).toBe('access-token-1');
   });
 
@@ -112,6 +123,23 @@ describe('AuthContext', () => {
     localStorage.setItem('finora_phone_verified', 'false');
     renderHarness();
     expect(screen.getByTestId('phoneVerified')).toHaveTextContent('false');
+  });
+
+  it('reads a stored onboardingCompleted=true back on mount', () => {
+    localStorage.setItem('finora_onboarding_completed', 'true');
+    renderHarness();
+    expect(screen.getByTestId('onboardingCompleted')).toHaveTextContent('true');
+  });
+
+  it('setOnboardingCompleted updates state and persists it', async () => {
+    const user = userEvent.setup();
+    renderHarness();
+    expect(screen.getByTestId('onboardingCompleted')).toHaveTextContent('false');
+
+    await user.click(screen.getByRole('button', { name: 'Complete onboarding' }));
+
+    expect(screen.getByTestId('onboardingCompleted')).toHaveTextContent('true');
+    expect(localStorage.getItem('finora_onboarding_completed')).toBe('true');
   });
 
   it('login() persists the full session to storage and updates context state', async () => {
@@ -133,6 +161,8 @@ describe('AuthContext', () => {
     expect(localStorage.getItem('finora_email')).toBe('jane@example.com');
     expect(localStorage.getItem('finora_name')).toBe('Jane Doe');
     expect(localStorage.getItem('finora_phone_verified')).toBe('true');
+    expect(screen.getByTestId('onboardingCompleted')).toHaveTextContent('true');
+    expect(localStorage.getItem('finora_onboarding_completed')).toBe('true');
 
     // BH-012. The refresh token is the durable credential -- good for up to the absolute session
     // cap, where the access token above is good for fifteen minutes. It arrives as an HttpOnly
@@ -189,6 +219,8 @@ describe('AuthContext', () => {
     expect(localStorage.getItem('finora_email')).toBeNull();
     expect(localStorage.getItem('finora_name')).toBeNull();
     expect(localStorage.getItem('finora_phone_verified')).toBeNull();
+    expect(screen.getByTestId('onboardingCompleted')).toHaveTextContent('false');
+    expect(localStorage.getItem('finora_onboarding_completed')).toBeNull();
     // BH-012: no argument. The session to revoke is identified by the HttpOnly cookie the browser
     // attaches automatically, not by a token this app is able to read.
     expect(authApi.logout).toHaveBeenCalledWith();
