@@ -73,12 +73,15 @@ public class ReconciliationService {
     private final TransactionGraphService transactionGraphService;
     private final com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher;
     private final com.finora.repository.StatementImportRepository statementImportRepository;
+    private final com.finora.observability.ReconciliationMetrics reconciliationMetrics;
 
     public ReconciliationService(TransactionRepository transactionRepository, AccountRepository accountRepository,
                                   RelationshipService relationshipService,
                                   AuditService auditService, TransactionGraphService transactionGraphService,
                                   com.finora.integrations.google.merchant.GmailReconciliationMatcher gmailReconciliationMatcher,
-                                  com.finora.repository.StatementImportRepository statementImportRepository) {
+                                  com.finora.repository.StatementImportRepository statementImportRepository,
+                                  com.finora.observability.ReconciliationMetrics reconciliationMetrics) {
+        this.reconciliationMetrics = reconciliationMetrics;
         this.transactionRepository = transactionRepository;
         this.accountRepository = accountRepository;
         this.relationshipService = relationshipService;
@@ -250,6 +253,20 @@ public class ReconciliationService {
         // most recent run actually do).
         int newDuplicates = 0, newTransfers = 0, newRefunds = 0, newReversals = 0, newGmailMatches = 0,
                 newCcPaymentMatches = 0, newInvestmentTransfers = 0;
+
+        // Collected during the transfer pass, emitted to ReconciliationMetrics only after this
+        // method's own writes below (saveAll/linkAll) have actually succeeded -- not inline in the
+        // matching loop. This method runs inside whichever caller's transaction is already open
+        // (it carries no @Transactional of its own; see its class comment on its eight production
+        // callers), so a counter incremented mid-loop would still be incremented even if a LATER
+        // pass in this same run throws, or the caller's transaction rolls back afterwards for an
+        // unrelated reason -- Micrometer counters are not transactional and nothing rolls them
+        // back. Deferring to the end of this method can't close that second, caller-side window
+        // (a metric fired from inside any @Transactional method carries it, and isn't something
+        // this method can fix on behalf of every one of its eight callers), but it does remove the
+        // larger, entirely-avoidable part: this run's OWN later passes throwing before its OWN
+        // writes ever happen.
+        List<Boolean> matchedTransferRelationshipFlags = new java.util.ArrayList<>();
 
         // Every row the passes below touch, written once at the end instead of one save() per
         // match. A large first import can flag hundreds of duplicates, and each save() was its own
@@ -470,6 +487,7 @@ public class ReconciliationService {
                 dirty.add(a);
                 dirty.add(b);
                 newTransfers++; // one pair = one match, not two (see WorkspaceSummaryDto's own note on this asymmetry)
+                matchedTransferRelationshipFlags.add(relationshipMatch);
                 // One edge per direction, matching transferPairId's own symmetric shape (see
                 // V114's backfill comment) rather than picking an arbitrary canonical side.
                 // MERCHANT_AND_AMOUNT tier: matched on amount + date window (+ an own-account
@@ -826,6 +844,13 @@ public class ReconciliationService {
         // run that writes nothing new. writtenEdges is what changedSomething below actually needs.
         List<TransactionRelationship> writtenEdges = pendingEdges.isEmpty()
                 ? List.of() : transactionGraphService.linkAll(pendingEdges);
+
+        // Emitted only now that this run's own writes above have both actually executed without
+        // throwing -- see matchedTransferRelationshipFlags' own comment on why this is deferred
+        // rather than incremented inline during the matching loop.
+        for (boolean relationshipMatch : matchedTransferRelationshipFlags) {
+            reconciliationMetrics.transferMatched(relationshipMatch);
+        }
 
         long elapsedMs = (System.nanoTime() - startedAtNanos) / 1_000_000;
 

@@ -118,6 +118,11 @@ export default function Dashboard() {
   const queryClient = useQueryClient();
   const [cashFlowRange, setCashFlowRange] = useState<CashFlowRange>('6M');
   const [showAddModal, setShowAddModal] = useState(false);
+  // Spending Breakdown's donut: which category (by index into categoryEntries) is currently
+  // hovered, or null when the pointer isn't over any slice -- drives the center label directly
+  // (see the donut's own comment) instead of Chart.js's floating tooltip, which had nowhere to
+  // render on a donut this small without overlapping that same center label.
+  const [hoveredCategoryIndex, setHoveredCategoryIndex] = useState<number | null>(null);
   // Recent Transactions' icon/color used to key off categoryName against a 4-entry hardcoded map
   // (predates custom categories, and covered only 4 of the 25 default categories even before user-
   // created ones existed). Looked up by categoryId instead so every category -- default or custom
@@ -708,21 +713,44 @@ export default function Dashboard() {
                   }}
                   options={{
                     cutout: '72%',
-                    plugins: { legend: { display: false } },
+                    // Room for hoverOffset to push a slice outward without it clipping against the
+                    // canvas edge -- with zero padding the pushed-out arc was drawing past the
+                    // canvas bounds and getting flattened wherever it did, instead of staying round.
+                    layout: { padding: 12 },
+                    plugins: {
+                      legend: { display: false },
+                      // The floating tooltip had nowhere to go on a donut this small without
+                      // overlapping the center Total label -- replaced by driving that same label
+                      // from hover state instead (below), one label, never two competing for the
+                      // same 160x160px.
+                      tooltip: { enabled: false },
+                    },
                     // animateScale (grow from center) alongside the default rotate -- Chart.js's
                     // usual arc-only rotate reads as static on a donut this small; the two together
                     // are what actually reads as "the chart appearing", not just a color change.
                     animation: { animateRotate: true, animateScale: true, duration: 900, easing: 'easeOutQuart' },
+                    onHover: (_event, elements) => {
+                      setHoveredCategoryIndex(elements.length > 0 ? elements[0].index : null);
+                    },
                   }}
                 />
                 {/* pointer-events-none: this overlay's `inset-0` box, not just its centered text,
                     was sitting directly on top of the canvas -- it swallowed every mouse event
                     across the whole donut before Chart.js's own hover handling ever saw them, so
-                    hoverOffset (and the tooltip) never fired no matter what the chart's own
+                    hoverOffset (and onHover below) never fired no matter what the chart's own
                     options said. */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <span className="text-lg font-bold text-ink">{fmt(totalSpend)}</span>
-                  <span className="text-[11px] text-muted">Total</span>
+                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-6 text-center">
+                  {hoveredCategoryIndex !== null && categoryEntries[hoveredCategoryIndex] ? (
+                    <>
+                      <span className="text-sm font-bold text-ink truncate max-w-full">{categoryEntries[hoveredCategoryIndex][0]}</span>
+                      <span className="text-[11px] text-muted">{fmt(categoryEntries[hoveredCategoryIndex][1])}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="text-lg font-bold text-ink">{fmt(totalSpend)}</span>
+                      <span className="text-[11px] text-muted">Total</span>
+                    </>
+                  )}
                 </div>
               </div>
               <div className="space-y-2 flex-1">
