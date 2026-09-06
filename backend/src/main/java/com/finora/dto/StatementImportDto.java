@@ -35,12 +35,20 @@ public class StatementImportDto {
             int transactionsImported,
             int transactionsSkipped,
             Instant importedAt,
-            int duplicateCount
+            int duplicateCount,
+            // StatementImport.storedSize's own doc comment: bytes actually written to the object
+            // store (post-compression), recorded at confirm time -- ONLY when a storage provider
+            // is configured (app.statement-storage.provider); a legacy row, or any row confirmed
+            // with no provider set, has this null rather than 0. Was written since V92 but never
+            // read anywhere before this field -- exposing it is what lets a future "storage used"
+            // feature (or a one-off SUM query) answer with real numbers instead of a guess.
+            Long storedSize
     ) {
         public static Summary from(StatementImport s, int duplicateCount) {
             return new Summary(s.getId(), s.getFileName(), s.getStatementPeriodStart(), s.getStatementPeriodEnd(),
                     s.getOpeningBalance(), s.getClosingBalance(), s.getTotalAmountDue(), s.getPaymentDueDate(),
-                    s.getTransactionsImported(), s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount);
+                    s.getTransactionsImported(), s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount,
+                    s.getStoredSize());
         }
 
         /** Same mapping as {@link #from(StatementImport, int)}, from the {@code fileContent}-free
@@ -50,7 +58,8 @@ public class StatementImportDto {
         public static Summary from(StatementImportRepository.StatementMetadata s, int duplicateCount) {
             return new Summary(s.getId(), s.getFileName(), s.getStatementPeriodStart(), s.getStatementPeriodEnd(),
                     s.getOpeningBalance(), s.getClosingBalance(), s.getTotalAmountDue(), s.getPaymentDueDate(),
-                    s.getTransactionsImported(), s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount);
+                    s.getTransactionsImported(), s.getTransactionsSkipped(), s.getImportedAt(), duplicateCount,
+                    s.getStoredSize());
         }
     }
 
