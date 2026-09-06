@@ -73,8 +73,14 @@ public class BillingCheckoutService {
         // change-plan endpoint, which handles the cancel-old/activate-new sequencing safely; this
         // endpoint is for a user's first paid subscription only. findActiveOrTrial() is deliberately
         // NOT used here -- it would miss a PAST_DUE subscription, which still has a live mandate.
+        // Provider PRESENCE, not status -- deliberately (design spec §2.1, invariant 7). A
+        // cancelled-but-not-yet-swept Razorpay subscription (status=CANCELLED, payment_provider
+        // still stamped by handleCancelled) still has real paid access per V1's own decision;
+        // narrowing this to "status is ACTIVE" would let a second mandate start during that
+        // legitimate window. Generalized from razorpaySubscriptionId to payment_provider so a
+        // RevenueCat-owned row is caught here too, not just a Razorpay one.
         subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId).stream().findFirst()
-                .filter(s -> s.getRazorpaySubscriptionId() != null)
+                .filter(s -> s.getPaymentProvider() != null && !"ADMIN_GRANT".equals(s.getPaymentProvider()))
                 .ifPresent(s -> {
                     throw new ApiException(HttpStatus.CONFLICT,
                             "You already have a billing subscription. Cancel it before starting a new one.");
@@ -303,9 +309,21 @@ public class BillingCheckoutService {
                 })
                 .orElse(null);
 
+        // Real bug found in bug-hunt review: this was `getRazorpaySubscriptionId() != null`, which
+        // a REVENUECAT-owned row never sets -- silently false for every real paying RevenueCat
+        // customer, breaking mobile's Paywall-vs-MySubscriptionScreen routing and web's
+        // "managed through the App Store/Play Store" note (both gated on this field). Generalized
+        // to payment_provider, mirroring the exact same provider-agnostic pattern already used by
+        // checkout()'s and changePlan()'s guards (design spec §2.1 invariant 7: payment_provider is
+        // non-null iff a real external mandate exists). For every Razorpay row this is equivalent
+        // to the old check -- handleActivated/handleHalted always set/clear razorpaySubscriptionId
+        // and paymentProvider together, never one without the other.
+        boolean hasBillingSubscription = subscription.getPaymentProvider() != null
+                && !"ADMIN_GRANT".equals(subscription.getPaymentProvider());
         return new MySubscriptionDto(
                 plan.getCode(), plan.getName(), subscription.getBillingCycle(), subscription.getStatus(),
                 subscription.getRenewalDate(), subscription.isAutoRenew(),
-                subscription.getRazorpaySubscriptionId() != null, pendingChange, pendingOrder);
+                hasBillingSubscription, pendingChange, pendingOrder,
+                subscription.getPaymentProvider());
     }
 }

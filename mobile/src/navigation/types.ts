@@ -43,6 +43,9 @@ export type MoreStackParamList = {
   Investments: undefined;
   Profile: undefined;
   Settings: undefined;
+  // Subscription billing V4. Picks between the Paywall and My Subscription content internally --
+  // see SubscriptionScreen's own doc comment for why this is one route, not two.
+  Subscription: undefined;
   // Phase 4: reached via the deep link EmailChangeService emails to the new address
   // (finora://email-change-verify?sessionId=...&token=...), registered in RootNavigator's
   // `linking` config -- see VerifyEmailChangeScreen's own doc comment.

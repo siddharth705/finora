@@ -1073,6 +1073,7 @@ export interface MySubscription {
   hasBillingSubscription: boolean;
   pendingChange: PendingPlanChange | null;
   pendingOrder: PendingOrder | null;
+  paymentProvider: string | null;
 }
 
 // Mirrors backend BillingDtos.CheckoutResponseDto exactly. `null` from changePlan() means the

@@ -121,7 +121,21 @@
   #     three domains are Razorpay's own documented script/frame paths and a corroborated
   #     third-party CSP report for the same widget, not a confirmed-by-production-traffic list the
   #     way the entries above are, so watch the console on the next real checkout attempt.
-  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://appleid.cdn-apple.com https://static.cloudflareinsights.com https://checkout.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://img.logo.dev; connect-src 'self' https://api.fynora.net https://dev-api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.razorpay.com https://lumberjack.razorpay.com; frame-src https://www.google.com https://accounts.google.com/gsi/ https://checkout.razorpay.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+  #   - Bug fix (production, follow-up): script-src also adds https://cdn.razorpay.com and
+  #     frame-src also adds https://api.razorpay.com -- exactly the "watch the console" follow-up
+  #     the entry above asked for. Reproduced live: "Loading the script
+  #     'https://cdn.razorpay.com/static/cx/razorpay-risk-detection/bundle.js' violates...
+  #     script-src..." (Razorpay's own device-fingerprint/fraud-detection sub-script, loaded
+  #     automatically once Checkout opens, not something this app requests directly) and "Framing
+  #     'https://api.razorpay.com/' violates... frame-src...". Seen on the Advanced Reports page,
+  #     not Billing -- openRazorpayCheckout (src/lib/razorpayCheckout.ts) is only ever called from
+  #     Billing.tsx, so the likely mechanism is Razorpay's own widget (a real third-party script,
+  #     outside React's control) still running after a client-side route change away from Billing
+  #     before it was dismissed -- this is an SPA, so that navigation never reloads the document.
+  #     Not confirmed against Razorpay's own runtime behavior or the user's exact navigation
+  #     sequence, neither of which this repo's code can show; flagging that plainly rather than
+  #     asserting it.
+  Content-Security-Policy: default-src 'self'; script-src 'self' https://www.gstatic.com https://www.google.com https://accounts.google.com/gsi/client https://appleid.cdn-apple.com https://static.cloudflareinsights.com https://checkout.razorpay.com https://cdn.razorpay.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com/gsi/style; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https://img.logo.dev; connect-src 'self' https://api.fynora.net https://dev-api.fynora.net https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://accounts.google.com/gsi/ https://www.google.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io https://*.ingest.de.sentry.io https://api.razorpay.com https://lumberjack.razorpay.com; frame-src https://www.google.com https://accounts.google.com/gsi/ https://checkout.razorpay.com https://api.razorpay.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
   Strict-Transport-Security: max-age=31536000; includeSubDomains
   Referrer-Policy: strict-origin-when-cross-origin
 

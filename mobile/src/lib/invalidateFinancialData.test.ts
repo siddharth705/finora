@@ -50,6 +50,13 @@ const NON_FINANCIAL_KEYS = new Set([
   // else signs up with this user's code -- no transaction, account, or import write moves it. Same
   // reasoning as 'support-tickets-mine' above.
   'referrals-mine',
+  // Subscription billing V4. A user's plan/entitlements change only as a side effect of a billing
+  // event (a RevenueCat purchase, restore, or webhook-driven state change) -- never as a side
+  // effect of editing a transaction, adding an account, or importing a statement. Same reasoning
+  // as 'user-settings'/'workspace-settings' above. PaywallScreen and MySubscriptionScreen already
+  // invalidate both of these directly right after a purchase/restore completes.
+  'entitlements',
+  'my-subscription',
 ]);
 
 function sourceFiles(dir: string): string[] {

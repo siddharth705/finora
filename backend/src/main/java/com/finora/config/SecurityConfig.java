@@ -148,6 +148,9 @@ public class SecurityConfig {
                     // The webhook signature (verified in RazorpayWebhookController) replaces
                     // authentication here, same reasoning as the Gmail OAuth callback above.
                     .requestMatchers(HttpMethod.POST, "/api/v1/webhooks/razorpay").permitAll()
+                    // Subscription billing V4 -- same reasoning as razorpay above; the HMAC
+                    // signature (verified in RevenueCatWebhookController) replaces authentication.
+                    .requestMatchers(HttpMethod.POST, "/api/v1/webhooks/revenuecat").permitAll()
                     .requestMatchers("/actuator/health").permitAll();
                 // Anonymous Swagger outside prod only -- see apiDocsPubliclyReachable's doc comment.
                 // Must be registered BEFORE anyRequest(): Spring Security evaluates rules in
