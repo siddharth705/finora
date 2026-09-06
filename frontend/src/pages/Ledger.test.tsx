@@ -605,6 +605,39 @@ describe('Ledger — KPI row and category chips', () => {
       expect(transactionsApi.search).toHaveBeenCalledWith(expect.objectContaining({ categoryId: 'cat-2', page: 0 }))
     );
   });
+
+  // Bug fix: the KPI stats query (statsFilters) never includes categoryId -- a chip's own count
+  // must answer "how many rows in each category," which only works if selecting one doesn't
+  // change what the others are counted against. The label must stay honest about that: it must
+  // NOT claim "(filtered)" when the ONLY active filter is a category chip, since the number next
+  // to it doesn't actually change. (It previously did claim this -- the value and label disagreed.)
+  it('does not relabel the Total Spent KPI "(filtered)" when only a category chip is selected', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [
+        txn({ id: 't1', categoryId: 'cat-1', categoryName: 'Shopping', amount: 1000, type: 'EXPENSE' }),
+        txn({ id: 't2', categoryId: 'cat-2', categoryName: 'Travel', amount: 200, type: 'EXPENSE' }),
+      ],
+      page: 0, size: 10, totalElements: 2, totalPages: 1,
+    });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Shopping', isSystem: false, icon: 'shopping-bag', color: 'blue' },
+      { id: 'cat-2', name: 'Travel', isSystem: false, icon: 'plane', color: 'green' },
+    ]);
+    const user = userEvent.setup();
+    renderLedger();
+
+    expect(await screen.findByText('Total Spent')).toBeInTheDocument();
+    expect(screen.queryByText('Total Spent (filtered)')).not.toBeInTheDocument();
+
+    await user.click(await screen.findByRole('button', { name: /travel\s*1/i }));
+
+    // The label must still read plain "Total Spent" -- and the value must still be the
+    // all-categories total (₹1,200), matching what the (unchanged) label promises -- since
+    // selecting a category chip alone doesn't change either.
+    await waitFor(() => expect(screen.getByText('Total Spent')).toBeInTheDocument());
+    expect(screen.queryByText('Total Spent (filtered)')).not.toBeInTheDocument();
+    expect(screen.getByText('₹1,200')).toBeInTheDocument();
+  });
 });
 
 // Redesign: the new Account column resolves each row's accountId against accountsApi.list(),
@@ -636,5 +669,39 @@ describe('Ledger — account column', () => {
     // Hidden behind the same reveal-on-click placeholder as Setup.tsx/Import.tsx -- not the raw
     // masked string rendered outright.
     expect(screen.getByText('•••• ••••')).toBeInTheDocument();
+  });
+});
+
+// Bug fix: needsCategoryReview and recurring are independent facts about a transaction --
+// previously only the highest-priority one rendered as a Status badge, so a recurring charge
+// that also needed a category review silently lost its "Recurring" tag the moment it needed
+// review. Both must show at once.
+describe('Ledger — Status column shows every applicable badge, not just the highest priority one', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows both Needs Review and Recurring for a transaction that is both', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ needsCategoryReview: true, recurring: true })],
+      page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    renderLedger();
+
+    expect(await screen.findByText('Needs Review')).toBeInTheDocument();
+    expect(screen.getByText('Recurring')).toBeInTheDocument();
+  });
+
+  it('falls back to Categorized/Reviewed only when neither needs-review nor recurring applies', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ needsCategoryReview: false, recurring: false, categoryManuallySet: true })],
+      page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    renderLedger();
+
+    expect(await screen.findByText('Reviewed')).toBeInTheDocument();
+    expect(screen.queryByText('Needs Review')).not.toBeInTheDocument();
+    expect(screen.queryByText('Recurring')).not.toBeInTheDocument();
   });
 });

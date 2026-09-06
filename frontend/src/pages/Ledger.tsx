@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import {
   Pencil, Trash2, X, ChevronLeft, ChevronRight, HelpCircle, Loader2,
-  Wallet, Receipt, Tag, PiggyBank, FilterX,
+  Wallet, Receipt, Tag, PiggyBank, FilterX, type LucideIcon,
 } from 'lucide-react';
 import {
   transactionsApi, categoriesApi, accountsApi, budgetsApi,
@@ -36,6 +36,20 @@ function fmt(n: number) {
   // Negative amounts (e.g. a month where spend exceeded income) must render as "-₹500",
   // not "₹-500" -- string concatenation put the currency symbol before the sign.
   return (n < 0 ? '-₹' : '₹') + Math.round(Math.abs(n)).toLocaleString('en-IN');
+}
+
+// The label+icon-badge header row `MetricCard` renders internally -- factored out here rather
+// than hand-rolled twice, since Top Category/This Month need a custom body `MetricCard` itself
+// doesn't support (a "spend (pct%)" line, a progress bar) but still want the identical header.
+function KpiCardHeader({ label, icon: Icon, iconBg, iconColor }: { label: string; icon: LucideIcon; iconBg: string; iconColor: string }) {
+  return (
+    <div className="flex items-start justify-between mb-3">
+      <p className="text-sm text-muted">{label}</p>
+      <div className={`w-9 h-9 rounded-full ${iconBg} flex items-center justify-center flex-shrink-0`}>
+        <Icon size={17} className={iconColor} />
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -73,16 +87,22 @@ function reconciliationBadge(status: Transaction['reconciliationStatus']): { lab
 
 /**
  * The mockup's Status column (Needs Review / Categorized / Recurring / Reviewed) mapped onto real
- * fields already on `Transaction` -- nothing here is a new backend concept. Priority order matters:
- * a transaction that needs review is flagged regardless of anything else true about it; recurring
- * beats a plain manual/auto distinction since "this repeats every month" is the more useful thing
- * to tell someone at a glance.
+ * fields already on `Transaction` -- nothing here is a new backend concept. `needsCategoryReview`
+ * and `recurring` are independent booleans, both worth showing at once: a recurring subscription
+ * that also needs a category review is real (see e.g. a confidence downgrade on an otherwise
+ * well-established merchant), and a reader scanning the Needs Review rows shouldn't lose the
+ * "this repeats every month" signal just because the row also needs review. Reviewed/Categorized
+ * only fills in when NEITHER of those is true -- they're the "nothing else to say" fallback, not
+ * one more option in a single priority chain.
  */
-function statusInfo(t: Transaction): { label: string; tone: 'warning' | 'primary' | 'success' } {
-  if (t.needsCategoryReview) return { label: 'Needs Review', tone: 'warning' };
-  if (t.recurring) return { label: 'Recurring', tone: 'primary' };
-  if (t.categoryManuallySet) return { label: 'Reviewed', tone: 'primary' };
-  return { label: 'Categorized', tone: 'success' };
+function statusBadges(t: Transaction): { label: string; tone: 'warning' | 'primary' | 'success' }[] {
+  const badges: { label: string; tone: 'warning' | 'primary' | 'success' }[] = [];
+  if (t.needsCategoryReview) badges.push({ label: 'Needs Review', tone: 'warning' });
+  if (t.recurring) badges.push({ label: 'Recurring', tone: 'primary' });
+  if (badges.length === 0) {
+    badges.push(t.categoryManuallySet ? { label: 'Reviewed', tone: 'primary' } : { label: 'Categorized', tone: 'success' });
+  }
+  return badges;
 }
 
 function splitDate(dateStr: string): { day: string; monthYear: string } {
@@ -160,6 +180,11 @@ export default function Ledger() {
 
   const activeFilters = { ...filters, keyword: debouncedKeyword || undefined };
   const hasActiveFilters = !!(activeFilters.type || activeFilters.status || activeFilters.categoryId
+    || activeFilters.dateFrom || activeFilters.dateTo || activeFilters.keyword);
+  // Deliberately excludes categoryId, unlike hasActiveFilters above -- the KPI row's numbers
+  // (see statsFilters below) never factor in the category chip, so labelling them "filtered"
+  // when a chip is the ONLY active filter would be true of the label but false of the value.
+  const hasStatsFilters = !!(activeFilters.type || activeFilters.status
     || activeFilters.dateFrom || activeFilters.dateTo || activeFilters.keyword);
 
   const { data: page, isLoading, isFetching } = useQuery({
@@ -288,7 +313,7 @@ export default function Ledger() {
       ) : (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <MetricCard
-            label={hasActiveFilters ? 'Total Spent (filtered)' : 'Total Spent'}
+            label={hasStatsFilters ? 'Total Spent (filtered)' : 'Total Spent'}
             value={fmt(totalSpend)}
             icon={Wallet}
             iconBg="bg-primary-light"
@@ -302,12 +327,7 @@ export default function Ledger() {
             iconColor="text-primary"
           />
           <FinoraCard>
-            <div className="flex items-start justify-between mb-3">
-              <p className="text-sm text-muted">Top Category</p>
-              <div className="w-9 h-9 rounded-full bg-success-bg flex items-center justify-center flex-shrink-0">
-                <Tag size={17} className="text-success" />
-              </div>
-            </div>
+            <KpiCardHeader label="Top Category" icon={Tag} iconBg="bg-success-bg" iconColor="text-success" />
             <p className="text-2xl font-bold mb-1 text-ink truncate">{topCategory ? topCategory.name : '—'}</p>
             {topCategory && (
               <p className="text-xs text-muted">
@@ -316,12 +336,7 @@ export default function Ledger() {
             )}
           </FinoraCard>
           <FinoraCard>
-            <div className="flex items-start justify-between mb-3">
-              <p className="text-sm text-muted">This Month</p>
-              <div className="w-9 h-9 rounded-full bg-warning-bg flex items-center justify-center flex-shrink-0">
-                <PiggyBank size={17} className="text-warning" />
-              </div>
-            </div>
+            <KpiCardHeader label="This Month" icon={PiggyBank} iconBg="bg-warning-bg" iconColor="text-warning" />
             <p className="text-2xl font-bold mb-2 text-ink">{fmt(budgetSpend)}</p>
             <div className="h-1.5 bg-black/10 rounded-full overflow-hidden mb-1">
               <div className="h-full bg-primary" style={{ width: `${budgetPct}%` }} />
@@ -488,7 +503,7 @@ export default function Ledger() {
               txns.map((t) => {
                 const { day, monthYear } = splitDate(t.date);
                 const account = accountsById.get(t.accountId);
-                const status = statusInfo(t);
+                const badges = statusBadges(t);
                 const badge = reconciliationBadge(t.reconciliationStatus);
                 return (
                   <tr key={t.id} className="border-b border-dashed border-border align-top">
@@ -562,7 +577,7 @@ export default function Ledger() {
                     </td>
                     <td className="p-3">
                       <div className="flex flex-col items-start gap-1">
-                        <Badge tone={status.tone} label={status.label} />
+                        {badges.map((b) => <Badge key={b.label} tone={b.tone} label={b.label} />)}
                         {badge && (
                           <button
                             type="button"
