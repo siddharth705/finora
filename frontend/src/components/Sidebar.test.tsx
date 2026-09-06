@@ -64,3 +64,41 @@ describe('Sidebar — collapse toggle', () => {
     expect(screen.getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument();
   });
 });
+
+describe('Sidebar — nav active-state matching', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  // '/app/reports/advanced' is a nested child route of '/app/reports' -- without `end` on the
+  // Reports link, NavLink's default prefix matching highlighted BOTH links whenever Advanced
+  // Reports was the active page (found live: Reports got the active background too, alongside
+  // Advanced Reports' own focus ring).
+  it('highlights only Advanced Reports, not Reports, when Advanced Reports is the active route', () => {
+    render(
+      <MemoryRouter initialEntries={['/app/reports/advanced']}>
+        <AuthProvider>
+          <Sidebar />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    const reportsLink = screen.getByText('Reports').closest('a');
+    const advancedReportsLink = screen.getByText('Advanced Reports').closest('a');
+
+    expect(advancedReportsLink?.className).toContain('bg-[#F4F1EC]');
+    expect(reportsLink?.className).not.toContain('bg-[#F4F1EC]');
+  });
+
+  it('still highlights Reports when Reports itself is the active route', () => {
+    render(
+      <MemoryRouter initialEntries={['/app/reports']}>
+        <AuthProvider>
+          <Sidebar />
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Reports').closest('a')?.className).toContain('bg-[#F4F1EC]');
+  });
+});
