@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Ledger from './Ledger';
-import { transactionsApi, categoriesApi } from '../api/endpoints';
+import { transactionsApi, categoriesApi, accountsApi, budgetsApi } from '../api/endpoints';
 import type { Transaction } from '../types';
 
 // Ledger has no prior test file -- this covers only what this change adds (the "Why this
@@ -18,7 +18,19 @@ vi.mock('../api/endpoints', () => ({
     update: vi.fn(),
   },
   categoriesApi: { list: vi.fn(), options: vi.fn(), create: vi.fn() },
+  // Redesign added the KPI row's account column and "This Month" budget card -- both fetch
+  // through these two, on top of the transactions/categories calls this file already mocked.
+  accountsApi: { list: vi.fn() },
+  budgetsApi: { list: vi.fn() },
 }));
+
+// Safe defaults for every test in this file -- most tests care about transactions/categories
+// behavior and never override these two, so they'd otherwise resolve to `undefined` and throw
+// inside the KPI row's `(accounts ?? []).map(...)` / `(budgets ?? []).map(...)`.
+beforeEach(() => {
+  vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  vi.mocked(budgetsApi.list).mockReset().mockResolvedValue([]);
+});
 
 // Real MerchantGroupReviewCard calls transactionsApi.groupsNeedsReview, which the mock above
 // doesn't define -- this file's tests are about the "Why this category?" panel, not the merchant-
@@ -187,15 +199,17 @@ describe('Ledger — Status column', () => {
     });
     renderLedger();
 
-    await screen.findByText('AMAZON PAY');
+    const description = await screen.findByText('AMAZON PAY');
+    const row = description.closest('tr')!;
 
-    // Exhaustive, not a name-pattern guess: an OK row's only buttons are "Why this category?"
-    // (the category cell's icon), the two row actions, and pagination -- anything beyond that
-    // set IS a Status badge, whatever it happens to be labelled. A regex over the six known
+    // Exhaustive within the ROW, not a name-pattern guess: an OK row's only buttons are "Why
+    // this category?" (the category cell's icon) and the two row actions -- anything beyond
+    // that set IS a Status badge, whatever it happens to be labelled. A regex over the six known
     // non-OK labels would pass even if OK itself grew a badge, since "OK"/"Ordinary" wouldn't
-    // match that pattern.
-    const buttonNames = screen.getAllByRole('button').map((b) => b.getAttribute('title') ?? b.getAttribute('aria-label'));
-    expect(buttonNames).toEqual(['Why this category?', 'Edit transaction', 'Delete transaction', 'Previous page', 'Next page']);
+    // match that pattern. Scoped to the row (not the whole page) since the redesign added
+    // page-level buttons (category chips, numbered pagination) this assertion isn't about.
+    const buttonNames = within(row).getAllByRole('button').map((b) => b.getAttribute('title') ?? b.getAttribute('aria-label'));
+    expect(buttonNames).toEqual(['Why this category?', 'Edit transaction', 'Delete transaction']);
   });
 
   it('shows a human label, not the raw enum, for a flagged transaction', async () => {
@@ -553,5 +567,194 @@ describe('Ledger — Phase 2 table skeleton and IconButton migration', () => {
 
     expect(await screen.findByRole('button', { name: 'Previous page' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next page' })).toBeInTheDocument();
+  });
+});
+
+// Redesign: KPI row (Total Spent / Transactions / Top Category / This Month) computed from a
+// bounded stats fetch, and category chips (with real counts) that filter the ledger by category.
+describe('Ledger — KPI row and category chips', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows total spend across the filtered window and lets a category chip filter the ledger', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [
+        txn({ id: 't1', categoryId: 'cat-1', categoryName: 'Shopping', amount: 1000, type: 'EXPENSE' }),
+        txn({ id: 't2', categoryId: 'cat-1', categoryName: 'Shopping', amount: 500, type: 'EXPENSE' }),
+        txn({ id: 't3', categoryId: 'cat-2', categoryName: 'Travel', amount: 200, type: 'EXPENSE' }),
+      ],
+      page: 0, size: 10, totalElements: 3, totalPages: 1,
+    });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Shopping', isSystem: false, icon: 'shopping-bag', color: 'blue' },
+      { id: 'cat-2', name: 'Travel', isSystem: false, icon: 'plane', color: 'green' },
+    ]);
+    const user = userEvent.setup();
+    renderLedger();
+
+    // Total Spent KPI: 1000 + 500 + 200.
+    expect(await screen.findByText('₹1,700')).toBeInTheDocument();
+
+    await waitFor(() => expect(transactionsApi.search).toHaveBeenCalled());
+    vi.mocked(transactionsApi.search).mockClear();
+
+    await user.click(await screen.findByRole('button', { name: /travel\s*1/i }));
+
+    await waitFor(() =>
+      expect(transactionsApi.search).toHaveBeenCalledWith(expect.objectContaining({ categoryId: 'cat-2', page: 0 }))
+    );
+  });
+
+  // Bug fix: the KPI stats query (statsFilters) never includes categoryId -- a chip's own count
+  // must answer "how many rows in each category," which only works if selecting one doesn't
+  // change what the others are counted against. The label must stay honest about that: it must
+  // NOT claim "(filtered)" when the ONLY active filter is a category chip, since the number next
+  // to it doesn't actually change. (It previously did claim this -- the value and label disagreed.)
+  it('does not relabel the Total Spent KPI "(filtered)" when only a category chip is selected', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [
+        txn({ id: 't1', categoryId: 'cat-1', categoryName: 'Shopping', amount: 1000, type: 'EXPENSE' }),
+        txn({ id: 't2', categoryId: 'cat-2', categoryName: 'Travel', amount: 200, type: 'EXPENSE' }),
+      ],
+      page: 0, size: 10, totalElements: 2, totalPages: 1,
+    });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Shopping', isSystem: false, icon: 'shopping-bag', color: 'blue' },
+      { id: 'cat-2', name: 'Travel', isSystem: false, icon: 'plane', color: 'green' },
+    ]);
+    const user = userEvent.setup();
+    renderLedger();
+
+    expect(await screen.findByText('Total Spent')).toBeInTheDocument();
+    expect(screen.queryByText('Total Spent (filtered)')).not.toBeInTheDocument();
+
+    await user.click(await screen.findByRole('button', { name: /travel\s*1/i }));
+
+    // The label must still read plain "Total Spent" -- and the value must still be the
+    // all-categories total (₹1,200), matching what the (unchanged) label promises -- since
+    // selecting a category chip alone doesn't change either.
+    await waitFor(() => expect(screen.getByText('Total Spent')).toBeInTheDocument());
+    expect(screen.queryByText('Total Spent (filtered)')).not.toBeInTheDocument();
+    expect(screen.getByText('₹1,200')).toBeInTheDocument();
+  });
+
+  // Bug fix: the KPI row's loading skeleton only checked the transactions-stats query, not the
+  // separate budgets query "This Month" reads -- so that card could render a real-looking
+  // "₹0 / 0% of budget" before /budgets had actually responded.
+  it('keeps showing the KPI skeleton until both the transactions stats AND budgets have loaded', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ amount: 500, type: 'EXPENSE' })], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    // Never resolves -- budgets stays "loading" for the whole test.
+    vi.mocked(budgetsApi.list).mockReset().mockReturnValue(new Promise(() => {}));
+    renderLedger();
+
+    // The transactions side has already resolved (real content is visible below)...
+    await screen.findByText('AMAZON PAY');
+    // ...but the KPI row must still be the skeleton, not a "This Month" card claiming ₹0/0%.
+    expect(screen.queryByText('This Month')).not.toBeInTheDocument();
+    expect(screen.queryByText('0% of budget')).not.toBeInTheDocument();
+    expect(screen.getByText('Loading transaction summary')).toBeInTheDocument();
+  });
+
+  // Bug fix: selecting a category, then narrowing another filter until that category has zero
+  // matches, used to make its chip vanish entirely -- leaving neither "All" nor any chip
+  // highlighted even though `categoryId` was still silently applied to the table query.
+  it('keeps the selected category chip visible at zero count once another filter empties its matches', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockImplementation((filters: any) => {
+      const content = filters.dateFrom === '2026-01-01'
+        ? [txn({ id: 't1', categoryId: 'cat-1', categoryName: 'Shopping', amount: 500, type: 'EXPENSE' })]
+        : [
+            txn({ id: 't1', categoryId: 'cat-1', categoryName: 'Shopping', amount: 500, type: 'EXPENSE' }),
+            txn({ id: 't2', categoryId: 'cat-2', categoryName: 'Travel', amount: 200, type: 'EXPENSE' }),
+          ];
+      return Promise.resolve({ content, page: 0, size: 10, totalElements: content.length, totalPages: 1 });
+    });
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([
+      { id: 'cat-1', name: 'Shopping', isSystem: false, icon: 'shopping-bag', color: 'blue' },
+      { id: 'cat-2', name: 'Travel', isSystem: false, icon: 'plane', color: 'green' },
+    ]);
+    const user = userEvent.setup();
+    renderLedger();
+
+    await user.click(await screen.findByRole('button', { name: /travel\s*1/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /travel\s*1/i })).toHaveAttribute('class', expect.stringContaining('bg-primary')));
+
+    // Narrow the date range to a window with no Travel transactions at all.
+    fireEvent.change(screen.getByLabelText('From date'), { target: { value: '2026-01-01' } });
+
+    // The Travel chip must still exist (now at zero count) and still read as selected -- not
+    // vanish, and not silently fall back to "All" looking selected instead.
+    const travelChip = await screen.findByRole('button', { name: /travel\s*0/i });
+    expect(travelChip).toHaveAttribute('class', expect.stringContaining('bg-primary'));
+    expect(screen.getByRole('button', { name: /^all/i })).not.toHaveAttribute('class', expect.stringContaining('bg-primary'));
+  });
+});
+
+// Redesign: the new Account column resolves each row's accountId against accountsApi.list(),
+// rendering the bank's own branding and the same masked-number reveal control the rest of the
+// app already uses (MaskedAccountNumber) rather than a bespoke, unmasked rendering.
+describe('Ledger — account column', () => {
+  it("shows the row's bank name and masked account number once account data loads", async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ accountId: 'acc-1' })], page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([
+      {
+        id: 'acc-1', name: 'My HDFC', accountType: 'SAVINGS', balance: 1000,
+        accountNumberMasked: 'XXXXXX4582',
+        bank: {
+          id: 'hdfc', officialName: 'HDFC Bank', shortName: 'HDFC Bank', colorHex: '#004C8F',
+          initials: 'HD', logoPath: '/assets/banks/hdfc.svg', category: 'PRIVATE',
+          websiteUrl: null, ifscPrefix: 'HDFC', supportedAccountTypes: ['SAVINGS'],
+        },
+        lastImportedAt: null, lastStatementPeriodStart: null, lastStatementPeriodEnd: null,
+        statementsCount: 0, transactionsCount: 1, status: 'ACTIVE',
+      },
+    ]);
+    renderLedger();
+
+    expect(await screen.findByText('HDFC Bank')).toBeInTheDocument();
+    // Hidden behind the same reveal-on-click placeholder as Setup.tsx/Import.tsx -- not the raw
+    // masked string rendered outright.
+    expect(screen.getByText('•••• ••••')).toBeInTheDocument();
+  });
+});
+
+// Bug fix: needsCategoryReview and recurring are independent facts about a transaction --
+// previously only the highest-priority one rendered as a Status badge, so a recurring charge
+// that also needed a category review silently lost its "Recurring" tag the moment it needed
+// review. Both must show at once.
+describe('Ledger — Status column shows every applicable badge, not just the highest priority one', () => {
+  beforeEach(() => {
+    vi.mocked(transactionsApi.needsReview).mockReset().mockResolvedValue([]);
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  it('shows both Needs Review and Recurring for a transaction that is both', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ needsCategoryReview: true, recurring: true })],
+      page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    renderLedger();
+
+    expect(await screen.findByText('Needs Review')).toBeInTheDocument();
+    expect(screen.getByText('Recurring')).toBeInTheDocument();
+  });
+
+  it('falls back to Categorized/Reviewed only when neither needs-review nor recurring applies', async () => {
+    vi.mocked(transactionsApi.search).mockReset().mockResolvedValue({
+      content: [txn({ needsCategoryReview: false, recurring: false, categoryManuallySet: true })],
+      page: 0, size: 10, totalElements: 1, totalPages: 1,
+    });
+    renderLedger();
+
+    expect(await screen.findByText('Reviewed')).toBeInTheDocument();
+    expect(screen.queryByText('Needs Review')).not.toBeInTheDocument();
+    expect(screen.queryByText('Recurring')).not.toBeInTheDocument();
   });
 });
