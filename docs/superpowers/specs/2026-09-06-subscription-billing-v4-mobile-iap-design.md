@@ -35,6 +35,34 @@ for entitlements — the same model web already uses, extended to a second payme
 | Ownership-source rule (named) | **A user has at most one active paid subscription, owned by exactly one provider at a time.** Moving from one provider to the other requires the existing one to end first (expire or be cancelled through its own store/portal) — there is no in-place transfer. §6.3/§6.4's read-only views and the guard in §6.4 are both direct consequences of this one rule, not independent decisions. |
 | Admin override vs. a RevenueCat subscriber | Same rule as an existing Razorpay subscriber (design spec V1 §2: admin override blocked while a live paid mandate exists) — **but with no symmetric release valve**. `SubscriptionService.cancelPaidSubscription` is a Razorpay-specific API call (`gateway.cancelSubscription(razorpaySubscriptionId, ...)`); there is no backend-reachable way to force-release a real App Store/Play Store mandate the way there is for Razorpay. So for a `REVENUECAT`-owned row, admin override stays blocked with no "cancel it first" escape hatch — support has to wait for the subscription to actually end. See §6.8. |
 
+### 2.1 System invariants
+
+Everything above is an application of these. Stated once, explicitly, so a future change is checked
+against them rather than against scattered individual behaviors:
+
+1. At most one active paid subscription per user.
+2. Every paid subscription is owned by exactly one payment provider at a time (the named
+   ownership-source rule above).
+3. Entitlements are derived exclusively from the `subscriptions` table — never from a client's own
+   claim about what it just purchased.
+4. A client's purchase success (Razorpay Checkout resolving, or `purchasePackage()` resolving) never
+   grants entitlement directly — only a verified webhook does (design spec V1 §6.1 step 6; this
+   spec's §6.1 step 5 extends it to IAP).
+5. Webhooks are the only source of activation, renewal, plan change, and expiration — for both
+   providers.
+6. RevenueCat's `appUserID` is always the authenticated Fynora user id — never an anonymous one
+   (the "purchase requires authentication" row above is what guarantees this holds).
+7. **`subscriptions.payment_provider` is non-null if and only if a real external mandate still
+   exists or is still winding down** — it is not a permanent historical stamp. Checked against the
+   real code, not assumed: `handleHalted` and the reconciliation sweep both explicitly null it out
+   when a subscription's paid access truly ends. The one nuance this invariant has to account for:
+   `handleCancelled` sets `status=CANCELLED` but deliberately leaves `payment_provider` stamped until
+   the sweep runs at period end — because per V1's own decision, a cancelled-but-not-yet-swept
+   subscription still has real paid access (access continues until `current_period_end`). This is
+   exactly why `BillingCheckoutService.checkout()`'s duplicate-subscription guard (§6.4) checks
+   provider presence, not status: narrowing it to "status is ACTIVE" would let someone start a
+   *second* mandate during that legitimate cancelled-but-still-active window.
+
 ## 3. Verified RevenueCat behavior this design relies on
 
 Pulled from RevenueCat's own docs (`context7:/websites/revenuecat`), not assumed:
@@ -90,7 +118,7 @@ Pulled from RevenueCat's own docs (`context7:/websites/revenuecat`), not assumed
 ```
 payment_provider   VARCHAR   gains 'REVENUECAT' as a value (already free-text; no migration needed for the column itself)
 store_platform      VARCHAR(10)   NEW, nullable. 'IOS' | 'ANDROID', set only for REVENUECAT rows (see §2 — not a general-purpose origin field).
-revenuecat_original_transaction_id  VARCHAR(50)   NEW, nullable. RevenueCat/store analog of razorpay_subscription_id — the stable id, not the per-renewal transaction_id.
+revenuecat_original_transaction_id  VARCHAR(100)  NEW, nullable. RevenueCat/store analog of razorpay_subscription_id — the stable id, not the per-renewal transaction_id. Wider than Razorpay's own 50-char id column deliberately: real samples (RevenueCat's docs, Apple's own forum examples) stay in the 13-17 digit range today, but there's no documented hard ceiling, and the cost of extra headroom on a rarely-joined column is negligible.
 ```
 
 Same single-row-per-user model as V1/V3 — no second table for IAP *subscriptions*. The existing
@@ -110,16 +138,24 @@ plan/cycle/platform — twice as many rows, keyed by platform too):
 iap_products
 ------------
 id                    UUID PK
-provider_product_id   VARCHAR(100)  NOT NULL UNIQUE   -- e.g. "plus_monthly_ios", "plus_monthly_android"
+provider_product_id   VARCHAR(100)  NOT NULL   -- e.g. "plus_monthly" (see UNIQUE note below)
 plan_id               UUID NOT NULL REFERENCES plans(id)
 billing_cycle         VARCHAR(10)   NOT NULL   -- MONTHLY | YEARLY
 platform              VARCHAR(10)   NOT NULL   -- IOS | ANDROID
 active                BOOLEAN NOT NULL DEFAULT true
+
+UNIQUE (provider_product_id, platform)
 ```
 
-`RevenueCatWebhookDispatcher` looks up this table by `provider_product_id` (from the webhook's
-`product_id`) to resolve plan/cycle deterministically — the same lookup-not-branch pattern
-`BillingCheckoutService` already uses via `billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue`.
+`UNIQUE` is on the pair, not `provider_product_id` alone: nothing requires App Store Connect and
+Play Console product ids to be globally distinct from each other (a developer could legitimately
+name both stores' monthly-Plus product `plus_monthly`), so a same-named product on each platform
+must resolve as two separate, valid rows, not a unique-constraint violation.
+
+`RevenueCatWebhookDispatcher` looks up this table by `(provider_product_id, platform)` (both taken
+from the webhook's `product_id`/`store`) to resolve plan/cycle deterministically — the same
+lookup-not-branch pattern `BillingCheckoutService` already uses via
+`billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue`.
 
 ### 4.3 `webhook_events` — primary key widened
 
@@ -189,6 +225,10 @@ subscriber could check out again on web today. Generalized to a provider-agnosti
 
 ```java
 subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId).stream().findFirst()
+        // Provider PRESENCE, not status — deliberately. A cancelled-but-not-yet-swept Razorpay
+        // subscription (status=CANCELLED, payment_provider still stamped) still has real paid
+        // access per V1's own decision; narrowing this to "status is ACTIVE" would let a second
+        // mandate start during that legitimate window. See invariant 7 (§2.1).
         .filter(s -> s.getPaymentProvider() != null && !"ADMIN_GRANT".equals(s.getPaymentProvider()))
         .ifPresent(s -> { throw new ApiException(HttpStatus.CONFLICT, ...); });
 ```
@@ -236,6 +276,12 @@ options for a RevenueCat subscriber needing an admin-granted plan are: wait for 
 to actually expire, or ask them to cancel it themselves through the store first. Worth stating
 plainly rather than leaving a future engineer to discover it while trying to build the
 generalization.
+
+The blocked error itself should say why in terms support can act on and relay to the user, not just
+that it's blocked — e.g. `"This account has an active Apple/Google subscription. Ask the user to
+cancel it through the App Store/Play Store first, then retry."` — the same "the error explains what
+to do, not just what went wrong" standard this codebase already holds itself to elsewhere (e.g.
+`checkout()`'s own 409 telling the caller exactly which endpoint to hit first).
 
 ## 7. API surface (new/changed)
 
@@ -300,6 +346,12 @@ mobile just needs its own client, which this plan must now build:
 - Sandbox/TestFlight and Play Console internal-testing accounts for verifying a real purchase
   end-to-end before submission, mirroring how V3's production gap was caught by a real test-mode
   dry run rather than trusted from tests alone.
+- **A specific unknown this design cannot resolve from documentation alone**: whether `PRODUCT_CHANGE`
+  arrives before, after, or interleaved with the entitlement actually changing on Apple's and
+  Google's sides (the two stores are not guaranteed to behave identically here). This has to be
+  observed against a real sandbox upgrade/downgrade before production, the same way the Razorpay
+  webhook payload-unwrap bug was only ever found by a real dry run, not by reading Razorpay's docs
+  more carefully.
 
 ## 11. Testing strategy
 
