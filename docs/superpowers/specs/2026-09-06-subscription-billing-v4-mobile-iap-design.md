@@ -29,7 +29,7 @@ for entitlements — the same model web already uses, extended to a second payme
 | Existing mobile (RevenueCat) subscriber opens web | Symmetric to the above: Billing Portal shows plan controls disabled, with "This subscription is managed through the App Store/Play Store" and a deep link to the relevant store's subscription-management page — not hidden entirely, so the user isn't confused about why they don't see their real plan. |
 | Cross-store/cross-device | Entitlements are account-scoped, not device- or platform-scoped — a purchase on iPhone is visible on Android and web the moment they're signed into the same Fynora account, because all three read the same `subscriptions` row keyed by `user_id`. No new mechanism needed; stated here so it isn't assumed to require one. |
 | `store_platform` | New column, nullable, meaningful **only** when `payment_provider=REVENUECAT`: `IOS` \| `ANDROID`, taken from RevenueCat's webhook `store` field. Deliberately *not* a parallel `WEB`/`ADMIN_GRANT`-inclusive enum (an earlier draft called this `subscription_source` with those extra values) — that would create two columns both claiming to represent "origin" for the same Razorpay/admin-grant rows, exactly the drift risk a reviewer flagged. `payment_provider` alone already answers "web vs. mobile vs. admin"; this column only answers the one question it can't: which store. |
-| Webhook ledger | Reuses the existing `webhook_events` table (`WebhookEventService.claim(eventId, provider, eventType, payload)` already takes `provider` as a parameter for exactly this) — with its primary key widened from `event_id` alone to `(provider, event_id)`. Today it's `event_id`-only, which has only ever avoided collision by accident (a single provider using it); adding a second provider means this needs to be correct by design, not by luck of two different id formats. |
+| Webhook ledger | Reuses the existing `webhook_events` table (`WebhookEventService.claim(eventId, provider, eventType, payload)` already takes `provider` as a parameter for exactly this). Collision-safety against a second provider is achieved by having `RevenueCatWebhookController` prefix its own event ids (`"revenuecat:" + rawEventId`) before calling `claim()` — not by widening the table's primary key. An earlier draft called for a composite `(provider, event_id)` PK; checking the actual JPA setup (`WebhookEvent`'s `event_id` is a plain single-column `@Id`, with a native `INSERT ... ON CONFLICT (event_id)` query) showed that would mean a composite JPA key, a rewritten native query, and new signatures for `markProcessed`/`markFailed` and both their call sites — real surgery for a collision risk (Razorpay's own id format vs. RevenueCat's UUIDs) that a one-line prefix closes just as completely, with zero schema or existing-behavior change. |
 | Cancellation/plan changes on mobile | Not built as app-side controls — both App Store and Play Store policy require subscription cancellation to go through their own native subscription-management UI, not a button inside the app. Mobile's "My Subscription" screen deep-links out to it (`itms-apps://apps.apple.com/account/subscriptions` on iOS, the Play Store subscriptions center on Android) rather than implementing a custom cancel flow. |
 | Purchase requires authentication | The mobile purchase flow (Paywall, `purchasePackage()`) is unreachable until the user is signed in — `Purchases.configure()` only ever runs with the real Fynora user id already known (§2's `appUserID` decision), never RevenueCat's own anonymous `$RCAnonymousID`. This is what makes §9's "TRANSFER out of scope" claim actually true rather than merely hoped for — nothing in the mobile app's existing navigation exposes billing screens pre-auth today, so this needs verifying, not building. |
 | Ownership-source rule (named) | **A user has at most one active paid subscription, owned by exactly one provider at a time.** Moving from one provider to the other requires the existing one to end first (expire or be cancelled through its own store/portal) — there is no in-place transfer. §6.3/§6.4's read-only views and the guard in §6.4 are both direct consequences of this one rule, not independent decisions. |
@@ -157,9 +157,12 @@ from the webhook's `product_id`/`store`) to resolve plan/cycle deterministically
 lookup-not-branch pattern `BillingCheckoutService` already uses via
 `billingPriceRepository.findByPlanIdAndBillingCycleAndActiveTrue`.
 
-### 4.3 `webhook_events` — primary key widened
+### 4.3 `webhook_events` — no schema change
 
-`(event_id)` → `(provider, event_id)`. See §2's "Webhook ledger" row for why.
+No migration needed here at all — see §2's "Webhook ledger" row. The provider-prefixed event id
+(`"revenuecat:" + rawEventId`) is what `RevenueCatWebhookController` passes to
+`WebhookEventService.claim()`/`markProcessed()`/`markFailed()`; those methods and
+`WebhookEventRepository` are untouched.
 
 ### 4.4 New: `RevenueCatProperties`
 
@@ -367,8 +370,8 @@ asserting the real state change — not just a 200 response.
 
 ## 12. Suggested build sequence (for the implementation plan)
 
-1. Data model migration: `store_platform`/`revenuecat_original_transaction_id` on `subscriptions`,
-   the new `iap_products` table, and widening `webhook_events`' primary key to `(provider, event_id)`.
+1. Data model migration: `store_platform`/`revenuecat_original_transaction_id` on `subscriptions`
+   and the new `iap_products` table. No `webhook_events` change (§4.3).
 2. `RevenueCatWebhookController` + dispatcher + `RevenueCatProperties`, with the signature+timestamp
    verification from §3 — backend-only, testable without any mobile client changes yet.
 3. Generalize `BillingCheckoutService.checkout()`'s duplicate-subscription guard (§6.4) and
