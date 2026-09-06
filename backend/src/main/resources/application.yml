@@ -722,6 +722,12 @@ app:
       key-secret: ${RAZORPAY_KEY_SECRET:}
       webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
 
+    # Subscription billing V4 (docs/superpowers/specs/2026-09-06-subscription-billing-v4-mobile-iap-design.md).
+    # Same unset-is-supported posture as razorpay above -- the RevenueCat webhook answers 503 until
+    # a real RevenueCat project exists (spec §10).
+    revenuecat:
+      webhook-signing-secret: ${REVENUECAT_WEBHOOK_SIGNING_SECRET:}
+
   # NotificationDispatcher's poller/nudge -- same enabled-flag shape as learning/import above.
   notification:
     queue:

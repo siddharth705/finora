@@ -47,6 +47,15 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
 
     Optional<Subscription> findByRazorpaySubscriptionId(String razorpaySubscriptionId);
 
+    /** RevenueCat/store analog of {@code findByRazorpaySubscriptionId} -- looks the subscription up
+     *  by its stable external id, independent of the row's current status. RevenueCatWebhookDispatcher
+     *  uses this for every event except INITIAL_PURCHASE, exactly mirroring why
+     *  RazorpayWebhookDispatcher's handleCharged/handlePending/handleHalted/handleCancelled never
+     *  use {@code findActiveOrTrial}: a subscription in PAST_DUE (set by a billing-issue/pending
+     *  event) must still be reachable by the RENEWAL that reactivates it or the EXPIRATION that
+     *  finally downgrades it -- both of which findActiveOrTrial's ACTIVE/TRIAL filter would miss. */
+    Optional<Subscription> findByRevenuecatOriginalTransactionId(String revenuecatOriginalTransactionId);
+
     /** DataExportService.buildBundle -- native, bypassing {@code @SQLRestriction} the same way
      *  AccountRepository.findByUserIdIncludingDeleted does: a soft-deleted subscription must
      *  still appear in the export, not silently vanish, the same "purge scope exactly" rule this

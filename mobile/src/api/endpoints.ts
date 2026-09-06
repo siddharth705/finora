@@ -775,3 +775,32 @@ export const referralsApi = {
   myCode: () => api.get<{ code: string }>('/referrals/my-code').then((r) => r.data),
   mine: () => api.get<MyReferralsDto>('/referrals/mine').then((r) => r.data),
 };
+
+/** Subscription billing V4. Mirrors frontend's EntitlementsDto exactly -- backend endpoint
+ *  (GET /api/v1/entitlements) is unchanged; this is the mobile client that never existed before. */
+export interface EntitlementsDto {
+  planCode: string | null;
+  planName: string | null;
+  features: Record<string, boolean>;
+}
+
+export const entitlementsApi = {
+  mine: () => api.get<EntitlementsDto>('/entitlements').then((r) => r.data),
+};
+
+/** Subscription billing V4. Mirrors frontend's MySubscription exactly (mobile only ever reads
+ *  this -- purchasing happens through RevenueCat's SDK, not a checkout()/changePlan() call). */
+export interface MySubscription {
+  planCode: string;
+  planName: string;
+  billingCycle: string | null;
+  status: string;
+  renewalDate: string | null;
+  autoRenew: boolean;
+  hasBillingSubscription: boolean;
+  paymentProvider: string | null;
+}
+
+export const billingApi = {
+  mySubscription: () => api.get<MySubscription>('/billing/subscription').then((r) => r.data),
+};
