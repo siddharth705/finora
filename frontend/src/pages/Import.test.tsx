@@ -45,7 +45,7 @@ import Import from './Import';
 import { AuthProvider } from '../context/AuthContext';
 import { importApi, importJobsApi, statementImportsApi, categoriesApi, accountsApi, type ImportJobProgress } from '../api/endpoints';
 import type { Account, StagedAccountSection } from '../types';
-import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, NO_ACTIVITY_IN_PERIOD, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED } from '../api/errorCodes';
+import { PDF_PASSWORD_REQUIRED, PDF_PASSWORD_INVALID, NO_HEADER_DETECTED, NO_TRANSACTIONS_FOUND, NO_ACTIVITY_IN_PERIOD, SCANNED_OCR_REQUIRED, CORRUPT_PDF, IMPORT_SESSION_ALREADY_CONFIRMED, ACCOUNT_LIMIT_REACHED, STATEMENT_PERIOD_TOO_LONG } from '../api/errorCodes';
 import { IMPORT_FAILURE_MESSAGES } from '../api/importFailureMessages';
 import type { DetectedAccountInfo } from '../types';
 
@@ -954,6 +954,78 @@ describe('Import — Financial Product Discovery on the review screen', () => {
 
     expect(screen.getByText(/MATURITY_FIELD/)).toBeInTheDocument();
     expect(why).toHaveAttribute('aria-expanded', 'true');
+  });
+});
+
+/**
+ * plans.ts's "Unlimited accounts" / "Extended financial history" Plus/Premium promises,
+ * enforced backend-side (AccountService.create / ImportController). This suite proves only that
+ * Import.tsx reacts correctly to the two error codes those gates throw -- ACCOUNT_LIMIT_REACHED
+ * and STATEMENT_PERIOD_TOO_LONG -- with a "See Plus plans" link the ordinary confirm-failure
+ * banner doesn't get, same "the frontend has to TELL THEM APART" reasoning the password-required
+ * codes above already exercise.
+ */
+describe('Import — Free-tier entitlement gates show an upgrade prompt', () => {
+  function stagedRow(description: string) {
+    return {
+      date: '2026-07-10', description, amount: 100, type: 'EXPENSE' as const,
+      suggestedCategory: 'Other', categorySource: 'rule' as const, ruleId: null,
+      likelyDuplicate: false, referenceNumber: null, balanceAfter: null, duplicateMatch: null,
+    };
+  }
+
+  function stageRows() {
+    vi.mocked(importApi.stagePdf).mockReset().mockResolvedValue({
+      sessionId: 'session-entitlement',
+      multiAccount: false,
+      sections: null,
+      staging: {
+        rows: [stagedRow('BLINKIT GROCERIES 9982')], totalParsed: 1, flaggedDuplicates: 0,
+        detectedAccount, unparseableRows: [],
+      },
+    } as never);
+  }
+
+  beforeEach(() => {
+    vi.mocked(categoriesApi.list).mockReset().mockResolvedValue([]);
+    vi.mocked(accountsApi.list).mockReset().mockResolvedValue([]);
+  });
+
+  const confirmButton = () => screen.getByRole('button', { name: /confirm import/i });
+
+  it.each([
+    [ACCOUNT_LIMIT_REACHED, 'Free plan is limited to 2 accounts. Upgrade to Plus for unlimited accounts.'],
+    [STATEMENT_PERIOD_TOO_LONG, 'Free plan statements can cover at most 31 days. Upgrade to Plus to import longer statement periods.'],
+  ])('shows the server message and a "See Plus plans" link for %s', async (errorCode, message) => {
+    stageRows();
+    vi.mocked(importApi.confirm).mockReset().mockRejectedValue({
+      response: { data: { errorCode, message } },
+    });
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    await user.click(confirmButton());
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'See Plus plans' })).toHaveAttribute('href', '/app/billing');
+  });
+
+  it('does not show the upgrade link for an ordinary confirm failure', async () => {
+    stageRows();
+    vi.mocked(importApi.confirm).mockReset().mockRejectedValue({
+      response: { data: { message: 'Could not complete the import.' } },
+    });
+    const user = userEvent.setup();
+    renderImport();
+
+    await pickAndUploadPdf(user);
+    await waitFor(() => expect(confirmButton()).toBeEnabled());
+    await user.click(confirmButton());
+
+    expect(await screen.findByText('Could not complete the import.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'See Plus plans' })).not.toBeInTheDocument();
   });
 });
 
