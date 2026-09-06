@@ -4,6 +4,7 @@ import { Button } from '../design-system';
 import { useOnboardingUI } from './OnboardingUIContext';
 import { WelcomeScreen } from './WelcomeScreen';
 import { FinancialFocusScreen } from './FinancialFocusScreen';
+import { SuccessScreen } from './SuccessScreen';
 
 export function OnboardingFlow() {
   const { step, setStep } = useOnboardingUI();
@@ -43,7 +44,10 @@ export function OnboardingFlow() {
       </div>
     );
   }
+  if (step === 'success') {
+    return <SuccessScreen onDone={finishOnboarding} />;
+  }
   // 'tour' is rendered by ProtectedRoute directly, never by OnboardingFlow -- see that
-  // component's own comment. 'success' lands in Task 11.
+  // component's own comment.
   return <div data-testid="onboarding-flow">Onboarding flow placeholder</div>;
 }

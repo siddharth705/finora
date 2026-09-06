@@ -50,6 +50,11 @@ vi.mock('../api/endpoints', () => ({
   budgetsApi: { list: vi.fn() },
   reportsApi: { availableMonths: vi.fn(), forMonth: vi.fn() },
   recurringApi: { list: vi.fn() },
+  // ChecklistWidget (mounted on Dashboard, D-onboarding) fetches this on every render -- default
+  // to "already 6/6" so it renders nothing and every existing test below, none of which cares
+  // about onboarding, keeps seeing exactly the Dashboard content it did before this widget
+  // existed.
+  onboardingApi: { getChecklist: vi.fn().mockResolvedValue({ items: [], completedCount: 6, totalCount: 6 }) },
 }));
 
 function summary(overrides: Partial<DashboardSummary> = {}): DashboardSummary {
