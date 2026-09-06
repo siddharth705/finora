@@ -582,4 +582,44 @@ class BillingCheckoutServiceTest {
         assertThat(dto.pendingOrder().razorpaySubscriptionId()).isEqualTo("sub_abandoned");
         assertThat(dto.pendingOrder().keyId()).isEqualTo("rzp_test_123");
     }
+
+    @Test
+    void mySubscriptionSurfacesTheRevenueCatPaymentProvider() {
+        // planRepository.findById(planId) is NOT already stubbed by setUp() -- only findByCode
+        // is -- so this needs its own stub, same as the existing
+        // mySubscriptionReturnsThePlanAndRenewalDateForAPaidSubscriber test does for "PLUS".
+        Plan premium = new Plan();
+        ReflectionTestUtils.setField(premium, "id", planId);
+        premium.setCode("PREMIUM");
+        premium.setName("Premium");
+        when(planRepository.findById(planId)).thenReturn(Optional.of(premium));
+
+        Subscription subscription = new Subscription();
+        ReflectionTestUtils.setField(subscription, "id", UUID.randomUUID());
+        subscription.setPlanId(planId);
+        subscription.setBillingCycle("MONTHLY");
+        subscription.setStatus(Subscription.STATUS_ACTIVE);
+        subscription.setPaymentProvider("REVENUECAT");
+        subscription.setAutoRenew(true);
+        when(subscriptionRepository.findActiveOrTrial(userId)).thenReturn(Optional.of(subscription));
+        when(planChangeRepository.findBySubscriptionIdOrderByCreatedAtDesc(subscription.getId()))
+                .thenReturn(List.of());
+
+        var dto = service.mySubscription(userId);
+
+        assertThat(dto.paymentProvider()).isEqualTo("REVENUECAT");
+    }
+
+    @Test
+    void checkoutRefusesWhenTheUserAlreadyHasARevenueCatOwnedSubscription() {
+        Subscription existing = new Subscription();
+        existing.setUserId(userId);
+        existing.setPlanId(UUID.randomUUID());
+        existing.setPaymentProvider("REVENUECAT");
+        when(subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId)).thenReturn(List.of(existing));
+
+        assertThatThrownBy(() -> service.checkout(userId, "PREMIUM", "MONTHLY"))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("already have a billing subscription");
+    }
 }

@@ -73,8 +73,14 @@ public class BillingCheckoutService {
         // change-plan endpoint, which handles the cancel-old/activate-new sequencing safely; this
         // endpoint is for a user's first paid subscription only. findActiveOrTrial() is deliberately
         // NOT used here -- it would miss a PAST_DUE subscription, which still has a live mandate.
+        // Provider PRESENCE, not status -- deliberately (design spec §2.1, invariant 7). A
+        // cancelled-but-not-yet-swept Razorpay subscription (status=CANCELLED, payment_provider
+        // still stamped by handleCancelled) still has real paid access per V1's own decision;
+        // narrowing this to "status is ACTIVE" would let a second mandate start during that
+        // legitimate window. Generalized from razorpaySubscriptionId to payment_provider so a
+        // RevenueCat-owned row is caught here too, not just a Razorpay one.
         subscriptionRepository.findByUserIdOrderByCreatedAtDesc(userId).stream().findFirst()
-                .filter(s -> s.getRazorpaySubscriptionId() != null)
+                .filter(s -> s.getPaymentProvider() != null && !"ADMIN_GRANT".equals(s.getPaymentProvider()))
                 .ifPresent(s -> {
                     throw new ApiException(HttpStatus.CONFLICT,
                             "You already have a billing subscription. Cancel it before starting a new one.");
@@ -306,6 +312,7 @@ public class BillingCheckoutService {
         return new MySubscriptionDto(
                 plan.getCode(), plan.getName(), subscription.getBillingCycle(), subscription.getStatus(),
                 subscription.getRenewalDate(), subscription.isAutoRenew(),
-                subscription.getRazorpaySubscriptionId() != null, pendingChange, pendingOrder);
+                subscription.getRazorpaySubscriptionId() != null, pendingChange, pendingOrder,
+                subscription.getPaymentProvider());
     }
 }
