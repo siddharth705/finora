@@ -82,7 +82,7 @@ public class ResendEmailProvider implements EmailProvider {
         String text = applyTemplateVariables(message.text(), message.templateVariables());
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("from", fromHeader());
+        body.put("from", fromHeader(message.from()));
         body.put("to", List.of(message.to()));
         body.put("subject", message.subject());
         if (html != null) body.put("html", html);
@@ -113,12 +113,13 @@ public class ResendEmailProvider implements EmailProvider {
     }
 
     /** "Name <email>" when EMAIL_FROM_NAME is set, matching how every real mail client renders
-     *  a display name -- otherwise just the bare address, exactly today's existing behavior. */
-    private String fromHeader() {
+     *  a display name -- otherwise just the bare address, exactly today's existing behavior.
+     *  {@code override} is {@link EmailMessage#from()} -- null for every non-billing email, in
+     *  which case this falls back to the provider's own configured default exactly as before. */
+    private String fromHeader(String override) {
+        String address = (override != null && !override.isBlank()) ? override : emailProperties.getFromAddress();
         String fromName = emailProperties.getFromName();
-        return (fromName != null && !fromName.isBlank())
-                ? fromName + " <" + emailProperties.getFromAddress() + ">"
-                : emailProperties.getFromAddress();
+        return (fromName != null && !fromName.isBlank()) ? fromName + " <" + address + ">" : address;
     }
 
     private static String applyTemplateVariables(String content, Map<String, String> variables) {
@@ -218,5 +219,18 @@ public class ResendEmailProvider implements EmailProvider {
                 <p>If you didn't do this, contact support immediately.</p>
                 """.formatted(when);
         return send(EmailMessage.html(toEmail, "Your Fynora account has been deleted", html));
+    }
+
+    @Override
+    public EmailResult sendSubscriptionActivatedEmail(String toEmail, String fullName, String planName, String billingCycle) {
+        String cadence = "YEARLY".equals(billingCycle) ? "yearly" : "monthly";
+        String html = """
+                <p>Hi %s,</p>
+                <p>Your Fynora <strong>%s</strong> subscription is now active, billed %s.</p>
+                <p>You can review your plan, payment history, or make changes any time from Billing in the app.</p>
+                <p>Questions about this charge? Just reply to this email.</p>
+                """.formatted(fullName, planName, cadence);
+        return send(EmailMessage.htmlFrom(toEmail, "Your Fynora " + planName + " subscription is active",
+                html, emailProperties.getBillingFromAddress()));
     }
 }

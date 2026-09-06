@@ -16,6 +16,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.never;
 
@@ -32,6 +34,7 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
     @Autowired private PaymentRepository paymentRepository;
 
     @MockitoBean private RazorpaySubscriptionGateway gateway;
+    @MockitoBean private EmailProvider emailProvider;
 
     private User createUser() {
         User user = new User();
@@ -80,6 +83,9 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
         List<SubscriptionEvent> events = subscriptionEventRepository.findAll().stream()
                 .filter(e -> e.getSubscriptionId().equals(subscription.getId())).toList();
         assertThat(events).anyMatch(e -> e.getEventType().equals(SubscriptionEvent.SUBSCRIPTION_CREATED));
+
+        verify(emailProvider).sendSubscriptionActivatedEmail(
+                eq(user.getEmail()), eq(user.getFullName()), eq("Premium"), eq("MONTHLY"));
     }
 
     @Test
@@ -88,6 +94,8 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
                 "subscription", Map.of("entity", Map.of("id", "sub_never_created", "current_end", 0L)));
 
         dispatcher.dispatch("subscription.activated", payload); // must not throw
+
+        verify(emailProvider, never()).sendSubscriptionActivatedEmail(anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -312,6 +320,11 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
                 .filter(e -> e.getEventType().equals(SubscriptionEvent.SUBSCRIPTION_CREATED))
                 .count();
         assertThat(after - before).isEqualTo(1);
+        // Same idempotency guard that stops a second SUBSCRIPTION_CREATED event must also stop a
+        // second confirmation email -- authenticated + activated both firing for one real
+        // checkout must not read to the user as two separate purchases.
+        verify(emailProvider, org.mockito.Mockito.times(1)).sendSubscriptionActivatedEmail(
+                eq(user.getEmail()), anyString(), anyString(), anyString());
     }
 
     @Test
@@ -344,6 +357,7 @@ class RazorpayWebhookDispatcherIT extends AbstractIntegrationTest {
         assertThat(subscription.getRazorpaySubscriptionId()).isNull();
         SubscriptionOrder reloaded = subscriptionOrderRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(SubscriptionOrder.STATUS_ABANDONED);
+        verify(emailProvider, never()).sendSubscriptionActivatedEmail(anyString(), anyString(), anyString(), anyString());
     }
 
     @Test
