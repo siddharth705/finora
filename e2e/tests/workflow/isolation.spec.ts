@@ -263,5 +263,7 @@ test.describe('Phase 10 — one user cannot see or shape another', () => {
     // payments/referral_codes/subscriptions/wallet_ledger (D-28's billing/wallet/referral
     // tables) were fixed to ON DELETE CASCADE by V106 -- see that migration's own comment for
     // why all four belong to the user rather than needing to survive as an audit trail.
+    // subscription_orders (Subscription Billing V1's own checkout/order table, V154) got the
+    // same treatment by V157 for the same reason.
   });
 });
