@@ -7,11 +7,14 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The storage contract, exercised against a real temp directory rather than a mock -- a mock would
@@ -148,6 +151,29 @@ class FilesystemStatementStorageTest {
         assertThatThrownBy(() -> storage().delete("../../etc/passwd"))
                 .isInstanceOf(StatementStorageException.class)
                 .hasMessageContaining("escapes the storage root");
+    }
+
+    @Test
+    void refusesAPreExistingReadOnlyRootAtConstruction(@TempDir Path readOnlyRoot) throws IOException {
+        // Files.createDirectories() is a no-op when the root already exists -- it does not check
+        // permissions on a directory it didn't have to create. Without an explicit writability
+        // check, a pre-existing but read-only mount would sail through construction and only fail
+        // later, at the first store() call, with a message that names a scratch file rather than
+        // the misconfigured root. This asserts the constructor catches it instead.
+        assumeTrue(readOnlyRoot.getFileSystem().supportedFileAttributeViews().contains("posix"),
+                "read-only permission enforcement below is POSIX-specific");
+        Files.setPosixFilePermissions(readOnlyRoot, PosixFilePermissions.fromString("r-xr-xr-x"));
+        try {
+            assumeFalse(Files.isWritable(readOnlyRoot), "running as root ignores POSIX write bits");
+
+            assertThatThrownBy(() -> new FilesystemStatementStorage(readOnlyRoot.toString()))
+                    .isInstanceOf(StatementStorageException.class)
+                    .hasMessageContaining(readOnlyRoot.toString())
+                    .hasMessageContaining("not writable");
+        } finally {
+            // Restore write permission so @TempDir can clean the directory up afterward.
+            Files.setPosixFilePermissions(readOnlyRoot, PosixFilePermissions.fromString("rwxr-xr-x"));
+        }
     }
 
     @Test
