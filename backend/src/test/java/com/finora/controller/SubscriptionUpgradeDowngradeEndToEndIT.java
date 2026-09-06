@@ -139,6 +139,9 @@ class SubscriptionUpgradeDowngradeEndToEndIT extends AbstractIntegrationTest {
                 new HttpEntity<>("{\"planCode\":\"PREMIUM\",\"billingCycle\":\"MONTHLY\"}", bearerFor(user)),
                 String.class);
         assertThat(changePlanResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+        // Bug fix (Plan 3, §0): the response body must actually carry what a real client needs to
+        // open Razorpay Checkout for the new mandate -- change-plan used to return nothing here.
+        assertThat(changePlanResponse.getBody()).contains(newRazorpaySubscriptionId).contains("keyId");
 
         // 2. Entitlements still reflect Plus -- never granted from this call's own return value.
         ResponseEntity<String> entitlementsBeforeActivation = restTemplate.exchange(

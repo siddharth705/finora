@@ -9,8 +9,14 @@ import java.util.UUID;
 public interface SubscriptionOrderRepository extends JpaRepository<SubscriptionOrder, UUID> {
     Optional<SubscriptionOrder> findByRazorpaySubscriptionId(String razorpaySubscriptionId);
 
-    /** Subscription billing V2. Guards against a double-submit racing to create a second live
-     *  Razorpay subscription for the same user before the first order's activation webhook lands
-     *  -- see {@code BillingCheckoutService.ensureNoOrderInFlight}. */
-    boolean existsByUserIdAndStatus(UUID userId, String status);
+    /** Subscription billing V3 (design spec review, §0.5 of the V3 plan). What both
+     *  {@code mySubscription} (read) and {@code resumableOrderOrGuard} (checkout/upgrade) use to
+     *  find a user's still-in-flight checkout -- "first" only matters if more than one PENDING
+     *  order ever exists for one user, which itself would be its own bug; ordering by
+     *  createdAt desc is defensive, not load-bearing. */
+    Optional<SubscriptionOrder> findFirstByUserIdAndStatusOrderByCreatedAtDesc(UUID userId, String status);
+
+    /** Admin Portal, Subscription Health (Plan 3 review) -- how many checkouts are currently
+     *  in-flight platform-wide, not per user. */
+    long countByStatus(String status);
 }

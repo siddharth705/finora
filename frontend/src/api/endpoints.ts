@@ -1015,8 +1015,9 @@ export const entitlementsApi = {
   mine: () => api.get<EntitlementsDto>('/entitlements').then((r) => r.data),
 };
 
-// D-28 PR4-B. The user's own billing history (proposal §3.4) -- empty for everyone today, since
-// no payment gateway exists yet (§10). Mirrors backend BillingDtos.BillingHistoryEntryDto exactly.
+// D-28 PR4-B, extended by subscription billing V1/V2/V3. The user's own billing surface: history
+// (Plan 1, always existed), and now the active subscription plus the actions that change it.
+// Mirrors backend BillingDtos.BillingHistoryEntryDto exactly.
 export interface BillingHistoryEntry {
   id: string;
   amount: number;
@@ -1026,8 +1027,53 @@ export interface BillingHistoryEntry {
   createdAt: string;
 }
 
+// Mirrors backend BillingDtos.MySubscriptionDto exactly.
+export interface PendingPlanChange {
+  toPlanCode: string;
+  toPlanName: string;
+  effectiveAt: string;
+}
+// A stuck or in-flight checkout the Billing Portal can offer to resume or cancel (Plan 3 review) --
+// razorpaySubscriptionId/keyId are the SAME values a fresh checkout() call would return, safe to
+// hand straight to openRazorpayCheckout with no other change.
+export interface PendingOrder {
+  planCode: string;
+  planName: string;
+  billingCycle: string;
+  razorpaySubscriptionId: string;
+  keyId: string;
+}
+export interface MySubscription {
+  planCode: string;
+  planName: string;
+  billingCycle: string | null;
+  status: string;
+  renewalDate: string | null;
+  autoRenew: boolean;
+  hasBillingSubscription: boolean;
+  pendingChange: PendingPlanChange | null;
+  pendingOrder: PendingOrder | null;
+}
+
+// Mirrors backend BillingDtos.CheckoutResponseDto exactly. `null` from changePlan() means the
+// requested change (a downgrade, or a same-plan no-op) needed no further client action -- see
+// that endpoint's own doc comment on the backend.
+export interface CheckoutResponse {
+  razorpaySubscriptionId: string;
+  keyId: string;
+}
+
 export const billingApi = {
   history: () => api.get<BillingHistoryEntry[]>('/billing/history').then((r) => r.data),
+  mySubscription: () => api.get<MySubscription>('/billing/subscription').then((r) => r.data),
+  checkout: (planCode: string, billingCycle: string) =>
+    api.post<CheckoutResponse>('/billing/checkout', { planCode, billingCycle }).then((r) => r.data),
+  cancel: () => api.post<{ message: string }>('/billing/cancel').then((r) => r.data),
+  changePlan: (planCode: string, billingCycle: string) =>
+    api.post<CheckoutResponse | null>('/billing/change-plan', { planCode, billingCycle }).then((r) => r.data),
+  // Plan 3 review. Clears a stuck PENDING order so a different plan/cycle can be checked out.
+  // Never calls Razorpay itself; see the backend's cancelPendingOrder for why that's correct.
+  cancelPendingOrder: () => api.post<{ message: string }>('/billing/pending-order/cancel').then((r) => r.data),
 };
 
 // Refer & Earn MVP -- mirrors backend ReferralDtos exactly. Just a code and a count.

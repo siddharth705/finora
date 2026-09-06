@@ -81,6 +81,6 @@ public class EmailNotificationProvider implements NotificationChannelProvider {
     // plain text, so it goes in the text slot; the compact constructor turns a null
     // attachments/templateVariables into empty collections.
     private EmailMessage buildMessage(String to, String subject, String body) {
-        return new EmailMessage(to, subject, null, body, null, null);
+        return new EmailMessage(to, subject, null, body, null, null, null);
     }
 }

@@ -46,6 +46,12 @@ public interface SubscriptionRepository extends JpaRepository<Subscription, UUID
     @Query("SELECT COUNT(s) FROM Subscription s WHERE s.planId = :planId AND s.status IN ('ACTIVE', 'TRIAL')")
     long countActiveByPlanId(@Param("planId") UUID planId);
 
+    /** Admin Portal, Subscription Health (Plan 3 review). One call per status shown on that
+     *  dashboard -- five small COUNT queries rather than one grouped query, matching this
+     *  interface's existing style of a plain derived method per need over a single do-everything
+     *  query. */
+    long countByStatus(String status);
+
     /** AccountPurgeSweepService. Native, bypassing Hibernate's {@code @SQLDelete} entirely -- same
      *  naming discipline as {@code GoalRepository.hardDeleteByUserId}'s own doc comment.
      *  {@code subscription_events}/{@code plan_changes} need no separate cleanup: neither has a
