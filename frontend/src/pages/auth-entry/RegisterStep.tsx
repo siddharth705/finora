@@ -54,6 +54,12 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
   const [loading, setLoading] = useState(false);
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [reactivationToken, setReactivationToken] = useState<string | null>(null);
+  // Seeded at 420 -- Google's own real rendered button width, measured live on production (see
+  // SocialSignInButtons.tsx) -- rather than the form's natural full width, so the form narrows to
+  // match Google/Apple from the first paint instead of flashing full-width and then snapping
+  // narrower once Google's script actually reports back. onWidthKnown corrects this if Google
+  // ever renders differently.
+  const [formWidth, setFormWidth] = useState(420);
 
   const trimmedName = fullName.trim();
   const fullNameValid = trimmedName.length >= 2 && FULL_NAME_PATTERN.test(trimmedName);
@@ -149,7 +155,7 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
+    <form onSubmit={handleSubmit} noValidate style={{ maxWidth: formWidth, marginInline: 'auto' }}>
       <h2 className="font-display text-2xl font-bold text-ink mb-1">Create your account</h2>
       <p className="text-sm text-muted mb-6">Start your journey towards financial clarity</p>
 
@@ -160,6 +166,7 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
         onGoogleCredential={handleGoogleCredential}
         onAppleCredential={handleAppleCredential}
         onError={setError}
+        onWidthKnown={setFormWidth}
       />
 
       <AuthDivider />
