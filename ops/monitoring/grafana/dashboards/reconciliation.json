@@ -1,0 +1,115 @@
+{
+  "uid": "finora-reconciliation",
+  "title": "Finora — Reconciliation",
+  "description": "The two reconciliation counters from ReconciliationMetrics, answering questions the synthetic benchmark in docs/proposals/reconciliation-benchmark/ could not: how often the engine's auto-decisions actually happen in production, and how often a user disagrees with one. This is a measurement dashboard, not an alerting one — there is no established good/bad line for either series yet, so panels are informational rather than threshold-colored. See docs/engineering/observability.md §11.",
+  "tags": ["finora", "reconciliation"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Transfer matching",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Transfers matched (1h)",
+      "description": "Auto-matched transfer pairs between a user's own accounts, incremented once per matched pair (matching ReconciliationService's own newTransfers counting convention).",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(finora_reconciliation_transfers_matched_total[1h]))",
+          "legendFormat": "matched"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Relationship-backed share (1h)",
+      "description": "Share of matched transfers backed by a stored account relationship rather than the date/amount heuristic alone. Both halves come from the same counter (relationshipMatch=true/false), so this ratio needs no separate denominator — unlike duplicate overrides below.",
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(finora_reconciliation_transfers_matched_total{relationshipMatch=\"true\"}[1h])) / clamp_min(sum(increase(finora_reconciliation_transfers_matched_total[1h])), 1)",
+          "legendFormat": "relationship-backed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Transfer matches by relationship confidence",
+      "description": "Best-candidate scoring (ReconciliationService.transferCandidateScore) weighs a relationship match above the date-proximity heuristic. This is the production signal for whether that scoring is actually favoring relationship-backed pairs over time, which the synthetic benchmark cannot observe.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (relationshipMatch) (rate(finora_reconciliation_transfers_matched_total[5m]))",
+          "legendFormat": "relationshipMatch={{relationshipMatch}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "type": "row",
+      "title": "Duplicate overrides",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 }
+    },
+    {
+      "type": "stat",
+      "title": "Duplicate overrides (1h)",
+      "description": "A user rejected an auto-flagged duplicate via TransactionService.confirmNotDuplicate — the one user-facing correction that exists today for a wrong reconciliation verdict. There is no auto-flagged-duplicate counter yet, so this has no rate/denominator to divide by (a documented gap, not an omission here).",
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(increase(finora_reconciliation_duplicate_overrides_total[1h]))",
+          "legendFormat": "overrides"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Duplicate overrides by source",
+      "description": "Split by the transaction's row source (MANUAL / CSV_IMPORT / GMAIL_IMPORT). A sustained rise from one import source over the others is the earliest production signal that its duplicate-detection heuristic needs attention.",
+      "gridPos": { "h": 8, "w": 18, "x": 6, "y": 10 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum by (source) (rate(finora_reconciliation_duplicate_overrides_total[5m]))",
+          "legendFormat": "{{source}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "fillOpacity": 10 } }, "overrides": [] }
+    }
+  ]
+}

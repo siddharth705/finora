@@ -17,7 +17,7 @@
 #   3. docker compose -f ops/monitoring/docker-compose.yml up
 #   4. Prometheus http://localhost:9090  ·  Grafana http://localhost:3001 (admin/admin)
 #   5. Generate worker activity: confirm a merchant category in the app, or POST to the learning
-#      queue endpoints, then watch finora_worker_* move.
+#      queue endpoints, then watch the worker panels on the dashboard move.
 #
 # The dashboards and datasource are provisioned from files, so what you validate here is byte-for-
 # byte what a production Grafana would import.

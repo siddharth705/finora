@@ -684,14 +684,18 @@ rather than sent to a third party: both tag values are bounded — a boolean and
 neither can ever hold a narration, an amount, or any other field a bank statement could have
 produced. No description, no merchant, no account identifier is ever a candidate tag value here.
 
-**No alerting and no dashboard yet**, the same "Known gap" this document already records for the
-worker framework's own metrics above — these two counters answer a measurement question first
-(docs/proposals/reconciliation-benchmark/'s own stated next step: production-data-driven
-prioritization over continued synthetic-benchmark optimization), not an alerting one. A ratio worth
-watching once real traffic exists: `duplicate_overrides` against `finora_worker_*`-style expected
-volume would need its own denominator (how many duplicates were auto-flagged in the first place),
-which is not yet its own counter — proposed, not built, the same discipline this whole project
-holds every reconciliation change to.
+**Dashboard, no alerting yet**: `ops/monitoring/grafana/dashboards/reconciliation.json` renders both
+counters (`check-dashboard-metrics.py` validates its queries resolve to real emitted series, the
+same guard the worker dashboard is held to). It is a measurement dashboard, not an alerting one —
+these two counters answer a measurement question first (docs/proposals/reconciliation-benchmark/'s
+own stated next step: production-data-driven prioritization over continued synthetic-benchmark
+optimization), so panels are informational rather than threshold-colored. A ratio worth watching
+once real traffic exists: `duplicate_overrides` against `finora_worker_*`-style expected volume
+would need its own denominator (how many duplicates were auto-flagged in the first place), which is
+not yet its own counter — proposed, not built, the same discipline this whole project holds every
+reconciliation change to. Alerting waits on that same missing denominator: an override-rate alert
+with no auto-flag count to divide by would either fire on raw volume (meaningless as traffic grows)
+or not fire at all.
 
 **Verified reaching the scrape**, not just registered: `ReconciliationMetricsExportIT` follows
 `WorkerMetricsExportIT`'s own pattern exactly — calls `ReconciliationMetrics` directly, scrapes

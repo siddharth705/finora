@@ -273,6 +273,17 @@ jobs:
       # on a non-existent series never fires -- both indistinguishable from a healthy system. The
       # translation is easy to get wrong because Micrometer renames on the way out: dots become
       # underscores, counters gain _total, timers expand into _seconds_bucket/_count/_sum.
+      #
+      # Self-test first, same discipline as every other guard above: this checker derives its own
+      # notion of "the metrics that exist" from a regex over the observability package, and a regex
+      # that stops matching (the package moves, a builder call changes shape) fails open -- it would
+      # find zero referenced-but-unemitted metrics and pass, indistinguishable from a genuinely clean
+      # dashboard. The self-test asserts an unknown metric is still caught, an empty framework or an
+      # empty ops/monitoring tree still blocks rather than passing vacuously, and a runbook/alert
+      # mismatch is still caught in both directions.
+      - name: Dashboard metrics (self-test)
+        run: python3 scripts/check-dashboard-metrics.py --self-test
+
       - name: Dashboard metrics
         run: python3 scripts/check-dashboard-metrics.py
 
