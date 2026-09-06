@@ -221,7 +221,12 @@ public class HeldStatementService {
                 findingRepository.findByImportJobIdOrderBySectionIndexAscRuleAsc(held.getImportJobId());
         List<HeldStatementEvent> events =
                 eventRepository.findByHeldStatementIdOrderByCreatedAtAsc(held.getId());
-        return new HeldStatementDetailDto(HeldStatementDto.from(held), findings(rows), timeline(events));
+        // Optional, not requireJob: this is a read-only view and must still render for the one
+        // case requireJob's own doc names -- a job deleted out from under an open review -- rather
+        // than turning an otherwise-fine detail page into a 409 over a field the page barely uses.
+        String fileName = importJobRepository.findById(held.getImportJobId())
+                .map(ImportJob::getFileName).orElse(null);
+        return new HeldStatementDetailDto(HeldStatementDto.from(held), fileName, findings(rows), timeline(events));
     }
 
     private List<FindingView> findings(List<ImportVerificationFinding> rows) {

@@ -36,6 +36,7 @@ class HeldStatementServiceTest {
     private HeldStatementEventRepository eventRepository;
     private HeldStatementIdGenerator idGenerator;
     private ImportJobRepository importJobRepository;
+    private ImportVerificationFindingRepository findingRepository;
     private HeldItemAdminAlertService heldItemAdminAlertService;
     private NotificationService notificationService;
     private HeldStatementService service;
@@ -46,7 +47,7 @@ class HeldStatementServiceTest {
         eventRepository = mock(HeldStatementEventRepository.class);
         idGenerator = mock(HeldStatementIdGenerator.class);
         importJobRepository = mock(ImportJobRepository.class);
-        ImportVerificationFindingRepository findingRepository = mock(ImportVerificationFindingRepository.class);
+        findingRepository = mock(ImportVerificationFindingRepository.class);
         AuditService auditService = mock(AuditService.class);
         notificationService = mock(NotificationService.class);
         ImportSessionService importSessionService = mock(ImportSessionService.class);
@@ -124,5 +125,50 @@ class HeldStatementServiceTest {
 
         verify(heldItemAdminAlertService, never()).alertTrustReviewHeld(any());
         verify(notificationService, never()).request(any());
+    }
+
+    // ------------------------------------------------------------------ detail
+
+    /**
+     * Found in review: the download endpoint's own Content-Disposition header has always carried
+     * the real filename, but nothing on the client read it, and the client's established
+     * convention is to be handed a filename by the caller rather than parse that header -- so the
+     * detail view (where the download button lives) needs to actually carry it. Read live from
+     * ImportJob rather than snapshotted onto HeldStatement, since the download endpoint already
+     * depends on that same job existing to retrieve the bytes at all.
+     */
+    @Test
+    void detail_carriesTheOriginalFileName() {
+        HeldStatement held = new HeldStatement("HELD-00050", UUID.randomUUID(), UUID.randomUUID(),
+                "objects/key", "already held");
+        when(repository.findByHeldId("HELD-00050")).thenReturn(Optional.of(held));
+        ImportJob job = new ImportJob(held.getUserId(), "sbi-statement.csv", "hash",
+                held.getStatementObjectKey(), "CSV");
+        when(importJobRepository.findById(held.getImportJobId())).thenReturn(Optional.of(job));
+        when(findingRepository.findByImportJobIdOrderBySectionIndexAscRuleAsc(any())).thenReturn(List.of());
+        when(eventRepository.findByHeldStatementIdOrderByCreatedAtAsc(any())).thenReturn(List.of());
+
+        var detail = service.detail("HELD-00050");
+
+        assertThat(detail.fileName()).isEqualTo("sbi-statement.csv");
+    }
+
+    /**
+     * The one case {@code requireJob}'s own doc names -- a job deleted out from under an open
+     * review. The detail view must still render (it is a read-only view, not the download itself),
+     * just without a filename to offer.
+     */
+    @Test
+    void detail_hasNoFileNameWhenTheUnderlyingJobIsGone() {
+        HeldStatement held = new HeldStatement("HELD-00051", UUID.randomUUID(), UUID.randomUUID(),
+                "objects/key", "already held");
+        when(repository.findByHeldId("HELD-00051")).thenReturn(Optional.of(held));
+        when(importJobRepository.findById(held.getImportJobId())).thenReturn(Optional.empty());
+        when(findingRepository.findByImportJobIdOrderBySectionIndexAscRuleAsc(any())).thenReturn(List.of());
+        when(eventRepository.findByHeldStatementIdOrderByCreatedAtAsc(any())).thenReturn(List.of());
+
+        var detail = service.detail("HELD-00051");
+
+        assertThat(detail.fileName()).isNull();
     }
 }

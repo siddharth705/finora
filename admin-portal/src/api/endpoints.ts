@@ -420,10 +420,17 @@ export const adminHeldStatementApi = {
   // A plain <a href> can't carry the Bearer token, so this goes through the same authenticated
   // axios instance as everything else and triggers the browser download client-side instead --
   // same pattern as the user frontend's statementImportsApi.downloadFile.
-  download: async (heldId: string) => {
+  //
+  // fileName comes from the caller (the already-loaded detail's own fileName), not parsed back out
+  // of the response's Content-Disposition header -- nothing else in this codebase parses that
+  // header either (see accountLifecycleApi.exportData's identical comment on the user frontend).
+  // Found in review: this used to hardcode `${heldId}.pdf`, which was wrong for every CSV-sourced
+  // hold -- the download still worked (the bytes and content-type were always correct), but saved
+  // under a misleading filename and extension.
+  download: async (heldId: string, fileName: string) => {
     try {
       const res = await api.get(`/admin/held-statements/${heldId}/document`, { responseType: 'blob' });
-      downloadBlob(res.data as Blob, `${heldId}.pdf`);
+      downloadBlob(res.data as Blob, fileName);
     } catch (err) {
       throw await withBlobErrorMessage(err);
     }

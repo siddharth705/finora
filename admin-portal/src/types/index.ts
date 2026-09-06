@@ -1216,9 +1216,12 @@ export interface HeldStatementEvent {
 }
 
 /** The summary plus the evidence behind `triggerSummary` and the hold's own history. Still no
- *  statement content -- opening the document is `/document`, gated and audited separately. */
+ *  statement content -- opening the document is `/document`, gated and audited separately.
+ *  `fileName` is the original upload's real name (with its real extension), for the download
+ *  button to save under -- null in the rare case the underlying ImportJob no longer exists. */
 export interface HeldStatementDetail {
   summary: HeldStatementRow;
+  fileName: string | null;
   findings: HeldStatementFinding[];
   timeline: HeldStatementEvent[];
 }
