@@ -233,13 +233,13 @@ public enum ErrorCode {
     //
     // The first ErrorCode ever thrown from an EntitlementService.hasEntitlement() check --
     // ADVANCED_REPORTS (AnalyticsController's self-service views) was the first FeatureEntitlement
-    // key any endpoint enforced. ACCOUNT_LIMIT_REACHED (UNLIMITED_ACCOUNTS) and
-    // STATEMENT_PERIOD_TOO_LONG (EXTENDED_HISTORY) below are the second and third; BASIC_DASHBOARD,
-    // INVESTMENT_INSIGHTS, FINO_AI and PRIORITY_SUPPORT still have zero enforcing call sites.
-    // Carries its own code rather than a bare AUTH_FORBIDDEN for the same reason AUTH_MFA_REQUIRED
-    // does: the frontend has to TELL THEM APART -- a plan-gated 403 should open PremiumFeatureGate's
-    // upgrade prompt, not the generic "you don't have permission" dead end a real authorization
-    // failure gets.
+    // key any endpoint enforced. ACCOUNT_LIMIT_REACHED (UNLIMITED_ACCOUNTS),
+    // STATEMENT_PERIOD_TOO_LONG (EXTENDED_HISTORY) and INVESTMENT_ACCOUNT_REQUIRES_PREMIUM
+    // (INVESTMENT_INSIGHTS) below are the second, third and fourth; BASIC_DASHBOARD, FINO_AI and
+    // PRIORITY_SUPPORT still have zero enforcing call sites. Carries its own code rather than a
+    // bare AUTH_FORBIDDEN for the same reason AUTH_MFA_REQUIRED does: the frontend has to TELL
+    // THEM APART -- a plan-gated 403 should open PremiumFeatureGate's upgrade prompt, not the
+    // generic "you don't have permission" dead end a real authorization failure gets.
     ENTITLEMENT_REQUIRED("ENTITLEMENT_001", HttpStatus.FORBIDDEN,
             "This feature isn't included in your current plan."),
 
@@ -256,6 +256,15 @@ public enum ErrorCode {
     // not the generic one" reasoning as ACCOUNT_LIMIT_REACHED just above.
     STATEMENT_PERIOD_TOO_LONG("ENTITLEMENT_003", HttpStatus.FORBIDDEN,
             "Free plan statements can cover at most 31 days. Upgrade to Plus to import longer statement periods."),
+
+    // AccountService.create()'s gate on FeatureEntitlement.INVESTMENT_INSIGHTS -- adding an
+    // INVESTMENT-type account (Investments.tsx's "Add Investment") is Premium-only. Same
+    // "own code, not the generic one" reasoning as ACCOUNT_LIMIT_REACHED/STATEMENT_PERIOD_TOO_LONG
+    // above. Note: this gates the ability to ADD an investment holding, not the Dashboard's own
+    // net-worth figure (BASIC_DASHBOARD, free for every plan) or the Net Worth chart, both of which
+    // aggregate whatever accounts already exist regardless of type.
+    INVESTMENT_ACCOUNT_REQUIRES_PREMIUM("ENTITLEMENT_004", HttpStatus.FORBIDDEN,
+            "Tracking investments is a Premium feature. Upgrade to Premium to add an investment account."),
 
     // Generic fallbacks — used by GlobalExceptionHandler when no more specific code applies
     VALIDATION_ERROR("VAL_001", HttpStatus.BAD_REQUEST, "Validation failed"),

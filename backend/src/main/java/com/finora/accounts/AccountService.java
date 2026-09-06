@@ -120,6 +120,11 @@ public class AccountService {
      * and a support agent's corrective action must never be blocked by the same user's own billing
      * plan. Self-service calls always pass the same id for both (see the paragraph above), so this
      * cannot be used to bypass the cap from the ordinary account-creation UI.
+     *
+     * <p>Separately, a self-service caller without {@link FeatureEntitlement#INVESTMENT_INSIGHTS}
+     * may not create an {@code INVESTMENT}-type account at all, regardless of the count cap above --
+     * see {@code ErrorCode#INVESTMENT_ACCOUNT_REQUIRES_PREMIUM}. Admin-assisted creation is exempt
+     * from this too, for the same reason as the account-count cap.
      */
     @Transactional
     public AccountDto create(UUID userId, AccountDto.CreateRequest req, UUID actingAdminId) {
@@ -147,10 +152,20 @@ public class AccountService {
                 && accountRepository.countByUserId(userId) >= FREE_ACCOUNT_LIMIT) {
             throw new ApiException(ErrorCode.ACCOUNT_LIMIT_REACHED);
         }
+        Account.Type accountType = parseAccountType(req.accountType());
+        // Gated on selfService alone, not enforceFreeAccountLimit -- that flag is specifically
+        // about the account-count cap (GmailReviewService's synthetic bookkeeping account is its
+        // only false caller today, and it always creates a SAVINGS account, never INVESTMENT).
+        // An admin fixing/creating an investment account on a user's behalf must never be blocked
+        // by that user's own plan, same reasoning as the UNLIMITED_ACCOUNTS check above.
+        if (selfService && accountType == Account.Type.INVESTMENT
+                && !entitlementService.hasEntitlement(userId, FeatureEntitlement.INVESTMENT_INSIGHTS)) {
+            throw new ApiException(ErrorCode.INVESTMENT_ACCOUNT_REQUIRES_PREMIUM);
+        }
         Account a = new Account();
         a.setUserId(userId);
         a.setName(req.name());
-        a.setAccountType(parseAccountType(req.accountType()));
+        a.setAccountType(accountType);
         a.setBalance(req.balance() != null ? req.balance() : java.math.BigDecimal.ZERO);
         a.setCreditLimit(req.creditLimit());
         a.setDueDate(req.dueDate());

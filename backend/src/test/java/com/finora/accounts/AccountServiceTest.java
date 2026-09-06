@@ -439,4 +439,50 @@ class AccountServiceTest {
 
         assertThat(result.name()).isEqualTo("Admin-added Account");
     }
+
+    private AccountDto.CreateRequest newInvestmentAccountRequest(String name) {
+        return new AccountDto.CreateRequest(name, "INVESTMENT", BigDecimal.ZERO, null, null, null, null, null, null, null, null);
+    }
+
+    // FeatureEntitlement.INVESTMENT_INSIGHTS -- adding an investment holding is Premium-only,
+    // independent of the account-count cap above (a Free user with zero accounts still can't add
+    // one if it's an INVESTMENT). See create()'s own doc comment for the self-service-only scoping.
+    @Test
+    void create_anInvestmentAccountOnFreeOrPlus_isRejectedWithoutInvestmentInsights() {
+        assertThatThrownBy(() -> accountService.create(userId, newInvestmentAccountRequest("Gold Fund"), userId))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getCode())
+                .isEqualTo(com.finora.exception.ErrorCode.INVESTMENT_ACCOUNT_REQUIRES_PREMIUM);
+        verify(accountRepository, never()).save(any());
+    }
+
+    @Test
+    void create_aNonInvestmentAccount_isNeverBlockedByInvestmentInsights() {
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto result = accountService.create(userId, newAccountRequest("Regular Savings"), userId);
+
+        assertThat(result.name()).isEqualTo("Regular Savings");
+    }
+
+    @Test
+    void create_anInvestmentAccount_withInvestmentInsightsEntitlement_succeeds() {
+        when(entitlementService.hasEntitlement(userId, FeatureEntitlement.INVESTMENT_INSIGHTS)).thenReturn(true);
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto result = accountService.create(userId, newInvestmentAccountRequest("Gold Fund"), userId);
+
+        assertThat(result.name()).isEqualTo("Gold Fund");
+    }
+
+    // Same support-agent carve-out as the account-count cap: fixing/adding an investment account
+    // on a Free user's behalf (e.g. correcting a mis-detected import) must not be blocked either.
+    @Test
+    void create_anInvestmentAccount_byAnAdminOnAUsersBehalf_isNeverBlocked() {
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        AccountDto result = accountService.create(userId, newInvestmentAccountRequest("Admin-fixed Fund"), actingAdminId);
+
+        assertThat(result.name()).isEqualTo("Admin-fixed Fund");
+    }
 }

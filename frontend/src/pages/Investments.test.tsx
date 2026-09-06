@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import Investments from './Investments';
-import { accountsApi, networthApi, type NetWorthData } from '../api/endpoints';
+import { accountsApi, networthApi, entitlementsApi, type NetWorthData, type EntitlementsDto } from '../api/endpoints';
 import type { Account } from '../types';
 
 // The charts themselves are not under test here and chart.js needs a real canvas, which jsdom
@@ -15,7 +17,26 @@ vi.mock('react-chartjs-2', () => ({
 vi.mock('../api/endpoints', () => ({
   accountsApi: { list: vi.fn(), create: vi.fn(), remove: vi.fn() },
   networthApi: { current: vi.fn(), saveSnapshot: vi.fn() },
+  entitlementsApi: { mine: vi.fn() },
 }));
+
+function entitlements(overrides: Partial<EntitlementsDto> = {}): EntitlementsDto {
+  return { planCode: 'PREMIUM', planName: 'Premium', features: { INVESTMENT_INSIGHTS: true }, ...overrides };
+}
+
+function renderInvestments() {
+  // PremiumFeatureGate (the Add Investment form's INVESTMENT_INSIGHTS gate) needs react-query's
+  // context, and its "Upgrade" button navigates via react-router -- neither existed on this page
+  // before, so rendering it at all now needs both providers.
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <Investments />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+}
 
 function holding(overrides: Partial<Account> = {}): Account {
   return {
@@ -48,6 +69,9 @@ function pending<T>(): Promise<T> {
 describe('Investments — loading states', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Entitled by default -- every existing test here predates INVESTMENT_INSIGHTS and expects
+    // the real Add Investment form, not the upgrade prompt. The denial tests below override this.
+    vi.mocked(entitlementsApi.mine).mockResolvedValue(entitlements());
   });
 
   /**
@@ -58,7 +82,7 @@ describe('Investments — loading states', () => {
     vi.mocked(accountsApi.list).mockReturnValue(pending<Account[]>());
     vi.mocked(networthApi.current).mockReturnValue(pending<NetWorthData>());
 
-    render(<Investments />);
+    renderInvestments();
 
     expect(screen.getByText('Loading your investment totals')).toBeInTheDocument();
     expect(screen.getByText('Loading your holdings')).toBeInTheDocument();
@@ -76,7 +100,7 @@ describe('Investments — loading states', () => {
     vi.mocked(accountsApi.list).mockReturnValue(pending<Account[]>());
     vi.mocked(networthApi.current).mockReturnValue(pending<NetWorthData>());
 
-    render(<Investments />);
+    renderInvestments();
 
     expect(screen.queryByText('No holdings yet')).not.toBeInTheDocument();
     expect(screen.queryByText('No investments yet')).not.toBeInTheDocument();
@@ -95,7 +119,7 @@ describe('Investments — loading states', () => {
     vi.mocked(networthApi.current).mockResolvedValue(netWorth());
     vi.mocked(accountsApi.remove).mockResolvedValue(undefined as never);
 
-    render(<Investments />);
+    renderInvestments();
     expect(await screen.findByText('Index Fund')).toBeInTheDocument();
 
     // The refetch after the delete never settles, so the in-flight state is inspectable.
@@ -134,7 +158,7 @@ describe('Investments — loading states', () => {
     vi.mocked(networthApi.current).mockResolvedValue(netWorth());
     vi.mocked(accountsApi.remove).mockResolvedValue(undefined as never);
 
-    render(<Investments />);
+    renderInvestments();
 
     // Initial load.
     await waitFor(() => expect(listDeferred).toHaveLength(1));
@@ -175,7 +199,7 @@ describe('Investments — loading states', () => {
     vi.mocked(accountsApi.list).mockRejectedValue(new Error('offline'));
     vi.mocked(networthApi.current).mockRejectedValue(new Error('offline'));
 
-    render(<Investments />);
+    renderInvestments();
 
     expect(await screen.findByText('Could not load investments.')).toBeInTheDocument();
     expect(screen.queryByText('No holdings yet')).not.toBeInTheDocument();
@@ -189,7 +213,7 @@ describe('Investments — loading states', () => {
     vi.mocked(networthApi.current).mockResolvedValue(netWorth({ history: [] }));
     vi.mocked(accountsApi.create).mockResolvedValue(holding() as never);
 
-    render(<Investments />);
+    renderInvestments();
     await screen.findByText('No holdings yet');
 
     await user.type(screen.getByLabelText('Name'), 'Index Fund');
@@ -204,5 +228,42 @@ describe('Investments — loading states', () => {
     // Its accessible name gains the busy suffix while loading, which is itself the assertion that
     // the pending state is announced rather than conveyed only as "disabled".
     await waitFor(() => expect(screen.getByRole('button', { name: /^Add\s*,\s*loading$/ })).toBeDisabled());
+  });
+
+  // INVESTMENT_INSIGHTS: adding a new holding is Premium-only; an existing holding (from before a
+  // downgrade, or added by an admin on the user's behalf) still shows and can still be deleted.
+  describe('INVESTMENT_INSIGHTS gating', () => {
+    it('shows an upgrade prompt instead of the Add Investment form for a non-entitled user', async () => {
+      vi.mocked(entitlementsApi.mine).mockResolvedValue(entitlements({ planCode: 'FREE', features: {} }));
+      vi.mocked(accountsApi.list).mockResolvedValue([]);
+      vi.mocked(networthApi.current).mockResolvedValue(netWorth({ history: [] }));
+
+      renderInvestments();
+
+      expect(await screen.findByRole('button', { name: /upgrade/i })).toBeInTheDocument();
+      expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Add$/ })).not.toBeInTheDocument();
+    });
+
+    it('still shows an existing holding, with a working Delete, for a user who added it before a downgrade', async () => {
+      // The Upgrade prompt (replacing the Add-new form) and the existing holdings list are
+      // independent sections of the same card -- a non-entitled user with a holding from before
+      // a downgrade sees BOTH: no way to add another, but full access to what they already have.
+      const user = userEvent.setup();
+      vi.mocked(entitlementsApi.mine).mockResolvedValue(entitlements({ planCode: 'FREE', features: {} }));
+      vi.mocked(accountsApi.list).mockResolvedValue([holding()]);
+      vi.mocked(networthApi.current).mockResolvedValue(netWorth());
+      vi.mocked(accountsApi.remove).mockResolvedValue(undefined as never);
+
+      renderInvestments();
+      expect(await screen.findByText('Index Fund')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /upgrade/i })).toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: 'Delete' }));
+      const dialog = await screen.findByRole('alertdialog');
+      await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+      await waitFor(() => expect(accountsApi.remove).toHaveBeenCalledWith('a1'));
+    });
   });
 });
