@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Wallet, ArrowLeftRight, PiggyBank, Target, UploadCloud, History,
-  TrendingUp, BarChart3, Sparkles, User, Settings as SettingsIcon, MoreVertical, LogOut,
+  TrendingUp, BarChart3, Crown, Sparkles, User, Settings as SettingsIcon, MoreVertical, LogOut,
   ChevronsLeft, ChevronsRight, Receipt, Gift,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
@@ -27,6 +27,10 @@ const links = [
   { to: '/app/goals', label: 'Goals', icon: Target },
   { to: '/app/investments', label: 'Investments', icon: TrendingUp },
   { to: '/app/reports', label: 'Reports', icon: BarChart3 },
+  // Free/no-subscription users still see this link -- clicking it shows the upgrade prompt
+  // (PremiumFeatureGate on AdvancedReports.tsx), not a 404 or a hidden nav item. Hiding it
+  // entirely would mean a Free user can't discover the feature exists at all.
+  { to: '/app/reports/advanced', label: 'Advanced Reports', icon: Crown },
   { to: '/app/insights', label: 'Insights', icon: Sparkles },
 ];
 
