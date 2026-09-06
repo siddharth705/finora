@@ -742,7 +742,13 @@ export default function Dashboard() {
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none px-6 text-center">
                   {hoveredCategoryIndex !== null && categoryEntries[hoveredCategoryIndex] ? (
                     <>
-                      <span className="text-sm font-bold text-ink truncate max-w-full">{categoryEntries[hoveredCategoryIndex][0]}</span>
+                      {/* max-w here is deliberately narrower than the container's own px-6 gap:
+                          at cutout 72% + layout.padding 12 on a 160px canvas the hole is only
+                          ~98px across at its vertical center, and the two-line label's top line
+                          sits above center where the circle is narrower still. max-w-full let text
+                          reach the container's 112px, well past the hole, so it visually spilled
+                          into the ring instead of stopping at its edge. */}
+                      <span className="text-sm font-bold text-ink truncate max-w-[76px]">{categoryEntries[hoveredCategoryIndex][0]}</span>
                       <span className="text-[11px] text-muted">{fmt(categoryEntries[hoveredCategoryIndex][1])}</span>
                     </>
                   ) : (
