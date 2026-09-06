@@ -50,6 +50,11 @@ jest.mock('../api/endpoints', () => ({
   userApi: { get: jest.fn() },
   reportsApi: { availableMonths: jest.fn(), forMonth: jest.fn() },
   budgetsApi: { list: jest.fn() },
+  // ChecklistWidget (mounted on DashboardScreen, D-onboarding) fetches this on every render --
+  // default to "already 6/6" so it renders nothing and every existing test below, none of which
+  // cares about onboarding, keeps seeing exactly the Dashboard content it did before this widget
+  // existed.
+  onboardingApi: { getChecklist: jest.fn().mockResolvedValue({ items: [], completedCount: 6, totalCount: 6 }) },
 }));
 
 jest.mock('../context/AuthContext', () => ({

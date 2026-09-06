@@ -2,6 +2,7 @@ import type { ComponentType, ReactNode } from 'react';
 import { render, screen } from '@testing-library/react-native';
 import { RootNavigator } from './RootNavigator';
 import { useAuth } from '../context/AuthContext';
+import { useOnboardingStep } from '../onboarding/OnboardingStepContext';
 
 jest.mock('../context/AuthContext', () => ({
   useAuth: jest.fn(),
@@ -68,6 +69,21 @@ jest.mock('../onboarding/OnboardingNavigator', () => ({
   },
 }));
 
+jest.mock('../onboarding/OnboardingStepContext', () => ({
+  useOnboardingStep: jest.fn(),
+}));
+
+jest.mock('../onboarding/TourOverlay', () => ({
+  TourOverlay: () => {
+    const { Text } = require('react-native');
+    return <Text testID="tour-overlay">TourOverlay</Text>;
+  },
+}));
+
+jest.mock('../onboarding/TourTargetRegistry', () => ({
+  TourTargetProvider: ({ children }: { children: ReactNode }) => children,
+}));
+
 // RootNavigator imports these five screens directly (not lazily), and every one of them pulls in
 // real styling that reads spacing/radius off '../theme' at module-load time -- which the mock
 // above doesn't provide (it only covers what RootNavigator itself calls, useTheme/
@@ -80,6 +96,7 @@ jest.mock('../screens/ForgotPasswordScreen', () => ({ ForgotPasswordScreen: () =
 jest.mock('../screens/VerifyPhoneScreen', () => ({ VerifyPhoneScreen: () => null }));
 
 const mockedUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
+const mockedUseOnboardingStep = useOnboardingStep as jest.MockedFunction<typeof useOnboardingStep>;
 
 function authState(overrides: Partial<ReturnType<typeof useAuth>> = {}): ReturnType<typeof useAuth> {
   return {
@@ -102,21 +119,37 @@ function authState(overrides: Partial<ReturnType<typeof useAuth>> = {}): ReturnT
 }
 
 describe('RootNavigator', () => {
+  beforeEach(() => {
+    mockedUseOnboardingStep.mockReturnValue({ step: 'welcome', setStep: jest.fn() });
+  });
+
   it('mounts AppTabs when signed in, verified, and onboarded', () => {
     mockedUseAuth.mockReturnValue(authState({ token: 'tok', phoneVerified: true, onboardingCompleted: true }));
 
     render(<RootNavigator />);
 
     expect(screen.getByTestId('app-tabs')).toBeTruthy();
+    expect(screen.queryByTestId('tour-overlay')).toBeNull();
   });
 
-  it('mounts OnboardingNavigator when signed in, verified, but onboarding is not complete', () => {
+  it('mounts OnboardingNavigator when signed in, verified, but onboarding is not complete and step is not tour', () => {
     mockedUseAuth.mockReturnValue(authState({ token: 'tok', phoneVerified: true, onboardingCompleted: false }));
 
     render(<RootNavigator />);
 
     expect(screen.getByTestId('onboarding-navigator')).toBeTruthy();
     expect(screen.queryByTestId('app-tabs')).toBeNull();
+  });
+
+  it('mounts the REAL AppTabs plus TourOverlay when the onboarding step is tour', () => {
+    mockedUseAuth.mockReturnValue(authState({ token: 'tok', phoneVerified: true, onboardingCompleted: false }));
+    mockedUseOnboardingStep.mockReturnValue({ step: 'tour', setStep: jest.fn() });
+
+    render(<RootNavigator />);
+
+    expect(screen.getByTestId('app-tabs')).toBeTruthy();
+    expect(screen.getByTestId('tour-overlay')).toBeTruthy();
+    expect(screen.queryByTestId('onboarding-navigator')).toBeNull();
   });
 
   it('still routes to VerifyPhone when unverified, before onboarding is ever considered', () => {

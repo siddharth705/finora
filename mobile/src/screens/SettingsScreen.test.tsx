@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { SettingsScreen } from './SettingsScreen';
-import { analyticsApi, devicesApi, userApi, workspaceApi } from '../api/endpoints';
+import { analyticsApi, devicesApi, onboardingApi, userApi, workspaceApi } from '../api/endpoints';
 import { ThemeProvider } from '../theme';
 import type { UserSettings } from '../api/endpoints';
 
@@ -12,6 +12,15 @@ jest.mock('../api/endpoints', () => ({
   devicesApi: { list: jest.fn(), revoke: jest.fn() },
   passwordChangeApi: { start: jest.fn(), verifyOtp: jest.fn(), complete: jest.fn() },
   emailChangeApi: { start: jest.fn() },
+  onboardingApi: { reset: jest.fn().mockResolvedValue(undefined) },
+}));
+
+// SettingsScreen now calls useAuth() for the Retake Product Tour row -- mocked, not the real
+// AuthContext, the same reasoning DashboardScreen/RootNavigator's own test files already use:
+// the real module pulls in react-native-purchases, which hits the same pre-existing unbuilt-ESM
+// Jest gap RootNavigator.test.tsx's own native-stack mock comment documents.
+jest.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ setOnboardingCompleted: jest.fn() }),
 }));
 
 // Overrides the global stub in src/test/setup.ts, which exists only so screens that merely
@@ -275,6 +284,17 @@ describe('SettingsScreen', () => {
       fireEvent.press(screen.getByText('Send Feedback'));
 
       expect(screen.getByText('Fake Feedback Sheet')).toBeTruthy();
+    });
+  });
+
+  describe('Retake Product Tour', () => {
+    it('calls onboardingApi.reset() when pressed', async () => {
+      renderScreen();
+      await loaded();
+
+      fireEvent.press(screen.getByText('Retake Tour'));
+
+      await waitFor(() => expect(onboardingApi.reset).toHaveBeenCalled());
     });
   });
 });

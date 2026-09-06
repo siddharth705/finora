@@ -8,6 +8,10 @@ import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
 import { VerifyPhoneScreen } from '../screens/VerifyPhoneScreen';
 import { AppTabs } from './AppTabs';
 import { OnboardingNavigator } from '../onboarding/OnboardingNavigator';
+import { useOnboardingStep } from '../onboarding/OnboardingStepContext';
+import { TourTargetProvider } from '../onboarding/TourTargetRegistry';
+import { TourOverlay } from '../onboarding/TourOverlay';
+import { TOUR_STEPS, type TourStep } from '../onboarding/tourSteps';
 import { useAuth } from '../context/AuthContext';
 import { useTheme, useThemeSetting } from '../theme';
 import { useAuthStackInitialRoute } from './useAuthStackInitialRoute';
@@ -53,6 +57,7 @@ const linkingPrefixes = ['finora://'];
  */
 export function RootNavigator() {
   const { bootstrapping, token, phoneVerified, onboardingCompleted } = useAuth();
+  const { step: onboardingStep, setStep: setOnboardingStep } = useOnboardingStep();
   const authInitialRoute = useAuthStackInitialRoute(token);
   const c = useTheme();
   const { resolved } = useThemeSetting();
@@ -60,12 +65,31 @@ export function RootNavigator() {
   // AppTabs is actually the mounted tree -- token alone isn't enough, since a
   // signed-in-but-unverified account gets the single-screen VerifyPhone AppStack instead, which
   // has no route to More.VerifyEmailChange either, and a verified-but-not-yet-onboarded account
-  // gets OnboardingNavigator instead (see the render logic below). Shared below by the deep-link
-  // hook (its own "ready" gate) and the nav-state-persistence hook (its own "which tree does this
-  // state belong to" gate) -- both need exactly this condition, not a slightly different one.
-  const isAppTabsActive = token !== null && phoneVerified && onboardingCompleted;
+  // gets OnboardingNavigator instead (see the render logic below) UNLESS the onboarding step is
+  // specifically 'tour' -- that step renders the REAL AppTabs (plus TourOverlay on top), not a
+  // substitute, so it counts as active too. Shared below by the deep-link hook (its own "ready"
+  // gate) and the nav-state-persistence hook (its own "which tree does this state belong to"
+  // gate) -- both need exactly this condition, not a slightly different one.
+  const isAppTabsActive = token !== null && phoneVerified && (onboardingCompleted || onboardingStep === 'tour');
   const { onNavigationReady } = useEmailChangeDeepLink(navigationRef, isAppTabsActive, token !== null);
   const navPersistence = useNavigationStatePersistence(bootstrapping, isAppTabsActive);
+
+  function navigateToTab(tab: TourStep['tab']) {
+    if (!navigationRef.current || !navigationRef.isReady()) return;
+    if (tab === 'More') {
+      navigationRef.navigate('More', { screen: 'MoreHome' });
+    } else {
+      navigationRef.navigate(tab);
+    }
+  }
+
+  // Neither the tour finishing nor being skipped completes onboarding by itself -- only
+  // SuccessScreen's own buttons do that (OnboardingNavigator.finishOnboarding). This just
+  // advances the shared step to 'success', which is what makes OnboardingNavigator render it --
+  // same sequencing as web's ProtectedRoute/TourOverlay wiring.
+  function onTourEnd() {
+    setOnboardingStep('success');
+  }
 
   // Session restore reads SecureStore asynchronously (see AuthContext). Rendering anything
   // route-dependent before it resolves would show Login to an already-signed-in user for a frame.
@@ -116,6 +140,13 @@ export function RootNavigator() {
       initialState={navPersistence.initialState}
       onStateChange={navPersistence.onStateChange}
     >
+      {/* Always mounted, not just around the tour branch below: AppTabs (and MoreScreen inside
+          it) unconditionally call useRegisterTourTarget now, so the ordinary post-onboarding
+          <AppTabs /> branch needs a provider in scope too, not only the tour's. Free for every
+          other branch (Auth/VerifyPhone/OnboardingNavigator never call useRegisterTourTarget or
+          useTourTarget), so wrapping it around everything here is simpler and safer than
+          threading a second copy into just the branches that need it. */}
+      <TourTargetProvider>
       {token === null ? (
         // initialRouteName -- not just AuthEntry listed first -- because which screen this stack
         // should open on differs by how it got here: a cold, never-signed-in launch starts on
@@ -136,10 +167,21 @@ export function RootNavigator() {
           <AppStack.Screen name="VerifyPhone" component={VerifyPhoneScreen} />
         </AppStack.Navigator>
       ) : !onboardingCompleted ? (
-        <OnboardingNavigator />
+        onboardingStep === 'tour' ? (
+          // Real AppTabs, not a substitute -- see isAppTabsActive's own comment above and the
+          // design spec's §7 addendum. Both read/write the same TourTargetProvider instance
+          // wrapped around this whole tree (see its own comment above).
+          <>
+            <AppTabs />
+            <TourOverlay steps={TOUR_STEPS} navigateToTab={navigateToTab} onFinish={onTourEnd} onSkip={onTourEnd} />
+          </>
+        ) : (
+          <OnboardingNavigator />
+        )
       ) : (
         <AppTabs />
       )}
+      </TourTargetProvider>
     </NavigationContainer>
   );
 }
