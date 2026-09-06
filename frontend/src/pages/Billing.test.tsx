@@ -33,7 +33,7 @@ function subscription(overrides: Partial<MySubscription> = {}): MySubscription {
   return {
     planCode: 'FREE', planName: 'Free', billingCycle: null, status: 'ACTIVE',
     renewalDate: null, autoRenew: true, hasBillingSubscription: false, pendingChange: null,
-    pendingOrder: null,
+    pendingOrder: null, paymentProvider: null,
     ...overrides,
   };
 }
@@ -267,5 +267,18 @@ describe('Billing', () => {
     renderPage();
 
     expect(await screen.findByText('₹499')).toBeInTheDocument();
+  });
+
+  it('shows disabled plan controls with a store-managed note for a RevenueCat-owned subscription', async () => {
+    vi.mocked(billingApi.mySubscription).mockResolvedValue(subscription({
+      planCode: 'PREMIUM', planName: 'Premium', billingCycle: 'MONTHLY',
+      renewalDate: '2026-10-06', autoRenew: true, hasBillingSubscription: true,
+      paymentProvider: 'REVENUECAT',
+    }));
+    renderPage();
+
+    expect(await screen.findByText(/managed through the App Store\/Play Store/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /subscribe/i })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /cancel subscription/i })).not.toBeInTheDocument();
   });
 });

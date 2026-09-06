@@ -59,6 +59,12 @@ public class Subscription extends BaseEntity {
     @Column(name = "razorpay_subscription_id", length = 50)
     private String razorpaySubscriptionId;
 
+    @Column(name = "store_platform", length = 10)
+    private String storePlatform;
+
+    @Column(name = "revenuecat_original_transaction_id", length = 100)
+    private String revenuecatOriginalTransactionId;
+
     @Column(name = "auto_renew", nullable = false)
     private boolean autoRenew = true;
 
@@ -84,6 +90,10 @@ public class Subscription extends BaseEntity {
     public void setBillingCycle(String billingCycle) { this.billingCycle = billingCycle; }
     public String getRazorpaySubscriptionId() { return razorpaySubscriptionId; }
     public void setRazorpaySubscriptionId(String razorpaySubscriptionId) { this.razorpaySubscriptionId = razorpaySubscriptionId; }
+    public String getStorePlatform() { return storePlatform; }
+    public void setStorePlatform(String storePlatform) { this.storePlatform = storePlatform; }
+    public String getRevenuecatOriginalTransactionId() { return revenuecatOriginalTransactionId; }
+    public void setRevenuecatOriginalTransactionId(String revenuecatOriginalTransactionId) { this.revenuecatOriginalTransactionId = revenuecatOriginalTransactionId; }
     public boolean isAutoRenew() { return autoRenew; }
     public void setAutoRenew(boolean autoRenew) { this.autoRenew = autoRenew; }
 }

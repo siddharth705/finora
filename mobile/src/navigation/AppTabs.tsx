@@ -9,6 +9,7 @@ import { ImportScreen } from '../screens/import/ImportScreen';
 import { MoreScreen } from '../screens/MoreScreen';
 import { CategoryReviewScreen } from '../screens/CategoryReviewScreen';
 import { BudgetsScreen } from '../screens/BudgetsScreen';
+import { SubscriptionScreen } from '../screens/SubscriptionScreen';
 import { GoalsScreen } from '../screens/GoalsScreen';
 import { ReportsScreen } from '../screens/ReportsScreen';
 import { InsightsScreen } from '../screens/InsightsScreen';
@@ -47,6 +48,7 @@ function MoreNavigator() {
           leaves an edge-swipe (iOS) or the hardware key (Android) as the only way back, which is
           nothing at all for a screen-reader user. */}
       <MoreStack.Screen name="Budgets" component={BudgetsScreen} />
+      <MoreStack.Screen name="Subscription" component={SubscriptionScreen} />
       <MoreStack.Screen name="Goals" component={GoalsScreen} />
       <MoreStack.Screen name="Reports" component={ReportsScreen} />
       <MoreStack.Screen name="Insights" component={InsightsScreen} />
