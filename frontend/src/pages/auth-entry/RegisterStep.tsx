@@ -3,8 +3,7 @@ import { Link } from 'react-router-dom';
 import { ShieldCheck, User, Mail, CheckCircle2, ArrowRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PasswordInput } from '../../components/PasswordInput';
-import { GoogleSignInButton } from '../../components/GoogleSignInButton';
-import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { SocialSignInButtons } from '../../components/SocialSignInButtons';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
 import { AuthDivider } from './AuthDivider';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
@@ -156,10 +155,12 @@ export function RegisterStep({ prefill, referralCode, onSuccess, onAccountExists
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
-      <GoogleSignInButton text="signup_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
+      <SocialSignInButtons
+        googleText="signup_with"
+        onGoogleCredential={handleGoogleCredential}
+        onAppleCredential={handleAppleCredential}
+        onError={setError}
+      />
 
       <AuthDivider />
 

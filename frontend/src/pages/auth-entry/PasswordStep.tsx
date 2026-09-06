@@ -4,8 +4,7 @@ import { ShieldCheck, ArrowRight } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { PasswordInput } from '../../components/PasswordInput';
 import { ReactivateAccountPrompt } from '../../components/ReactivateAccountPrompt';
-import { GoogleSignInButton } from '../../components/GoogleSignInButton';
-import { AppleSignInButton } from '../../components/AppleSignInButton';
+import { SocialSignInButtons } from '../../components/SocialSignInButtons';
 import { AuthDivider } from './AuthDivider';
 import { SESSION_ENDED_REASON_KEY } from '../../api/client';
 import { AUTH_ACCOUNT_DEACTIVATED } from '../../api/errorCodes';
@@ -110,10 +109,12 @@ export function PasswordStep({ identifier: initialIdentifier, banner, onSuccess,
       )}
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
-      <GoogleSignInButton text="signin_with" onCredential={handleGoogleCredential} onError={setError} />
-      <div className="mt-3">
-        <AppleSignInButton onCredential={handleAppleCredential} onError={setError} />
-      </div>
+      <SocialSignInButtons
+        googleText="signin_with"
+        onGoogleCredential={handleGoogleCredential}
+        onAppleCredential={handleAppleCredential}
+        onError={setError}
+      />
 
       <AuthDivider />
 
