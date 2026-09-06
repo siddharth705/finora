@@ -33,15 +33,25 @@ for entitlements — the same model web already uses, extended to a second payme
 | Cancellation/plan changes on mobile | Not built as app-side controls — both App Store and Play Store policy require subscription cancellation to go through their own native subscription-management UI, not a button inside the app. Mobile's "My Subscription" screen deep-links out to it (`itms-apps://apps.apple.com/account/subscriptions` on iOS, the Play Store subscriptions center on Android) rather than implementing a custom cancel flow. |
 | Purchase requires authentication | The mobile purchase flow (Paywall, `purchasePackage()`) is unreachable until the user is signed in — `Purchases.configure()` only ever runs with the real Fynora user id already known (§2's `appUserID` decision), never RevenueCat's own anonymous `$RCAnonymousID`. This is what makes §9's "TRANSFER out of scope" claim actually true rather than merely hoped for — nothing in the mobile app's existing navigation exposes billing screens pre-auth today, so this needs verifying, not building. |
 | Ownership-source rule (named) | **A user has at most one active paid subscription, owned by exactly one provider at a time.** Moving from one provider to the other requires the existing one to end first (expire or be cancelled through its own store/portal) — there is no in-place transfer. §6.3/§6.4's read-only views and the guard in §6.4 are both direct consequences of this one rule, not independent decisions. |
+| Admin override vs. a RevenueCat subscriber | Same rule as an existing Razorpay subscriber (design spec V1 §2: admin override blocked while a live paid mandate exists) — **but with no symmetric release valve**. `SubscriptionService.cancelPaidSubscription` is a Razorpay-specific API call (`gateway.cancelSubscription(razorpaySubscriptionId, ...)`); there is no backend-reachable way to force-release a real App Store/Play Store mandate the way there is for Razorpay. So for a `REVENUECAT`-owned row, admin override stays blocked with no "cancel it first" escape hatch — support has to wait for the subscription to actually end. See §6.8. |
 
 ## 3. Verified RevenueCat behavior this design relies on
 
 Pulled from RevenueCat's own docs (`context7:/websites/revenuecat`), not assumed:
 
-- **Webhook signature verification** is HMAC-SHA256 over `"{timestamp}.{raw_body}"`, delivered in a
-  Stripe-style header (`t=<unix_ts>,v1=<hex_signature>`), with a timestamp-tolerance check against
-  replay — not a bare static bearer token. This is comparably rigorous to Razorpay's HMAC scheme and
-  adds replay protection Razorpay's own implementation in this codebase does not have.
+- **Webhook authentication — two tiers, re-verified against current docs before writing this
+  version**: RevenueCat's default is a static `authorization_header` value set in its dashboard,
+  compared verbatim (simpler, comparable to a shared secret). Separately, **HMAC signing is an
+  explicit opt-in "for stronger verification"**: when enabled, every delivery carries
+  `X-RevenueCat-Webhook-Signature: t=<unix_ts>,v1=<hmac_sha256_hex>`, computed over
+  `"{timestamp}.{raw_body}"`. This design deliberately enables HMAC — not the simpler default —
+  matching Razorpay's own signature-based scheme already in this codebase, and adding replay
+  protection (timestamp tolerance) Razorpay's implementation here does not have.
+- **Verification must run over the raw, unparsed request body** — RevenueCat's own docs warn that
+  re-serializing a parsed object changes the bytes and silently breaks verification on valid
+  requests. This is the exact same reasoning `RazorpayWebhookController` already documents for
+  itself (`@RequestBody String rawBody`, never a typed DTO) — `RevenueCatWebhookController` follows
+  the identical pattern, not a new one.
 - **Event types actually delivered**: `INITIAL_PURCHASE`, `RENEWAL`, `CANCELLATION`,
   `UNCANCELLATION`, `EXPIRATION`, `BILLING_ISSUE`, `PRODUCT_CHANGE`, `TRANSFER`,
   `SUBSCRIPTION_PAUSED`, `NON_RENEWING_PURCHASE`, `SUBSCRIBER_ALIAS`.
@@ -100,7 +110,7 @@ plan/cycle/platform — twice as many rows, keyed by platform too):
 iap_products
 ------------
 id                    UUID PK
-provider_product_id   VARCHAR(100)  NOT NULL   -- e.g. "plus_monthly_ios", "plus_monthly_android"
+provider_product_id   VARCHAR(100)  NOT NULL UNIQUE   -- e.g. "plus_monthly_ios", "plus_monthly_android"
 plan_id               UUID NOT NULL REFERENCES plans(id)
 billing_cycle         VARCHAR(10)   NOT NULL   -- MONTHLY | YEARLY
 platform              VARCHAR(10)   NOT NULL   -- IOS | ANDROID
@@ -214,6 +224,19 @@ anything device-local. Logging back in fetches the same entitlement it always wo
 "restore" step required unless the *reinstall* is also a *different Apple/Google account* than the
 one that made the original purchase, which §6.6 already covers.
 
+### 6.8 Admin support, RevenueCat subscriber
+
+Same guard as an existing Razorpay subscriber — `SubscriptionService.changePlan` generalizes from
+its current literal `"RAZORPAY".equals(subscription.getPaymentProvider())` check to match either
+paid provider, blocking a complimentary-plan override while either is active. Unlike Razorpay,
+there is no `cancelPaidSubscription` equivalent an admin can call first to release a RevenueCat-
+owned mandate — `cancelPaidSubscription` is a Razorpay-specific gateway call with nothing to
+generalize to, since Apple/Google don't expose mandate cancellation to third parties. Support's only
+options for a RevenueCat subscriber needing an admin-granted plan are: wait for their subscription
+to actually expire, or ask them to cancel it themselves through the store first. Worth stating
+plainly rather than leaving a future engineer to discover it while trying to build the
+generalization.
+
 ## 7. API surface (new/changed)
 
 ```
@@ -284,8 +307,11 @@ Same discipline as the Razorpay webhook fix this plan's own predecessor required
 test calling the handler directly with an already-shaped payload is not sufficient proof the
 *controller* unwraps a real RevenueCat webhook body correctly. `RevenueCatWebhookControllerIT` must
 send an HMAC-signed, realistically-shaped body (timestamp header included) through the actual HTTP
-endpoint for at least `INITIAL_PURCHASE`, `CANCELLATION`, and `EXPIRATION`, asserting the real state
-change — not just a 200 response.
+endpoint for at least `INITIAL_PURCHASE`, `CANCELLATION`, `EXPIRATION`, and **`PRODUCT_CHANGE`**
+(mandatory, not optional — it's the one event type with no Razorpay precedent to lean on: the plan
+change is store-initiated, not Fynora-initiated, and it's the transition most likely to have a
+reconciliation bug slip through if only cloned from `handleCharged`'s logic without its own test),
+asserting the real state change — not just a 200 response.
 
 ## 12. Suggested build sequence (for the implementation plan)
 
@@ -293,8 +319,9 @@ change — not just a 200 response.
    the new `iap_products` table, and widening `webhook_events`' primary key to `(provider, event_id)`.
 2. `RevenueCatWebhookController` + dispatcher + `RevenueCatProperties`, with the signature+timestamp
    verification from §3 — backend-only, testable without any mobile client changes yet.
-3. Generalize `BillingCheckoutService.checkout()`'s duplicate-subscription guard (§6.4) — a small,
-   independently testable fix, and the one change that touches existing (web) behavior.
+3. Generalize `BillingCheckoutService.checkout()`'s duplicate-subscription guard (§6.4) and
+   `SubscriptionService.changePlan`'s admin-override guard (§6.8) — both small, independently
+   testable fixes, and the two changes that touch existing (web/admin) behavior.
 4. Mobile: `useEntitlements` + `PremiumFeatureGate` port (§8) — needed before the purchase flow has
    anything to gate, and independently testable against the existing, unchanged backend endpoint.
 5. Mobile: `react-native-purchases` wiring, Paywall screen, My Subscription screen with the two
