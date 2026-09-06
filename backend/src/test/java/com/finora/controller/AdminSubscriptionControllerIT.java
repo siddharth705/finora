@@ -158,4 +158,40 @@ class AdminSubscriptionControllerIT extends AbstractIntegrationTest {
                 new HttpEntity<>(Map.of("planCode", "PLUS", "reason", "beta tester"), bearerFor(admin)), String.class);
         assertThat(changePlanResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
+
+    @Test
+    void plainUser_isForbiddenFromViewingSubscriptionHealth() {
+        User user = createUser("USER");
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/health", HttpMethod.GET, new HttpEntity<>(bearerFor(user)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+    }
+
+    /** This IT suite shares one Postgres database across every test class (see other subscription
+     *  ITs' own fixtures), so a fresh PAST_DUE row here is never the only one in the table --
+     *  asserting a before/after DELTA, not an absolute count, is what makes this test correct
+     *  regardless of what other tests have already inserted. */
+    @Test
+    void admin_seesSubscriptionHealthCountsIncreaseAfterANewPastDueSubscription() throws Exception {
+        User admin = createUser("ADMIN");
+
+        JsonNode before = mapper.readTree(restTemplate.exchange(
+                "/api/v1/admin/subscriptions/health", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class
+        ).getBody()).get("data");
+        long pastDueBefore = before.get("pastDueCount").asLong();
+
+        User target = createUser("USER");
+        subscriptionService.provisionFreeSubscription(target.getId());
+        var subscription = subscriptionRepository.findActiveOrTrial(target.getId()).orElseThrow();
+        subscription.setStatus(com.finora.entity.Subscription.STATUS_PAST_DUE);
+        subscriptionRepository.save(subscription);
+
+        ResponseEntity<String> response = restTemplate.exchange(
+                "/api/v1/admin/subscriptions/health", HttpMethod.GET, new HttpEntity<>(bearerFor(admin)), String.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        JsonNode after = mapper.readTree(response.getBody()).get("data");
+
+        assertThat(after.get("pastDueCount").asLong()).isEqualTo(pastDueBefore + 1);
+    }
 }

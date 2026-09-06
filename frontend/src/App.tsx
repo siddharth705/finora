@@ -43,7 +43,7 @@ const Insights = lazy(() => import('./pages/Insights'));
 const Profile = lazy(() => import('./pages/Profile'));
 const VerifyEmailChange = lazy(() => import('./pages/VerifyEmailChange'));
 const Settings = lazy(() => import('./pages/Settings'));
-const BillingHistory = lazy(() => import('./pages/BillingHistory'));
+const Billing = lazy(() => import('./pages/Billing'));
 const Referrals = lazy(() => import('./pages/Referrals'));
 const SupportTickets = lazy(() => import('./pages/SupportTickets'));
 const SupportTicketDetail = lazy(() => import('./pages/SupportTicketDetail'));
@@ -155,7 +155,7 @@ export default function App() {
           <Route path="/app/insights" element={<Protected><Insights /></Protected>} />
           <Route path="/app/profile" element={<Protected><Profile /></Protected>} />
           <Route path="/app/settings" element={<Protected><Settings /></Protected>} />
-          <Route path="/app/billing" element={<Protected><BillingHistory /></Protected>} />
+          <Route path="/app/billing" element={<Protected><Billing /></Protected>} />
           <Route path="/app/referrals" element={<Protected><Referrals /></Protected>} />
           <Route path="/app/settings/gmail/review" element={<Protected><GmailReview /></Protected>} />
           {/* Support, Help & Feedback v1, Phase 8. Deliberately under /app, not on the public

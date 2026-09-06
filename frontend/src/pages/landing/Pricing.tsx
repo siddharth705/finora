@@ -14,8 +14,10 @@ import { MagneticLink } from './MagneticLink';
  * to change is its own kind of dishonesty, and the first people to notice are the ones who
  * screenshotted it.
  *
- * There is no billing anywhere in the backend -- no plan field on User, no payment integration --
- * so nothing here can be purchased today by design, not by oversight.
+ * Plus and Premium are now real, purchasable plans (subscription billing V1/V2, PRs #1008/#1016)
+ * -- checkout itself happens inside the app's Billing Portal (frontend/src/pages/Billing.tsx),
+ * not on this public page. This page's job stays the same as before: state what a plan costs and
+ * whether it can be bought, accurately, and get a visitor into the app to actually buy it.
  *
  * THERE IS NO WAITLIST CTA, and that is a decision rather than an omission. This carried a
  * "Join the waitlist" mailto, which did deliver -- but nothing STORES the interest, nobody is
@@ -46,10 +48,15 @@ export function Pricing() {
 
               {/* A status where the price goes, for anything that cannot be bought. */}
               {plan.price ? (
-                <p className="text-3xl font-extrabold mb-1" style={{ fontFamily: "'Manrope', Inter, sans-serif", color: 'var(--m-ink)' }}>
-                  {plan.price}
-                  <span className="text-sm font-medium" style={{ color: 'var(--m-ink-3)' }}>{plan.cadence}</span>
-                </p>
+                <>
+                  <p className="text-3xl font-extrabold mb-1" style={{ fontFamily: "'Manrope', Inter, sans-serif", color: 'var(--m-ink)' }}>
+                    {plan.price}
+                    <span className="text-sm font-medium" style={{ color: 'var(--m-ink-3)' }}>{plan.cadence}</span>
+                  </p>
+                  {plan.secondaryPriceNote && (
+                    <p className="text-xs mb-1" style={{ color: 'var(--m-ink-3)' }}>{plan.secondaryPriceNote}</p>
+                  )}
+                </>
               ) : (
                 <p className="text-2xl font-extrabold mb-1" style={{ fontFamily: "'Manrope', Inter, sans-serif", color: 'var(--m-ink-3)' }}>
                   Pricing TBD
@@ -68,7 +75,9 @@ export function Pricing() {
               </ul>
 
               {plan.availability === 'available' ? (
-                <MagneticLink to="/auth" className="m-btn m-btn-primary w-full">Start free</MagneticLink>
+                <MagneticLink to="/auth" className="m-btn m-btn-primary w-full">
+                  {plan.id === 'free' ? 'Start free' : 'Get started'}
+                </MagneticLink>
               ) : (
                 // A statement, not a control. See the note at the top of this file.
                 <p className="text-center text-sm py-3" style={{ color: 'var(--m-ink-3)' }}>
@@ -91,15 +100,9 @@ export function Pricing() {
                 <th scope="col" className="px-4 py-3 font-semibold w-24" style={{ color: 'var(--m-ink)' }}>Free</th>
                 <th scope="col" className="px-4 py-3 font-semibold w-28" style={{ color: 'var(--m-ink)' }}>
                   Plus
-                  <span className="block text-[9px] font-medium normal-case tracking-normal" style={{ color: 'var(--m-ink-3)' }}>
-                    coming soon
-                  </span>
                 </th>
                 <th scope="col" className="px-4 py-3 font-semibold w-28" style={{ color: 'var(--m-ink)' }}>
                   Premium
-                  <span className="block text-[9px] font-medium normal-case tracking-normal" style={{ color: 'var(--m-ink-3)' }}>
-                    coming soon
-                  </span>
                 </th>
               </tr>
             </thead>

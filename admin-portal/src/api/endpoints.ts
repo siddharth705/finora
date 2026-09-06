@@ -17,7 +17,7 @@ import type {
   MerchantUpdateRequest, OperationalDashboardDto, PagedResponse, PermissionDto, PlatformAnalyticsDto,
   PlatformDiagnosticsDto, PlatformSettingsDto, PlatformStatsDto, ReconciliationStatsDto, RecentImportDto,
   RelationshipDto, RelationshipMergeRequest, RoleDto, RuleDto,
-  SearchResultDto, SubscriptionSummaryDto, SystemHealthDto,
+  SearchResultDto, SubscriptionHealthDto, SubscriptionSummaryDto, SystemHealthDto,
   TestMerchantTemplateRequest, TestMerchantTemplateResult, TestRuleRequest, TestRuleResult,
   TopCategoryPoint, TopMerchantPoint, TransactionDto, TrendPoint,
   UpdateBankRequest, UpdateFeatureFlagRequest, UpdateMerchantTemplateRequest,
@@ -309,6 +309,12 @@ export const adminSubscriptionsApi = {
     api.get<PagedResponse<SubscriptionSummaryDto>>('/admin/subscriptions', { params: { page, size } }).then((r) => r.data),
   changePlan: (userId: string, planCode: string, reason: string) =>
     api.put(`/admin/subscriptions/${userId}/plan`, { planCode, reason }),
+  // Plan 3 / design spec §6.6 -- releases a live Razorpay mandate immediately (not at cycle end;
+  // this is an admin support action) so changePlan above can then succeed.
+  cancelPaidSubscription: (userId: string) =>
+    api.post(`/admin/subscriptions/${userId}/cancel-paid-subscription`),
+  // Plan 3 review -- platform-wide counts for the Subscription Health stat row.
+  health: () => api.get<SubscriptionHealthDto>('/admin/subscriptions/health').then((r) => r.data),
 };
 
 export const adminSystemApi = {

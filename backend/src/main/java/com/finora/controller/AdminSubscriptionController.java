@@ -2,6 +2,7 @@ package com.finora.controller;
 
 import com.finora.dto.ApiResponse;
 import com.finora.dto.BillingDtos.ChangePlanRequest;
+import com.finora.dto.BillingDtos.SubscriptionHealthDto;
 import com.finora.dto.BillingDtos.SubscriptionSummaryDto;
 import com.finora.dto.PagedResponse;
 import com.finora.security.CurrentUser;
@@ -33,6 +34,12 @@ public class AdminSubscriptionController {
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.ok(subscriptionService.listAll(page, size));
+    }
+
+    @GetMapping("/health")
+    @PreAuthorize("hasAuthority('SUBSCRIPTION_MANAGEMENT_VIEW')")
+    public ApiResponse<SubscriptionHealthDto> health() {
+        return ApiResponse.ok(subscriptionService.health());
     }
 
     @PutMapping("/{userId}/plan")
