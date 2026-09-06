@@ -39,17 +39,17 @@ export function MetricCard({
   const hasMovers = !!moverLines && moverLines.length > 0;
   const positive = hasDelta && (invertDelta ? delta! < 0 : delta! >= 0);
 
-  // Dashboard's KPI row only, per the reviewed redesign: a uniform graphite/cream icon medallion
-  // and a pill-shaped delta instead of per-metric bright icon colors and plain colored text.
-  // Reports/Investments/Budgets never pass this, so their MetricCard calls (the `return` below
-  // this block) are unchanged.
+  // Dashboard's KPI row only: a rounded-square icon badge (still each metric's own iconBg/
+  // iconColor, matching the colored icons every other card on the page already uses) and a
+  // pill-shaped delta instead of plain colored text. Reports/Investments/Budgets never pass
+  // this, so their MetricCard calls (the `return` below this block) are unchanged.
   if (variant === 'elevated') {
     return (
       <FinoraCard className="transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-soft">
         <div className="flex items-start justify-between mb-4">
           <p className="text-sm font-semibold text-muted">{label}</p>
-          <div className="w-10 h-10 rounded-xl bg-primary-light flex items-center justify-center flex-shrink-0">
-            <Icon size={18} className="text-primary" />
+          <div className={`w-10 h-10 rounded-xl ${iconBg} flex items-center justify-center flex-shrink-0`}>
+            <Icon size={18} className={iconColor} />
           </div>
         </div>
         <p className={`font-display text-[26px] font-extrabold mb-1.5 tracking-tight ${valueColor ?? 'text-ink'}`}>{value}</p>
