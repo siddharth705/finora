@@ -188,7 +188,7 @@ class SubscriptionServiceTest {
         sub.setUserId(userId);
         sub.setPlanId(planId);
         sub.setStatus(Subscription.STATUS_ACTIVE);
-        when(subscriptionRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 20)))
+        when(subscriptionRepository.findForCustomerAccountsOrderByCreatedAtDesc(PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(sub)));
         when(planRepository.findAll()).thenReturn(List.of(planWith("PLUS", planId)));
         User user = new User();
@@ -213,7 +213,7 @@ class SubscriptionServiceTest {
         sub.setPlanId(planId);
         sub.setStatus(Subscription.STATUS_ACTIVE);
         sub.setPaymentProvider("RAZORPAY");
-        when(subscriptionRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 20)))
+        when(subscriptionRepository.findForCustomerAccountsOrderByCreatedAtDesc(PageRequest.of(0, 20)))
                 .thenReturn(new PageImpl<>(List.of(sub)));
         when(planRepository.findAll()).thenReturn(List.of());
         when(userRepository.findAllById(any())).thenReturn(List.of());
@@ -229,7 +229,7 @@ class SubscriptionServiceTest {
      *  handler, surfacing as an opaque 500), same reasoning as AdminUserService.list. */
     @Test
     void listAll_clampsAnOutOfRangePageAndSize() {
-        when(subscriptionRepository.findAllByOrderByCreatedAtDesc(PageRequest.of(0, 100)))
+        when(subscriptionRepository.findForCustomerAccountsOrderByCreatedAtDesc(PageRequest.of(0, 100)))
                 .thenReturn(new PageImpl<>(List.of()));
         when(planRepository.findAll()).thenReturn(List.of());
         when(userRepository.findAllById(List.of())).thenReturn(List.of());
@@ -237,7 +237,7 @@ class SubscriptionServiceTest {
         PagedResponse<SubscriptionSummaryDto> result = service.listAll(-5, 500);
 
         assertThat(result.content()).isEmpty();
-        verify(subscriptionRepository).findAllByOrderByCreatedAtDesc(PageRequest.of(0, 100));
+        verify(subscriptionRepository).findForCustomerAccountsOrderByCreatedAtDesc(PageRequest.of(0, 100));
     }
 
     @Test
@@ -329,10 +329,10 @@ class SubscriptionServiceTest {
 
     @Test
     void healthReportsCountsForEachSubscriptionStatusAndPendingOrders() {
-        when(subscriptionRepository.countByStatus(Subscription.STATUS_ACTIVE)).thenReturn(120L);
-        when(subscriptionRepository.countByStatus(Subscription.STATUS_PAST_DUE)).thenReturn(5L);
-        when(subscriptionRepository.countByStatus(Subscription.STATUS_PAYMENT_FAILED)).thenReturn(3L);
-        when(subscriptionRepository.countByStatus(Subscription.STATUS_CANCELLED)).thenReturn(8L);
+        when(subscriptionRepository.countForCustomerAccountsByStatus(Subscription.STATUS_ACTIVE)).thenReturn(120L);
+        when(subscriptionRepository.countForCustomerAccountsByStatus(Subscription.STATUS_PAST_DUE)).thenReturn(5L);
+        when(subscriptionRepository.countForCustomerAccountsByStatus(Subscription.STATUS_PAYMENT_FAILED)).thenReturn(3L);
+        when(subscriptionRepository.countForCustomerAccountsByStatus(Subscription.STATUS_CANCELLED)).thenReturn(8L);
         when(subscriptionOrderRepository.countByStatus(com.finora.entity.SubscriptionOrder.STATUS_PENDING))
                 .thenReturn(2L);
 
