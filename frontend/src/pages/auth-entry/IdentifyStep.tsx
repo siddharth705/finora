@@ -29,6 +29,12 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [reactivationToken, setReactivationToken] = useState<string | null>(null);
+  // Seeded at 420 -- Google's own real rendered button width, measured live on production (see
+  // SocialSignInButtons.tsx) -- rather than the form's natural full width, so the form narrows to
+  // match Google/Apple from the first paint instead of flashing full-width and then snapping
+  // narrower once Google's script actually reports back. onWidthKnown corrects this if Google
+  // ever renders differently.
+  const [formWidth, setFormWidth] = useState(420);
 
   const identifierValid = identifier.trim().length > 0;
 
@@ -103,7 +109,7 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
+    <form onSubmit={handleSubmit} noValidate style={{ maxWidth: formWidth, marginInline: 'auto' }}>
       <h2 className="font-display text-2xl font-extrabold text-ink mb-1">Sign in or create an account</h2>
       <p className="text-sm text-muted mb-6">Enter your email or mobile number to continue</p>
 
@@ -114,6 +120,7 @@ export function IdentifyStep({ onExists, onContinue, onSuccess }: IdentifyStepPr
         onGoogleCredential={handleGoogleCredential}
         onAppleCredential={handleAppleCredential}
         onError={setError}
+        onWidthKnown={setFormWidth}
       />
 
       <AuthDivider />
