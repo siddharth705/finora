@@ -1,8 +1,16 @@
 package com.finora.controller;
 
 import com.finora.AbstractIntegrationTest;
+import com.finora.entity.Plan;
+import com.finora.entity.SubscriptionOrder;
+import com.finora.entity.User;
 import com.finora.entity.WebhookEvent;
+import com.finora.repository.PlanRepository;
+import com.finora.repository.SubscriptionOrderRepository;
+import com.finora.repository.SubscriptionRepository;
+import com.finora.repository.UserRepository;
 import com.finora.repository.WebhookEventRepository;
+import com.finora.service.SubscriptionService;
 import com.razorpay.Utils;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,6 +21,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
+import java.math.BigDecimal;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -21,6 +30,11 @@ class RazorpayWebhookControllerIT extends AbstractIntegrationTest {
 
     @Autowired private TestRestTemplate restTemplate;
     @Autowired private WebhookEventRepository webhookEventRepository;
+    @Autowired private UserRepository userRepository;
+    @Autowired private PlanRepository planRepository;
+    @Autowired private SubscriptionRepository subscriptionRepository;
+    @Autowired private SubscriptionOrderRepository subscriptionOrderRepository;
+    @Autowired private SubscriptionService subscriptionService;
 
     @Value("${app.integrations.razorpay.webhook-secret}")
     private String webhookSecret;
@@ -69,6 +83,58 @@ class RazorpayWebhookControllerIT extends AbstractIntegrationTest {
         assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(webhookEventRepository.findById(eventId)).isPresent();
+    }
+
+    /** Regression test for the payload-unwrap bug this endpoint had: every earlier test here (and
+     *  every {@code RazorpayWebhookDispatcherIT} test) sends {@code dispatch()} an
+     *  already-unwrapped {@code {"subscription": {"entity": {...}}}} shape, so none of them could
+     *  ever have caught the controller passing the WHOLE body (including the "event"/"payload"
+     *  wrapper) instead of just the inner "payload" object. This body is shaped exactly like a real
+     *  Razorpay webhook -- {@code subscription} nested under {@code payload}, plus the
+     *  account_id/contains/created_at fields a real one also carries -- and goes through the actual
+     *  HTTP endpoint, not the dispatcher directly, so it fails the same way a real delivery would if
+     *  the unwrap regressed. */
+    @Test
+    void aRealisticallyShapedActivatedWebhookActuallyActivatesTheSubscription() throws Exception {
+        User user = new User();
+        user.setEmail("webhook-controller-it-" + UUID.randomUUID() + "@example.com");
+        user.setPasswordHash("irrelevant");
+        user.setFullName("Webhook Controller IT User");
+        user.setRole("USER");
+        user.setPhoneVerified(true);
+        user = userRepository.save(user);
+        subscriptionService.provisionFreeSubscription(user.getId());
+
+        Plan plus = planRepository.findByCode("PLUS").orElseThrow();
+        String razorpaySubscriptionId = "sub_it_" + UUID.randomUUID();
+        SubscriptionOrder order = new SubscriptionOrder();
+        order.setUserId(user.getId());
+        order.setPlanId(plus.getId());
+        order.setBillingCycle("MONTHLY");
+        order.setRazorpaySubscriptionId(razorpaySubscriptionId);
+        order.setStatus(SubscriptionOrder.STATUS_PENDING);
+        order.setAmount(new BigDecimal("399.00"));
+        subscriptionOrderRepository.save(order);
+
+        long fixtureEpoch = 1_893_456_000L; // synthetic-ok: arbitrary future epoch second, not a real identifier
+        String body = """
+                {"entity":"event","account_id":"acc_synthetic","event":"subscription.activated",
+                 "contains":["subscription"],"created_at":%d,
+                 "payload":{"subscription":{"entity":{"id":"%s","current_end":%d}}}}
+                """.formatted(fixtureEpoch, razorpaySubscriptionId, fixtureEpoch);
+        String eventId = "evt_" + UUID.randomUUID();
+
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "/api/v1/webhooks/razorpay", new HttpEntity<>(body, signedHeaders(body, eventId)), String.class);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(subscriptionRepository.findActiveOrTrial(user.getId()).orElseThrow().getPlanId())
+                .isEqualTo(plus.getId());
+        assertThat(subscriptionOrderRepository.findByRazorpaySubscriptionId(razorpaySubscriptionId)
+                .orElseThrow().getStatus()).isEqualTo(SubscriptionOrder.STATUS_COMPLETED);
+        // The audit trail keeps the FULL body, unaffected by the dispatcher-facing unwrap.
+        assertThat(webhookEventRepository.findById(eventId).orElseThrow().getPayload().toString())
+                .contains("account_id");
     }
 
     @Test
