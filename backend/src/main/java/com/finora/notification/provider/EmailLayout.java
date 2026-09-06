@@ -50,15 +50,23 @@ final class EmailLayout {
      *                      reply, since one will actually reach a person; a {@code noreply@}
      *                      caller would get a dead-end invitation, so this must never default to
      *                      true silently.
+     * @param supportAddress the actual configured value of {@code EmailProperties
+     *                       .getSupportFromAddress()} -- found in review: this used to be a
+     *                       hardcoded literal in this class (and a second, independent hardcoded
+     *                       copy in {@code ResendEmailProvider.SUPPORT_LINE}), so a deployment that
+     *                       overrode {@code EMAIL_FROM_SUPPORT} would send from the new address
+     *                       while every email kept telling the customer the old one. Passed in
+     *                       rather than read from config directly, since this class is a pure
+     *                       string-formatting utility with no Spring dependency of its own.
      */
-    static String wrap(String heading, String bodyText, boolean supportSender) {
+    static String wrap(String heading, String bodyText, boolean supportSender, String supportAddress) {
         String safeHeading = HtmlUtils.htmlEscape(heading);
         String safeBody = HtmlUtils.htmlEscape(bodyText).replace("\n", "<br>");
+        String safeSupportAddress = HtmlUtils.htmlEscape(supportAddress);
         String footer = supportSender
                 ? "Questions? Just reply to this email and it'll reach us."
-                // synthetic-ok: Fynora's own published support mailbox, not a customer address
-                : "Need help? Email <a href=\"mailto:support@fynora.net\" style=\"color:" // synthetic-ok
-                        + GRAPHITE + ";\">support@fynora.net</a>."; // synthetic-ok
+                : "Need help? Email <a href=\"mailto:" + safeSupportAddress + "\" style=\"color:"
+                        + GRAPHITE + ";\">" + safeSupportAddress + "</a>.";
 
         return """
                 <table role="presentation" width="100%%" cellpadding="0" cellspacing="0" \
