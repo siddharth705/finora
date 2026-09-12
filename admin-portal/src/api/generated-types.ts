@@ -292,7 +292,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/webhooks/revenuecat": {
+    "/api/v1/webhooks/setu": {
         parameters: {
             query?: never;
             header?: never;
@@ -308,7 +308,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/webhooks/razorpay": {
+    "/api/v1/webhooks/revenuecat": {
         parameters: {
             query?: never;
             header?: never;
@@ -318,6 +318,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["receive_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/webhooks/razorpay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["receive_2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -814,6 +830,54 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["saveSnapshot"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/setu/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["initiate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/setu/links/{linkId}/confirm-new-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["confirmNewAccount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/integrations/setu/links/{linkId}/confirm-existing-account": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["confirmExistingAccount"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5375,6 +5439,22 @@ export interface components {
             date?: string;
             netWorth?: number;
         };
+        InitiateLinkRequest: {
+            /** @enum {string} */
+            fiType?: "DEPOSIT" | "CREDIT_CARD";
+            idempotencyKey?: string;
+        };
+        InitiateLinkResponse: {
+            /** Format: uuid */
+            linkId?: string;
+            /** @enum {string} */
+            status?: "CONSENT_PENDING" | "PENDING_ACCOUNT_CONFIRMATION" | "ACTIVE" | "PAUSED" | "REVOKED" | "EXPIRED" | "REJECTED" | "LINK_FAILED";
+            redirectUrl?: string;
+        };
+        ConfirmExistingAccountRequest: {
+            /** Format: uuid */
+            accountId?: string;
+        };
         GmailReviewApproveRequest: {
             category?: string;
         };
@@ -9652,7 +9732,8 @@ export interface operations {
         parameters: {
             query?: never;
             header: {
-                "X-RevenueCat-Webhook-Signature": string;
+                "X-Setu-Signature": string;
+                "X-Setu-Event-Id"?: string;
             };
             path?: never;
             cookie?: never;
@@ -9673,6 +9754,30 @@ export interface operations {
         };
     };
     receive_1: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-RevenueCat-Webhook-Signature": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": string;
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    receive_2: {
         parameters: {
             query?: never;
             header: {
@@ -10490,6 +10595,74 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["ApiResponseNetWorthDto"];
                 };
+            };
+        };
+    };
+    initiate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InitiateLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["InitiateLinkResponse"];
+                };
+            };
+        };
+    };
+    confirmNewAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                linkId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    confirmExistingAccount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                linkId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConfirmExistingAccountRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

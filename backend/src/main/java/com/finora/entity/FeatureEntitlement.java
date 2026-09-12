@@ -33,6 +33,13 @@ public class FeatureEntitlement {
     // rest of the app -- see GmailConnectionService.beginConnect/GmailManualSyncService.syncNow/
     // GmailDiscoveryWorker.runOnce, the three places this key is actually checked.
     public static final String GMAIL_SYNC = "GMAIL_SYNC";
+    // V195. Account Aggregator bank/card sync has the same real ongoing per-user cost shape as
+    // GMAIL_SYNC above (a live external connection kept up for as long as it stays linked) -- see
+    // the design spec's "Cost control" section
+    // (docs/superpowers/specs/2026-09-12-account-aggregator-sync-design.md). Same
+    // Free-absent/Premium-enabled seeding, not Plus: this is a live bank-data feed, a step further
+    // than Gmail's receipt-email polling.
+    public static final String ACCOUNT_AGGREGATOR_SYNC = "ACCOUNT_AGGREGATOR_SYNC";
 
     @Id
     @GeneratedValue
