@@ -39,9 +39,22 @@ class AccountAggregatorWebhookControllerTest {
     }
 
     @Test
-    void rejectsAnInvalidSignature() {
+    void rejectsASignatureThatIsNotValidHex() {
         String body = "{\"event\":\"consent.revoked\",\"consentHandleId\":\"consent-1\"}";
         ResponseEntity<Void> response = controller.receive("not-the-real-signature", "event-1", body);
+
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        verifyNoInteractions(dispatcher);
+    }
+
+    @Test
+    void rejectsWellFormedHexThatIsTheWrongSignature() {
+        // Exercises the MessageDigest.isEqual comparison itself (constant-time fix), not just the
+        // hex-parsing failure path above -- valid hex, valid length, simply the wrong value.
+        String body = "{\"event\":\"consent.revoked\",\"consentHandleId\":\"consent-1\"}";
+        String wrongButValidHex = "0".repeat(64);
+
+        ResponseEntity<Void> response = controller.receive(wrongButValidHex, "event-1", body);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         verifyNoInteractions(dispatcher);

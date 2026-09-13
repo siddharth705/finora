@@ -43,6 +43,28 @@ class SetuConsentServiceTest {
     }
 
     @Test
+    void refusesANullFiTypeBeforeTouchingTheGateway() {
+        assertThatThrownBy(() -> service.initiateLink(userId, null, "idem-1"))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getStatus())
+                .isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+
+        verifyNoInteractions(gateway);
+        verifyNoInteractions(entitlementService);
+    }
+
+    @Test
+    void refusesABlankIdempotencyKeyBeforeTouchingTheGateway() {
+        assertThatThrownBy(() -> service.initiateLink(userId, FiType.DEPOSIT, "   "))
+                .isInstanceOf(ApiException.class)
+                .extracting(e -> ((ApiException) e).getStatus())
+                .isEqualTo(org.springframework.http.HttpStatus.BAD_REQUEST);
+
+        verifyNoInteractions(gateway);
+        verifyNoInteractions(entitlementService);
+    }
+
+    @Test
     void refusesAUserWithoutTheEntitlement() {
         when(entitlementService.hasEntitlement(userId, FeatureEntitlement.ACCOUNT_AGGREGATOR_SYNC))
                 .thenReturn(false);

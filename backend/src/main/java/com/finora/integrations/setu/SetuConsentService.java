@@ -30,6 +30,17 @@ public class SetuConsentService {
     /** @param idempotencyKey client-minted, unique per (user, attempt) -- see
      *                        AccountAggregatorLink's own doc comment. */
     public InitiateLinkResult initiateLink(UUID userId, FiType fiType, String idempotencyKey) {
+        // Bug fix (found during post-implementation review): neither argument was validated before
+        // use. A null fiType or a null/blank idempotencyKey used to fall all the way through to a
+        // NOT NULL database constraint violation -- an opaque 500 instead of a clean 400, and for
+        // fiType specifically, only AFTER already calling gateway.createConsent (a real, billable
+        // Setu call once a real gateway exists) for a request that was malformed from the start.
+        if (fiType == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "fiType is required.");
+        }
+        if (idempotencyKey == null || idempotencyKey.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "idempotencyKey is required.");
+        }
         if (!entitlementService.hasEntitlement(userId, FeatureEntitlement.ACCOUNT_AGGREGATOR_SYNC)) {
             throw new ApiException(HttpStatus.FORBIDDEN,
                     "Account Aggregator sync is a Premium feature.");
