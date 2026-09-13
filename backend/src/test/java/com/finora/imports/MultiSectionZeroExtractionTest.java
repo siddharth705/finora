@@ -538,6 +538,7 @@ class MultiSectionZeroExtractionTest {
                 mock(StatementAnalysisRecorder.class), mock(ImportVerificationRecorder.class),
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
                 mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class),
-                entitlementService);
+                entitlementService,
+                mock(com.finora.integrations.setu.AccountAggregatorLinkRepository.class));
     }
 }

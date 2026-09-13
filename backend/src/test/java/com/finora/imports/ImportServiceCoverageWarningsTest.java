@@ -90,7 +90,8 @@ class ImportServiceCoverageWarningsTest {
                 mock(com.finora.imports.analysis.ImportVerificationRecorder.class),
                 learningEventPublisher, mock(LayoutRegistryService.class),
                 mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class),
-                entitlementService);
+                entitlementService,
+                mock(com.finora.integrations.setu.AccountAggregatorLinkRepository.class));
 
         Account account = new Account();
         ReflectionTestUtils.setField(account, "id", accountId);

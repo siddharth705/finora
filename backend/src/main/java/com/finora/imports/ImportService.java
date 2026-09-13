@@ -96,6 +96,35 @@ public class ImportService {
      *  costs no extra lookups. */
     private record PendingLearning(UUID merchantId, UUID categoryId) {}
 
+    /** Refuses a manual import into an account an ACTIVE AccountAggregatorLink already owns --
+     *  see the design spec's "Account identity resolution" section: hiding the upload control in
+     *  the UI is not enforcement, this is. A PAUSED/REVOKED/EXPIRED link's account is unaffected --
+     *  see AccountAggregatorWebhookDispatcher, which reverts primarySource to MANUAL the moment a
+     *  link stops being ACTIVE, so this check only ever fires while sync is genuinely live. */
+    static class AccountAggregatorGuard {
+        private final AccountRepository accountRepository;
+        private final com.finora.integrations.setu.AccountAggregatorLinkRepository aaLinks;
+
+        AccountAggregatorGuard(AccountRepository accountRepository,
+                                com.finora.integrations.setu.AccountAggregatorLinkRepository aaLinks) {
+            this.accountRepository = accountRepository;
+            this.aaLinks = aaLinks;
+        }
+
+        void checkNotActivelySynced(UUID userId, UUID accountId) {
+            Account account = OwnershipGuard.requireOwned(
+                    accountRepository.findById(accountId), Account::getUserId, userId, "Account");
+            if (account.getPrimarySource() != Account.PrimarySource.ACCOUNT_AGGREGATOR) return;
+            boolean activelyLinked = aaLinks.findByAccountIdAndStatus(accountId,
+                    com.finora.integrations.setu.AccountAggregatorLinkStatus.ACTIVE).isPresent();
+            if (activelyLinked) {
+                throw new ApiException(HttpStatus.CONFLICT,
+                        "This account syncs automatically and can't be manually imported into "
+                        + "while that sync is active.");
+            }
+        }
+    }
+
     private final AccountRepository accountRepository;
     private final AccountService accountService;
     private final TransactionRepository transactionRepository;
@@ -126,6 +155,7 @@ public class ImportService {
      */
     private final com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver evidenceShadowObserver;
     private final EntitlementService entitlementService;
+    private final AccountAggregatorGuard accountAggregatorGuard;
 
     public ImportService(AccountRepository accountRepository, AccountService accountService,
                           TransactionRepository transactionRepository, MerchantRepository merchantRepository,
@@ -146,9 +176,11 @@ public class ImportService {
                           com.finora.service.MerchantLearningEventPublisher learningEventPublisher,
                           LayoutRegistryService layoutRegistryService,
                           com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver evidenceShadowObserver,
-                          EntitlementService entitlementService) {
+                          EntitlementService entitlementService,
+                          com.finora.integrations.setu.AccountAggregatorLinkRepository accountAggregatorLinkRepository) {
         this.evidenceShadowObserver = evidenceShadowObserver;
         this.entitlementService = entitlementService;
+        this.accountAggregatorGuard = new AccountAggregatorGuard(accountRepository, accountAggregatorLinkRepository);
         this.layoutRegistryService = layoutRegistryService;
         this.analysisRecorder = analysisRecorder;
         this.verificationRecorder = verificationRecorder;
@@ -1735,6 +1767,7 @@ public class ImportService {
     private UUID resolveTargetAccount(UUID userId, ConfirmRequest request, List<String> accountsCreated,
                                        Map<String, Integer> productsCreated) {
         if (request.existingAccountId() != null) {
+            accountAggregatorGuard.checkNotActivelySynced(userId, request.existingAccountId());
             return OwnershipGuard.requireOwned(accountRepository.findById(request.existingAccountId()),
                     Account::getUserId, userId, "Account").getId();
         }

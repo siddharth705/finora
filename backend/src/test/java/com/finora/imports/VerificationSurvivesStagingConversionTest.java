@@ -131,7 +131,8 @@ class VerificationSurvivesStagingConversionTest {
                 mock(StatementAnalysisRecorder.class), verificationRecorder,
                 mock(com.finora.service.MerchantLearningEventPublisher.class), mock(LayoutRegistryService.class),
                 mock(com.finora.imports.evidence.ClosingBalanceEvidenceShadowObserver.class),
-                entitlementService);
+                entitlementService,
+                mock(com.finora.integrations.setu.AccountAggregatorLinkRepository.class));
     }
 
     private void stubSections(List<StagedAccountSection> sections) throws Exception {

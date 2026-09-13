@@ -22,6 +22,8 @@ public class Account extends BaseEntity {
 
     public enum Type { SAVINGS, CREDIT_CARD, WALLET, INVESTMENT }
 
+    public enum PrimarySource { MANUAL, ACCOUNT_AGGREGATOR }
+
     @Column(name = "user_id", nullable = false)
     private UUID userId;
 
@@ -127,6 +129,19 @@ public class Account extends BaseEntity {
     @Column(name = "last_absolute_set_statement_id")
     private UUID lastAbsoluteSetStatementId;
 
+    // Which system is the source of truth for this account's transactions going forward. MANUAL
+    // (the default, and the only value before this column existed) means the user uploads
+    // statements themselves. ACCOUNT_AGGREGATOR means a live AccountAggregatorLink owns this
+    // account -- see AccountAggregatorIdentityResolutionService, which is the only writer that ever
+    // sets this to ACCOUNT_AGGREGATOR, and ImportService.resolveTargetAccount, which reads it to
+    // refuse a manual statement upload into an actively-synced account. Reverted to MANUAL whenever
+    // that link stops being ACTIVE (paused, revoked, expired) -- see the design spec's "Consent
+    // lifecycle" section -- so a lapsed Premium user is never left unable to import the account at
+    // all.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "primary_source", nullable = false, length = 20)
+    private PrimarySource primarySource = PrimarySource.MANUAL;
+
     public UUID getUserId() { return userId; }
     public void setUserId(UUID userId) { this.userId = userId; }
     public String getName() { return name; }
@@ -171,4 +186,6 @@ public class Account extends BaseEntity {
     public void setIfscCode(String ifscCode) { this.ifscCode = ifscCode; }
     public UUID getLastAbsoluteSetStatementId() { return lastAbsoluteSetStatementId; }
     public void setLastAbsoluteSetStatementId(UUID lastAbsoluteSetStatementId) { this.lastAbsoluteSetStatementId = lastAbsoluteSetStatementId; }
+    public PrimarySource getPrimarySource() { return primarySource; }
+    public void setPrimarySource(PrimarySource primarySource) { this.primarySource = primarySource; }
 }

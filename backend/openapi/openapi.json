@@ -1148,12 +1148,53 @@
                 }
             }
         },
+        "/api/v1/webhooks/setu": {
+            "post": {
+                "tags": [
+                    "account-aggregator-webhook-controller"
+                ],
+                "operationId": "receive",
+                "parameters": [
+                    {
+                        "name": "X-Setu-Signature",
+                        "in": "header",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "X-Setu-Event-Id",
+                        "in": "header",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
         "/api/v1/webhooks/revenuecat": {
             "post": {
                 "tags": [
                     "revenue-cat-webhook-controller"
                 ],
-                "operationId": "receive",
+                "operationId": "receive_1",
                 "parameters": [
                     {
                         "name": "X-RevenueCat-Webhook-Signature",
@@ -1186,7 +1227,7 @@
                 "tags": [
                     "razorpay-webhook-controller"
                 ],
-                "operationId": "receive_1",
+                "operationId": "receive_2",
                 "parameters": [
                     {
                         "name": "X-Razorpay-Signature",
@@ -2368,6 +2409,94 @@
                                 }
                             }
                         }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/setu/links": {
+            "post": {
+                "tags": [
+                    "account-aggregator-link-controller"
+                ],
+                "operationId": "initiate",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/InitiateLinkRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "*/*": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/InitiateLinkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/setu/links/{linkId}/confirm-new-account": {
+            "post": {
+                "tags": [
+                    "account-aggregator-link-controller"
+                ],
+                "operationId": "confirmNewAccount",
+                "parameters": [
+                    {
+                        "name": "linkId",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    }
+                }
+            }
+        },
+        "/api/v1/integrations/setu/links/{linkId}/confirm-existing-account": {
+            "post": {
+                "tags": [
+                    "account-aggregator-link-controller"
+                ],
+                "operationId": "confirmExistingAccount",
+                "parameters": [
+                    {
+                        "name": "linkId",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "format": "uuid"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ConfirmExistingAccountRequest"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK"
                     }
                 }
             }
@@ -12636,6 +12765,55 @@
                     },
                     "netWorth": {
                         "type": "number"
+                    }
+                }
+            },
+            "InitiateLinkRequest": {
+                "type": "object",
+                "properties": {
+                    "fiType": {
+                        "type": "string",
+                        "enum": [
+                            "DEPOSIT",
+                            "CREDIT_CARD"
+                        ]
+                    },
+                    "idempotencyKey": {
+                        "type": "string"
+                    }
+                }
+            },
+            "InitiateLinkResponse": {
+                "type": "object",
+                "properties": {
+                    "linkId": {
+                        "type": "string",
+                        "format": "uuid"
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "CONSENT_PENDING",
+                            "PENDING_ACCOUNT_CONFIRMATION",
+                            "ACTIVE",
+                            "PAUSED",
+                            "REVOKED",
+                            "EXPIRED",
+                            "REJECTED",
+                            "LINK_FAILED"
+                        ]
+                    },
+                    "redirectUrl": {
+                        "type": "string"
+                    }
+                }
+            },
+            "ConfirmExistingAccountRequest": {
+                "type": "object",
+                "properties": {
+                    "accountId": {
+                        "type": "string",
+                        "format": "uuid"
                     }
                 }
             },
