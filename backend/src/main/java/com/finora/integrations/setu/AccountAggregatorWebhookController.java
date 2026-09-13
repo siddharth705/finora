@@ -85,15 +85,30 @@ public class AccountAggregatorWebhookController {
         return ResponseEntity.ok().build();
     }
 
+    /**
+     * Bug fix (found during post-implementation review): this used to compare hex strings with
+     * plain {@code String.equalsIgnoreCase}, which short-circuits on the first differing
+     * character -- a textbook timing side channel on the one thing standing between this
+     * unauthenticated endpoint and an attacker who can dispatch arbitrary consent.approved/revoked
+     * events. {@link java.security.MessageDigest#isEqual} is specified to take the same time
+     * regardless of where (or whether) the arrays differ, which is why the JDK itself recommends
+     * it for exactly this comparison. Malformed hex in the header (wrong length, non-hex
+     * characters) is treated as "does not match" rather than allowed to throw a 500 that would
+     * otherwise leak information about why verification failed.
+     */
     private boolean verifySignature(String rawBody, String signature) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
             mac.init(new SecretKeySpec(properties.getWebhookSecret().getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] expected = mac.doFinal(rawBody.getBytes(StandardCharsets.UTF_8));
-            String expectedHex = HexFormat.of().formatHex(expected);
-            return expectedHex.equalsIgnoreCase(signature);
+            byte[] provided = HexFormat.of().parseHex(signature);
+            return java.security.MessageDigest.isEqual(expected, provided);
         } catch (NoSuchAlgorithmException | InvalidKeyException e) {
             log.error("Unable to verify Setu webhook signature.", e);
+            return false;
+        } catch (IllegalArgumentException e) {
+            // signature header was not valid hex (wrong length, non-hex characters, null handled
+            // by Spring's @RequestHeader already requiring it) -- not a match, not a server error.
             return false;
         }
     }
